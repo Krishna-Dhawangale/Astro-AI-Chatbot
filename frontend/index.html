@@ -1,0 +1,1359 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#fdf8f3" />
+  <title>Astro AI — Vedic Astrologer</title>
+  <meta name="description"
+    content="Chat with your personal AI Vedic Astrologer. 100% confidential astrological consultations." />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    /* ── Reset ──────────────────────────────────────────────── */
+    *,
+    *::before,
+    *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    /* ── Design Tokens ──────────────────────────────────────── */
+    :root {
+      --bg: #fdfbf7;
+      --bg-pattern: #f7f0e3;
+      --surface: #ffffff;
+      --surface-alt: #fffdf9;
+      --border: rgba(217, 160, 80, .20);
+      --border-hover: rgba(217, 160, 80, .42);
+
+      /* Astrological Golden Yellow & Solar Amber */
+      --user-bubble: #fef08a;
+      --user-border: rgba(202, 138, 4, .28);
+      --user-text: #3b2502;
+
+      --bot-bubble: #ffffff;
+      --bot-border: rgba(210, 185, 150, .20);
+      --bot-text: #2c2420;
+
+      --accent: #f59e0b;
+      --accent-dark: #d97706;
+      --accent-light: #fffbeb;
+      --accent-glow: rgba(245, 158, 11, .35);
+
+      --text-primary: #231c18;
+      --text-muted: rgba(75, 55, 40, .58);
+      --text-soft: rgba(75, 55, 40, .78);
+
+      --radius-msg: 18px;
+      --radius-ui: 16px;
+      --radius-sm: 12px;
+
+      --shadow-xs: 0 1px 4px rgba(80, 50, 15, .06);
+      --shadow-sm: 0 2px 10px rgba(80, 50, 15, .08);
+      --shadow-md: 0 6px 24px rgba(80, 50, 15, .12);
+      --shadow-gold: 0 4px 20px rgba(245, 158, 11, .35);
+
+      /* safe area insets */
+      --safe-top: env(safe-area-inset-top, 0px);
+      --safe-bottom: env(safe-area-inset-bottom, 0px);
+      --safe-left: env(safe-area-inset-left, 0px);
+      --safe-right: env(safe-area-inset-right, 0px);
+    }
+
+    html {
+      height: 100%;
+      -webkit-text-size-adjust: 100%;
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg);
+      color: var(--text-primary);
+      min-height: 100%;
+      min-height: 100dvh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      overflow-x: hidden;
+      position: relative;
+    }
+
+    /* subtle dot grid */
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      background-image: radial-gradient(circle, rgba(165, 130, 95, .1) 1px, transparent 1px);
+      background-size: 26px 26px;
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    /* ── Animations ─────────────────────────────────────────── */
+    @keyframes fadeIn {
+      from {
+        opacity: 0;
+      }
+
+      to {
+        opacity: 1;
+      }
+    }
+
+    @keyframes slideUp {
+      from {
+        opacity: 0;
+        transform: translateY(20px);
+      }
+
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    @keyframes msgIn {
+      from {
+        opacity: 0;
+        transform: translateY(8px);
+      }
+
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    @keyframes bounce {
+
+      0%,
+      60%,
+      100% {
+        transform: translateY(0);
+        opacity: .4;
+      }
+
+      30% {
+        transform: translateY(-5px);
+        opacity: 1;
+      }
+    }
+
+    @keyframes btnPop {
+      from {
+        opacity: 0;
+        transform: translateY(12px) scale(.96);
+      }
+
+      to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+      }
+    }
+
+    /* ══════════════════════════════════════════════════════════
+       LANDING PAGE
+    ══════════════════════════════════════════════════════════ */
+    .landing {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background: var(--bg);
+      text-align: center;
+      padding: 32px 24px;
+      padding-top: calc(32px + var(--safe-top));
+      padding-bottom: calc(48px + var(--safe-bottom));
+      z-index: 100;
+      animation: fadeIn .5s ease;
+    }
+
+    .landing-icon {
+      font-size: 64px;
+      margin-bottom: 20px;
+      filter: drop-shadow(0 4px 12px rgba(200, 130, 60, .2));
+    }
+
+    .landing h1 {
+      font-size: clamp(1.6rem, 6vw, 2.2rem);
+      font-weight: 700;
+      color: var(--text-primary);
+      letter-spacing: -.02em;
+      margin-bottom: 10px;
+      line-height: 1.2;
+    }
+
+    .landing p {
+      font-size: clamp(.9rem, 3.5vw, 1rem);
+      color: var(--text-muted);
+      line-height: 1.6;
+      max-width: 280px;
+      margin-bottom: 40px;
+    }
+
+    .get-started {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 16px 38px;
+      background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 50%, #d97706 100%);
+      color: #1f1400;
+      border: none;
+      border-radius: 50px;
+      font-family: inherit;
+      font-size: 1rem;
+      font-weight: 700;
+      letter-spacing: .01em;
+      cursor: pointer;
+      box-shadow: 0 4px 22px rgba(245, 158, 11, .40);
+      transition: filter .18s, transform .14s, box-shadow .18s;
+      -webkit-tap-highlight-color: transparent;
+      animation: btnPop .4s ease both;
+    }
+
+    .get-started:active {
+      transform: scale(.96);
+    }
+
+    .get-started:hover {
+      filter: brightness(1.05);
+      box-shadow: 0 6px 26px rgba(245, 158, 11, .52);
+    }
+
+    .landing-dots {
+      position: absolute;
+      bottom: calc(28px + var(--safe-bottom));
+      display: flex;
+      gap: 6px;
+    }
+
+    .landing-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--border-hover);
+    }
+
+    .landing-dot.active {
+      background: #f59e0b;
+      width: 20px;
+      border-radius: 3px;
+      box-shadow: 0 0 8px rgba(245, 158, 11, .5);
+    }
+
+    /* ══════════════════════════════════════════════════════════
+       CHAT PAGE
+    ══════════════════════════════════════════════════════════ */
+    .chat-page {
+      display: none;
+      flex-direction: column;
+      width: 100%;
+      max-width: 640px;
+      height: 100dvh;
+      /* fixed: lets chat-container scroll inside */
+      position: sticky;
+      /* keeps it pinned relative to viewport */
+      top: 0;
+      z-index: 1;
+    }
+
+    /* ── Top Bar ──────────────────────────────────────────── */
+    .top-bar {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      padding: calc(var(--safe-top) + 10px) 16px 10px;
+      background: rgba(253, 251, 247, .95);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border-bottom: 1.5px solid rgba(245, 158, 11, .22);
+    }
+
+    .top-bar-inner {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .nav-button {
+      min-width: 44px;
+      min-height: 44px;
+      border: none;
+      background: transparent;
+      color: var(--text-soft);
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 12px;
+      transition: background .15s;
+      -webkit-tap-highlight-color: transparent;
+      flex-shrink: 0;
+    }
+
+    .nav-button:active {
+      background: var(--bg-pattern);
+    }
+
+    .avatar {
+      width: 42px;
+      height: 42px;
+      border-radius: 50%;
+      border: 2px solid rgba(200, 160, 110, .3);
+      flex-shrink: 0;
+      background: linear-gradient(135deg, #e8c9a0 0%, #c9956a 50%, #8b5e3c 100%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 22px;
+      line-height: 1;
+    }
+
+    .profile-info {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .profile-name {
+      font-size: 16px;
+      font-weight: 600;
+      color: var(--text-primary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .profile-status {
+      font-size: 12px;
+      color: #4caa5a;
+      font-weight: 500;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      margin-top: 2px;
+    }
+
+    .status-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: #4caa5a;
+      flex-shrink: 0;
+    }
+
+    .info-btn {
+      min-width: 44px;
+      min-height: 44px;
+      border: none;
+      background: transparent;
+      color: var(--text-soft);
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 12px;
+      transition: background .15s;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    .info-btn:active {
+      background: var(--bg-pattern);
+    }
+
+    /* ── Privacy Note ─────────────────────────────────────── */
+    .privacy-note {
+      text-align: center;
+      font-size: 11px;
+      color: var(--text-muted);
+      letter-spacing: .03em;
+      padding: 8px 16px 2px;
+    }
+
+    /* ── Chat Messages ────────────────────────────────────── */
+    .chat-container {
+      flex: 1;
+      min-height: 0;
+      /* CRITICAL: allows flex child to shrink & scroll */
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      padding: 12px 16px 16px;
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+      overscroll-behavior: contain;
+    }
+
+    .message-row {
+      display: flex;
+      flex-direction: column;
+      width: 100%;
+    }
+
+    .message-row.outgoing {
+      align-items: flex-end;
+    }
+
+    .message-row.incoming {
+      align-items: flex-start;
+    }
+
+    .message {
+      max-width: min(82%, 480px);
+      padding: 12px 16px;
+      border-radius: var(--radius-msg);
+      font-size: 16px;
+      /* 16px prevents iOS auto-zoom on focus */
+      line-height: 1.55;
+      word-break: break-word;
+      white-space: pre-wrap;
+      animation: msgIn .22s ease;
+    }
+
+    .message.bot {
+      background: var(--bot-bubble);
+      color: var(--bot-text);
+      border: 1px solid var(--bot-border);
+      border-bottom-left-radius: 5px;
+      box-shadow: var(--shadow-xs);
+    }
+
+    .message.user {
+      background: linear-gradient(135deg, #fef08a 0%, #fde047 100%);
+      color: #3b2502;
+      font-weight: 500;
+      border: 1px solid rgba(202, 138, 4, .28);
+      border-bottom-right-radius: 5px;
+      box-shadow: 0 2px 8px rgba(202, 138, 4, .12);
+    }
+
+    .time {
+      margin-top: 4px;
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    .message-row.outgoing .time {
+      padding-right: 2px;
+    }
+
+    .message-row.incoming .time {
+      padding-left: 2px;
+    }
+
+    /* ── Typing Indicator ─────────────────────────────────── */
+    .typing-indicator {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      padding: 14px 18px;
+      background: var(--bot-bubble);
+      border: 1px solid var(--bot-border);
+      border-radius: var(--radius-msg);
+      border-bottom-left-radius: 5px;
+      box-shadow: var(--shadow-xs);
+      width: fit-content;
+    }
+
+    .typing-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: #f59e0b;
+      animation: bounce 1.3s ease-in-out infinite;
+    }
+
+    .typing-dot:nth-child(2) {
+      animation-delay: .18s;
+    }
+
+    .typing-dot:nth-child(3) {
+      animation-delay: .36s;
+    }
+
+    /* ── Bottom Composer ──────────────────────────────────── */
+    .bottom-section {
+      position: sticky;
+      bottom: 0;
+      background: rgba(253, 251, 247, .96);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border-top: 1px solid rgba(217, 160, 80, .22);
+      padding: 10px 16px;
+      padding-bottom: calc(10px + var(--safe-bottom));
+    }
+
+    .composer {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      background: var(--surface);
+      border: 1.5px solid var(--border);
+      border-radius: 50px;
+      padding: 6px 6px 6px 18px;
+      box-shadow: var(--shadow-sm);
+      transition: border-color .2s, box-shadow .2s;
+    }
+
+    .composer:focus-within {
+      border-color: #f59e0b;
+      box-shadow: 0 0 0 3px rgba(245, 158, 11, .15), var(--shadow-sm);
+    }
+
+    .composer input {
+      flex: 1;
+      border: none;
+      background: transparent;
+      color: var(--text-primary);
+      font-family: inherit;
+      font-size: 16px;
+      /* prevents iOS zoom */
+      outline: none;
+      line-height: 1.4;
+      min-height: 36px;
+    }
+
+    .composer input::placeholder {
+      color: var(--text-muted);
+    }
+
+    .send-btn {
+      width: 44px;
+      height: 44px;
+      border: none;
+      background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 55%, #d97706 100%);
+      border-radius: 50%;
+      color: #ffffff;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      transition: filter .18s, transform .12s, box-shadow .18s;
+      -webkit-tap-highlight-color: transparent;
+      box-shadow: 0 3px 14px rgba(245, 158, 11, .38);
+    }
+
+    .send-btn:active:not(:disabled) {
+      transform: scale(.92);
+    }
+
+    .send-btn:hover:not(:disabled) {
+      filter: brightness(1.06);
+      box-shadow: 0 4px 18px rgba(245, 158, 11, .50);
+    }
+
+    .send-btn:disabled {
+      opacity: .4;
+      cursor: not-allowed;
+      box-shadow: none;
+    }
+
+    /* ── Quick-reply chips ────────────────────────────────── */
+    .chip-row {
+      display: flex;
+      gap: 8px;
+      margin-top: 10px;
+      overflow-x: auto;
+      padding-bottom: 2px;
+      scrollbar-width: none;
+    }
+
+    .chip-row::-webkit-scrollbar {
+      display: none;
+    }
+
+    .chip {
+      flex-shrink: 0;
+      border: 1.5px solid rgba(217, 160, 80, .25);
+      background: var(--surface);
+      color: var(--text-soft);
+      border-radius: 20px;
+      padding: 9px 16px;
+      font-family: inherit;
+      font-size: 13px;
+      cursor: pointer;
+      white-space: nowrap;
+      -webkit-tap-highlight-color: transparent;
+      transition: border-color .15s, background .15s, color .15s, box-shadow .15s;
+    }
+
+    .chip:active,
+    .chip:hover {
+      border-color: #f59e0b;
+      background: #fffbeb;
+      color: #92400e;
+      box-shadow: 0 2px 8px rgba(245, 158, 11, .15);
+    }
+
+    /* ══════════════════════════════════════════════════════════
+       MODAL
+    ══════════════════════════════════════════════════════════ */
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(30, 20, 12, .45);
+      backdrop-filter: blur(6px);
+      -webkit-backdrop-filter: blur(6px);
+      display: flex;
+      align-items: flex-end;
+      /* sheet slides up from bottom on mobile */
+      justify-content: center;
+      padding: 0;
+      z-index: 200;
+      animation: fadeIn .2s ease;
+    }
+
+    .modal {
+      width: 100%;
+      max-width: 560px;
+      background: var(--surface);
+      border-radius: 24px 24px 0 0;
+      padding: 20px 20px;
+      padding-bottom: calc(20px + var(--safe-bottom));
+      box-shadow: 0 -8px 40px rgba(40, 25, 12, .15);
+      animation: slideUp .28s ease;
+      overflow-y: auto;
+      max-height: 92dvh;
+    }
+
+    /* drag handle */
+    .modal-handle {
+      width: 40px;
+      height: 4px;
+      background: var(--border-hover);
+      border-radius: 2px;
+      margin: 0 auto 20px;
+    }
+
+    .modal h3 {
+      font-size: 18px;
+      font-weight: 700;
+      color: var(--text-primary);
+      margin-bottom: 4px;
+    }
+
+    .modal-sub {
+      font-size: 13px;
+      color: var(--text-muted);
+      margin-bottom: 20px;
+      line-height: 1.5;
+    }
+
+    .form-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      gap: 14px;
+      margin-bottom: 16px;
+    }
+
+    .form-group {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      min-width: 0;
+    }
+
+    .form-group.full {
+      grid-column: 1 / -1;
+    }
+
+    .form-group label {
+      font-size: 11px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: .07em;
+      font-weight: 600;
+    }
+
+    .form-group input {
+      width: 100%;
+      background: var(--bg);
+      border: 1.5px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 13px 14px;
+      color: var(--text-primary);
+      font-family: inherit;
+      font-size: 16px;
+      /* prevents iOS zoom */
+      outline: none;
+      transition: border-color .18s;
+      -webkit-appearance: none;
+      appearance: none;
+    }
+
+    .form-group input:focus {
+      border-color: #f59e0b;
+      box-shadow: 0 0 0 3px rgba(245, 158, 11, .14);
+    }
+
+    .btn-row {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      margin-top: 4px;
+    }
+
+    .save-btn {
+      width: 100%;
+      border: none;
+      background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 50%, #d97706 100%);
+      color: #1a1200;
+      border-radius: var(--radius-sm);
+      padding: 16px 14px;
+      font-family: inherit;
+      font-size: 15px;
+      font-weight: 700;
+      letter-spacing: .01em;
+      cursor: pointer;
+      box-shadow: 0 4px 18px rgba(245, 158, 11, .35);
+      transition: filter .18s, transform .12s, box-shadow .18s;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    .save-btn:active {
+      transform: scale(.98);
+    }
+
+    .save-btn:hover {
+      filter: brightness(1.05);
+      box-shadow: 0 6px 22px rgba(245, 158, 11, .45);
+    }
+
+    .lookup-btn {
+      width: 100%;
+      border: 1.5px solid var(--border);
+      background: var(--surface-alt);
+      color: var(--text-soft);
+      border-radius: var(--radius-sm);
+      padding: 14px 14px;
+      font-family: inherit;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: border-color .18s, background .18s, color .18s;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    .lookup-btn:hover,
+    .lookup-btn:active {
+      border-color: #f59e0b;
+      background: #fffdf7;
+      color: #92400e;
+    }
+
+    .cancel-btn {
+      border: 0;
+      background: transparent;
+      color: var(--text-muted);
+      padding: 10px;
+      font: inherit;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    /* ── Utilities ────────────────────────────────────────── */
+    .hidden {
+      display: none !important;
+    }
+
+    /* ══════════════════════════════════════════════════════════
+       DESKTOP OVERRIDES (≥ 600px)
+    ══════════════════════════════════════════════════════════ */
+    @media (min-width: 600px) {
+      .chat-page {
+        padding: 0 16px;
+      }
+
+      .top-bar {
+        padding-top: calc(var(--safe-top) + 14px);
+        border-radius: 0;
+        border-bottom: none;
+      }
+
+      .bottom-section {
+        border-top: none;
+        padding-bottom: calc(20px + var(--safe-bottom));
+      }
+
+      .message {
+        max-width: min(72%, 480px);
+      }
+
+      /* center the modal like a dialog on desktop */
+      .modal-overlay {
+        align-items: center;
+        padding: 20px;
+      }
+
+      .modal {
+        border-radius: 24px;
+        max-height: 88vh;
+      }
+
+      .modal-handle {
+        display: none;
+      }
+    }
+  </style>
+</head>
+
+<body>
+
+  <!-- ══ LANDING ══ -->
+  <div class="landing" id="landingPage">
+    <div class="landing-icon" style="display:none"></div>
+    <span
+      style="display:inline-block;padding:4px 14px;background:#fef3c7;color:#92400e;border:1px solid rgba(245,158,11,.32);border-radius:20px;font-size:12px;font-weight:600;letter-spacing:.04em;margin-bottom:16px;text-transform:uppercase;">✨
+      Vedic Astrology AI</span>
+    <h1>Astro AI</h1>
+    <p>Your personal Vedic Astrology assistant. Ask anything about your birth chart.</p>
+    <button class="get-started" id="startBtn">
+      <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.2"
+        stroke-linecap="round" stroke-linejoin="round">
+        <line x1="4" y1="10" x2="17" y2="10" />
+        <polyline points="11 4 17 10 11 16" />
+      </svg>
+      Get Started
+    </button>
+    <div class="landing-dots">
+      <div class="landing-dot active"></div>
+      <div class="landing-dot"></div>
+      <div class="landing-dot"></div>
+    </div>
+  </div>
+
+  <!-- ══ CHAT PAGE ══ -->
+  <div class="chat-page" id="chatPage">
+
+    <!-- Top Bar -->
+    <header class="top-bar">
+      <div class="top-bar-inner">
+        <button class="nav-button" aria-label="Go back" id="backBtn">
+          <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round">
+            <path d="M13 16l-6-6 6-6" />
+          </svg>
+        </button>
+
+        <div class="profile-info">
+          <div class="profile-name" id="profileName">Guest</div>
+          <div class="profile-status"><span class="status-dot"></span><span id="profileSubtitle">Vedic AI • Online</span></div>
+        </div>
+        <div style="display:flex;gap:6px;align-items:center;">
+          <button class="info-btn" title="Edit Birth Details" onclick="openProfileEditor()" style="padding:0 12px;font-size:12px;font-weight:600;display:flex;align-items:center;gap:6px;border-radius:12px;background:#fef3c7;color:#92400e;border:1px solid rgba(245,158,11,.3);height:36px;cursor:pointer;">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 20h9"></path>
+              <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path>
+            </svg>
+            Edit Profile
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <div class="privacy-note">🔒 AI Astrologer • 100% confidential • Personalized to your chart</div>
+
+    <!-- Messages -->
+    <main class="chat-container" id="chatContainer"></main>
+
+    <!-- Composer -->
+    <div class="bottom-section">
+      <div class="composer">
+        <input type="text" id="queryInput" placeholder="Ask your question…" autocomplete="off" enterkeyhint="send"
+          onkeypress="handleKeyPress(event)" />
+        <button class="send-btn" id="sendBtn" aria-label="Send" onclick="sendMessage()">
+          <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.2"
+            stroke-linecap="round" stroke-linejoin="round">
+            <line x1="4" y1="10" x2="18" y2="10" />
+            <polyline points="12 4 18 10 12 16" />
+          </svg>
+        </button>
+      </div>
+      <div class="chip-row" id="chipRow">
+        <button class="chip" type="button" onclick="chipClick(this)">Which career suits me?</button>
+        <button class="chip" type="button" onclick="chipClick(this)">My moon sign?</button>
+        <button class="chip" type="button" onclick="chipClick(this)">Best time to travel?</button>
+        <button class="chip" type="button" onclick="chipClick(this)">Love compatibility?</button>
+        <button class="chip" type="button" onclick="chipClick(this)">Wealth &amp; finances?</button>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ══ BIRTH MODAL ══ -->
+  <div class="modal-overlay hidden" id="birthModal">
+    <div class="modal">
+      <div class="modal-handle"></div>
+      <h3>Your Birth Chart Details</h3>
+      <p class="modal-sub">Enter your details to generate your personalized astrological reading</p>
+
+      <div class="form-grid">
+        <div class="form-group">
+          <label>Your Name</label>
+          <input type="text" id="firstName" placeholder="Enter your full or first name" autocomplete="given-name" />
+        </div>
+        <div class="form-group">
+          <label>Age (Optional)</label>
+          <input type="number" id="userAge" placeholder="e.g. 25" min="1" max="120" />
+        </div>
+        <div class="form-group">
+          <label>Day (1–31)</label>
+          <input type="number" id="birthDay" placeholder="e.g. 14" inputmode="numeric" />
+        </div>
+        <div class="form-group">
+          <label>Month (1–12)</label>
+          <input type="number" id="birthMonth" placeholder="e.g. 8" inputmode="numeric" />
+        </div>
+        <div class="form-group">
+          <label>Year</label>
+          <input type="number" id="birthYear" placeholder="e.g. 1998" inputmode="numeric" />
+        </div>
+        <div class="form-group">
+          <label>Hour (0–23.9)</label>
+          <input type="number" step="0.01" id="birthHour" placeholder="e.g. 14.5" inputmode="decimal" />
+        </div>
+        <div class="form-group full">
+          <label>Birth Place</label>
+          <input type="text" id="birthPlace" placeholder="City, Country (e.g. Mumbai, India)" autocomplete="off" />
+        </div>
+        <div class="form-group">
+          <label>Latitude</label>
+          <input type="number" step="0.0001" id="latitude" placeholder="Auto-filled" inputmode="decimal" />
+        </div>
+        <div class="form-group">
+          <label>Longitude</label>
+          <input type="number" step="0.0001" id="longitude" placeholder="Auto-filled" inputmode="decimal" />
+        </div>
+        <div class="form-group">
+          <label>Time Zone Offset (UTC)</label>
+          <input type="number" id="timezone" min="-12" max="14" step="0.25" value="5.5" inputmode="decimal" />
+        </div>
+      </div>
+      <div class="btn-row">
+        <button class="lookup-btn" onclick="fetchCoordinates()">
+          📍 Lookup Coordinates from Place
+        </button>
+        <button class="cancel-btn" type="button" onclick="cancelProfileEntry()">
+          Back
+        </button>
+        <button class="save-btn" onclick="saveDetails()">
+          Save &amp; Start Chat ✨
+        </button>
+      </div>
+    </div>
+  </div>
+
+
+
+  <script>
+    // ── Global Configurations & Constants ─────────────────────────
+    const isBackendOrigin = ['8000', '8001'].includes(window.location.port);
+    const BACKEND_ORIGIN = isBackendOrigin
+      ? window.location.origin
+      : 'http://127.0.0.1:8000';
+    const BACKEND_URL = `${BACKEND_ORIGIN}/chat`;
+    
+    let USER_ID = localStorage.getItem('astro_user_id') || ('user_' + Math.random().toString(36).substring(2, 9));
+    localStorage.setItem('astro_user_id', USER_ID);
+
+    let isProcessing = false;
+    const landing = document.getElementById('landingPage');
+    const chatPage = document.getElementById('chatPage');
+    const startBtn = document.getElementById('startBtn');
+
+    // Load previously saved user profile if available
+    function loadSavedProfile() {
+      const saved = localStorage.getItem('astro_user_profile');
+      if (saved) {
+        try {
+          const p = JSON.parse(saved);
+          if (p.name && document.getElementById('firstName')) document.getElementById('firstName').value = p.name;
+          if (p.age && document.getElementById('userAge')) document.getElementById('userAge').value = p.age;
+          if (p.day && document.getElementById('birthDay')) document.getElementById('birthDay').value = p.day;
+          if (p.month && document.getElementById('birthMonth')) document.getElementById('birthMonth').value = p.month;
+          if (p.year && document.getElementById('birthYear')) document.getElementById('birthYear').value = p.year;
+          if (p.hour && document.getElementById('birthHour')) document.getElementById('birthHour').value = p.hour;
+          if (p.place && document.getElementById('birthPlace')) document.getElementById('birthPlace').value = p.place;
+          if (p.lat && document.getElementById('latitude')) document.getElementById('latitude').value = p.lat;
+          if (p.lon && document.getElementById('longitude')) document.getElementById('longitude').value = p.lon;
+          if (p.timezone !== undefined && document.getElementById('timezone')) document.getElementById('timezone').value = p.timezone;
+
+          const profileNameEl = document.getElementById('profileName');
+          if (profileNameEl) profileNameEl.textContent = p.name || 'Guest';
+
+          const profileSubtitle = document.getElementById('profileSubtitle');
+          if (profileSubtitle) {
+            profileSubtitle.textContent = p.age ? `${p.age} years old • Online` : 'Vedic AI • Online';
+          }
+          return true;
+        } catch (e) {
+          console.error('Error loading saved profile:', e);
+        }
+      }
+      return false;
+    }
+
+    function initChatGreeting() {
+      const container = document.getElementById('chatContainer');
+      if (container && container.children.length === 0) {
+        const rawName = (document.getElementById('firstName')?.value || '').trim();
+        const greeting = (rawName && rawName.toLowerCase() !== 'guest')
+          ? `Namaste ${rawName}! 🙏 Welcome to Astro AI. Your birth chart parameters are active. Ask me any question about your career, marriage, health, finances, or life path!`
+          : `Namaste! 🙏 Welcome to Astro AI. Ask me any question about your career, relationships, health, finances, or life path!`;
+        appendMessage(greeting, 'bot');
+      }
+    }
+
+    function resetProfileForm() {
+      document.querySelectorAll('#birthModal input').forEach(input => {
+        input.value = input.id === 'timezone' ? input.defaultValue : '';
+      });
+    }
+
+    function openProfileEditor() {
+      loadSavedProfile();
+      toggleModal('birthModal', true);
+    }
+
+    function cancelProfileEntry() {
+      toggleModal('birthModal', false);
+      if (chatPage && chatPage.style.display !== 'flex' && landing) {
+        landing.style.display = 'flex';
+      }
+    }
+
+    // UI Initializations
+    if (startBtn) {
+      startBtn.addEventListener('click', () => {
+        resetProfileForm();
+        if (landing) landing.style.display = 'none';
+        toggleModal('birthModal', true);
+        document.getElementById('firstName')?.focus();
+      });
+    }
+
+    const backBtn = document.getElementById('backBtn');
+    if (backBtn) {
+      backBtn.addEventListener('click', () => { 
+        if (chatPage) chatPage.style.display = 'none'; 
+        if (landing) landing.style.display = 'flex'; 
+      });
+    }
+
+    function toggleModal(id, show) { 
+      const el = document.getElementById(id); 
+      if (el) {
+        if (show) el.classList.remove('hidden'); 
+        else el.classList.add('hidden'); 
+      }
+    }
+
+    // ── Geocoding & Profile Helpers ──────────────────────────────
+    async function fetchCoordinates() {
+      const birthPlaceInput = document.getElementById('birthPlace');
+      const place = birthPlaceInput ? birthPlaceInput.value.trim() : '';
+      if (!place) { alert('Please enter a place name first.'); return; }
+
+      const btn = document.querySelector('.lookup-btn'); 
+      if (btn) { btn.textContent = '⏳ Looking up…'; btn.disabled = true; }
+
+      try {
+        const resp = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(place)}&limit=1`);
+        const data = await resp.json();
+        if (!data || !data.length) { 
+          alert('Place not found. Try a different location.'); 
+          return; 
+        }
+        const { lat, lon } = data[0];
+        const latInput = document.getElementById('latitude');
+        const lonInput = document.getElementById('longitude');
+        if (latInput) latInput.value = parseFloat(lat).toFixed(4);
+        if (lonInput) lonInput.value = parseFloat(lon).toFixed(4);
+      } catch (e) { 
+        console.error('Coordinates Lookup Error:', e); 
+        alert('Could not look up coordinates. Please enter manually.'); 
+      } finally { 
+        if (btn) { btn.textContent = '📍 Lookup Coordinates from Place'; btn.disabled = false; }
+      }
+    }
+
+    function saveDetails() {
+      const rawName = (document.getElementById('firstName')?.value || '').trim();
+      const name = rawName || 'Guest';
+      const age = document.getElementById('userAge')?.value || '';
+      const day = document.getElementById('birthDay')?.value || '';
+      const month = document.getElementById('birthMonth')?.value || '';
+      const year = document.getElementById('birthYear')?.value || '';
+      const hour = document.getElementById('birthHour')?.value || '';
+      const place = document.getElementById('birthPlace')?.value || '';
+      const lat = document.getElementById('latitude')?.value || '';
+      const lon = document.getElementById('longitude')?.value || '';
+      const timezone = document.getElementById('timezone')?.value || '5.5';
+
+      // Persist profile to localStorage so real users keep their own data
+      const userProfile = {
+        name, age,
+        day, month, year, hour, place, lat, lon, timezone
+      };
+      localStorage.setItem('astro_user_profile', JSON.stringify(userProfile));
+
+      const profileNameEl = document.getElementById('profileName');
+      if (profileNameEl) profileNameEl.textContent = name;
+
+      const profileSubtitle = document.getElementById('profileSubtitle');
+      if (profileSubtitle) {
+        profileSubtitle.textContent = age ? `${age} years old • Online` : 'Vedic AI • Online';
+      }
+      
+      toggleModal('birthModal', false);
+      if (landing) landing.style.display = 'none';
+      if (chatPage) chatPage.style.display = 'flex';
+      initChatGreeting();
+    }
+
+    function handleKeyPress(e) { if (e.key === 'Enter') sendMessage(); }
+    
+    function chipClick(chip) {
+      const inpt = document.getElementById('queryInput');
+      if (inpt) {
+        inpt.value = chip.textContent.trim();
+        sendMessage();
+      }
+    }
+
+    function renderRelatedQuestions(questions) {
+      const row = document.getElementById('chipRow');
+      if (!row || !Array.isArray(questions)) return;
+
+      const validQuestions = questions
+        .filter(question => typeof question === 'string' && question.trim())
+        .slice(0, 3);
+      if (!validQuestions.length) return;
+
+      row.replaceChildren();
+      validQuestions.forEach(question => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'chip';
+        button.textContent = question.trim();
+        button.addEventListener('click', () => chipClick(button));
+        row.appendChild(button);
+      });
+    }
+
+    // ── Question Classification Logic ──────────────────────────────
+    const DOMAINS = {
+      career: ['career', 'job', 'profession', 'business', 'work', 'employment', 'promotion', 'salary', 'success', 'entrepreneur'],
+      love: ['love', 'relationship', 'marriage', 'partner', 'spouse', 'romantic', 'soulmate', 'husband', 'wife', 'boyfriend', 'girlfriend', 'compatibility', 'divorce'],
+      health: ['health', 'disease', 'illness', 'body', 'medical', 'surgery', 'longevity', 'mental', 'physical', 'fitness'],
+      wealth: ['money', 'wealth', 'finance', 'financial', 'property', 'investment', 'income', 'lottery', 'inheritance', 'riches', 'profit'],
+      travel: ['travel', 'abroad', 'foreign', 'journey', 'migration', 'settle', 'visa', 'overseas'],
+      children: ['child', 'children', 'son', 'daughter', 'pregnancy', 'baby', 'kids', 'progeny', 'fertility'],
+      education: ['education', 'study', 'exam', 'college', 'university', 'degree', 'learning', 'scholarship'],
+      spirituality: ['spiritual', 'moksha', 'karma', 'dharma', 'meditation', 'god', 'religion', 'liberation'],
+      family: ['family', 'mother', 'father', 'sibling', 'parent', 'brother', 'sister'],
+    };
+
+    const ADVANCED_TERMS = [
+      'dasha', 'mahadasha', 'antardasha', 'transit', 'gochar', 'sade sati',
+      'rahu', 'ketu', 'mangal dosha', 'manglik', 'kaal sarp', 'nakshatra', 'navamsa',
+      'navamsha', 'lagna', 'ascendant', 'conjunction', 'aspect', 'retrograde',
+      'exaltation', 'debilitation', 'yoga', 'raj yoga', 'dhana yoga',
+      'gajakesari', 'vimshottari', 'ashtakavarga', 'divisional', 'varga',
+      'bhava', 'dosha', 'remedies', 'gemstone', 'muhurat', 'graha',
+      '10th house', '7th house', '1st house', '2nd house', '5th house', '9th house', '11th house'
+    ];
+
+    function classifyQuestion(text) {
+      const q = text.toLowerCase();
+      const isAdvanced = ADVANCED_TERMS.some(t => q.includes(t));
+      const hitDomains = Object.values(DOMAINS).filter(kws => kws.some(kw => q.includes(kw)));
+      if (hitDomains.length >= 2) return 'mixed';
+      if (isAdvanced) return 'advanced';
+      return 'simple';
+    }
+
+    // ── Send Message & Handle Dynamic Response ───────────────────────
+    async function sendMessage() {
+      const input = document.getElementById('queryInput');
+      const query = input ? input.value.trim() : '';
+      if (!query || isProcessing) return;
+
+      const type = classifyQuestion(query);
+      const isAIMode = true;
+
+      if (input) input.value = ''; 
+      setProcessing(true);
+      appendMessage(query, 'user');
+
+      // Show appropriate indicator: AI sparkle badge for Gemini, dots for instant
+      const typingIndicator = isAIMode ? appendAIThinking() : appendTyping();
+
+      const rawAge = parseInt(document.getElementById('userAge')?.value, 10);
+      const rawTimezone = parseFloat(document.getElementById('timezone')?.value);
+      const payload = {
+        user_id: USER_ID,
+        query: query,
+        question_type: type,   // 'simple' → instant engine (<5ms), 'advanced'/'mixed' → Gemini LLM
+        name: (document.getElementById('firstName')?.value || '').trim() || 'Guest',
+        age: isNaN(rawAge) ? null : rawAge,
+        birth_year: parseInt(document.getElementById('birthYear')?.value, 10) || 2000,
+        birth_month: parseInt(document.getElementById('birthMonth')?.value, 10) || 1,
+        birth_day: parseInt(document.getElementById('birthDay')?.value, 10) || 1,
+        birth_hour: parseFloat(document.getElementById('birthHour')?.value) || 12.0,
+        latitude: parseFloat(document.getElementById('latitude')?.value) || 20.5937,
+        longitude: parseFloat(document.getElementById('longitude')?.value) || 78.9629,
+        timezone: Number.isFinite(rawTimezone) ? rawTimezone : 5.5
+      };
+
+      try {
+        const resp = await fetch(BACKEND_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+
+        if (typingIndicator) typingIndicator.remove();
+
+        if (!resp.ok) { 
+          const errDetail = await resp.text();
+          appendMessage(`Notice: Received response with status ${resp.status}. Please try again.`, 'bot'); 
+          setProcessing(false); 
+          return; 
+        }
+
+        const contentType = resp.headers.get('content-type') || '';
+        
+        // Instant engine response (JSON) — appears immediately
+        if (contentType.includes('application/json')) {
+          const data = await resp.json();
+          appendMessage(data.answer || data.response || 'I could not generate an answer. Please try again.', 'bot');
+          renderRelatedQuestions(data.related_questions);
+        } 
+        // Gemini LLM streaming response — text flows in real-time
+        else {
+          const botMsgContainer = appendMessage('', 'bot');
+          const reader = resp.body.getReader();
+          const decoder = new TextDecoder('utf-8');
+          let firstChunk = true;
+
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            const chunk = decoder.decode(value, { stream: true });
+            if (firstChunk) {
+              // Add AI badge on first streamed chunk
+              const badge = document.createElement('span');
+              badge.textContent = '✨ AI ';
+              badge.style.cssText = 'font-size:11px;font-weight:700;color:#f59e0b;opacity:.75;margin-right:4px;';
+              botMsgContainer.prepend(badge);
+              firstChunk = false;
+            }
+            botMsgContainer.appendChild(document.createTextNode(chunk));
+            scrollToBottom(true);
+          }
+        }
+      } catch (err) {
+        console.error('Network Error:', err);
+        if (typingIndicator) typingIndicator.remove();
+        appendMessage('Connection error. Please ensure the backend server is running.', 'bot');
+      } finally {
+        setProcessing(false);
+        if (input) input.focus();
+      }
+    }
+
+    // ── DOM Helper Functions ───────────────────────────────────────
+    function appendMessage(text, sender) {
+      const container = document.getElementById('chatContainer');
+      if (!container) return null;
+
+      const row = document.createElement('div'); 
+      row.className = `message-row ${sender === 'user' ? 'outgoing' : 'incoming'}`;
+      
+      const msg = document.createElement('div'); 
+      msg.className = `message ${sender}`; 
+      msg.innerText = text;
+
+      const timeDiv = document.createElement('div'); 
+      timeDiv.className = 'time'; 
+      timeDiv.innerText = new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+
+      row.appendChild(msg); 
+      row.appendChild(timeDiv); 
+      container.appendChild(row); 
+      scrollToBottom(); 
+      
+      return msg;
+    }
+
+    function appendTyping() {
+      const container = document.getElementById('chatContainer');
+      if (!container) return null;
+
+      const row = document.createElement('div'); 
+      row.className = 'message-row incoming';
+      row.innerHTML = '<div class="typing-indicator"><div class="typing-dot"></div><div class="typing-dot"></div><div class="typing-dot"></div></div>';
+      
+      container.appendChild(row); 
+      scrollToBottom(); 
+      return row;
+    }
+
+    function appendAIThinking() {
+      const container = document.getElementById('chatContainer');
+      if (!container) return null;
+
+      const row = document.createElement('div');
+      row.className = 'message-row incoming';
+      row.innerHTML = `
+        <div style="
+          display:inline-flex;align-items:center;gap:10px;
+          background:linear-gradient(135deg,#fffbeb,#fef3c7);
+          border:1px solid rgba(245,158,11,.35);
+          border-radius:16px;padding:10px 16px;
+          font-size:13px;font-weight:600;color:#92400e;
+          box-shadow:0 2px 10px rgba(245,158,11,.15);
+          animation:msgIn .25s ease;
+        ">
+          <span style="font-size:18px;animation:bounce 1.2s ease infinite;">✨</span>
+          <span>AI is consulting your birth chart…</span>
+          <div class="typing-indicator" style="margin:0;">
+            <div class="typing-dot"></div>
+            <div class="typing-dot"></div>
+            <div class="typing-dot"></div>
+          </div>
+        </div>`;
+
+      container.appendChild(row);
+      scrollToBottom();
+      return row;
+    }
+
+    function scrollToBottom(instant) {
+      requestAnimationFrame(() => {
+        const c = document.getElementById('chatContainer');
+        if (!c) return;
+        if (instant) {
+          c.scrollTop = c.scrollHeight;
+        } else {
+          c.scrollTo({ top: c.scrollHeight, behavior: 'smooth' });
+        }
+      });
+    }
+
+    function setProcessing(p) { 
+      isProcessing = p; 
+      const sendBtn = document.getElementById('sendBtn');
+      if (sendBtn) sendBtn.disabled = p;
+    }
+
+  </script>
+</body>
+
+</html>

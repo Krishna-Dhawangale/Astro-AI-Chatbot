@@ -1,0 +1,144 @@
+{
+  "general_and_basics": [
+    {
+      "keywords": ["hi", "hello", "hey", "who are you", "what can you do", "help me"],
+      "answer": "Hello! I am your AI Astrologer. Based on your calculated birth chart with Ascendant in {ascendant}, Sun in {sun_sign}, and Moon in {moon_sign}, I can provide personalized guidance across career, finance, relationships, and health."
+    },
+    {
+      "keywords": ["what is my ascendant", "what is my lagna", "my rising sign"],
+      "answer": "Your calculated Lagna (Ascendant) is in {ascendant}. In Vedic astrology, the Lagna represents your physical body, innate personality, and overall life path."
+    },
+    {
+      "keywords": ["what is my moon sign", "my rashi", "rashi prediction"],
+      "answer": "Your calculated Moon Sign (Rashi) is in {moon_sign}. The Moon sign rules your mind, emotional processing, and internal state of peace."
+    },
+    {
+      "keywords": ["what is my sun sign", "my surya rashi"],
+      "answer": "Your calculated Sun Sign is in {sun_sign}. The Sun governs your core identity, soul purpose, leadership ability, and self-confidence."
+    },
+    {
+      "keywords": ["what is kundali", "birth chart meaning", "how astrology works"],
+      "answer": "A birth chart (Kundali) is an astronomical map of the sky at the exact moment and location of your birth. With your Ascendant in {ascendant}, it reveals planetary influences shaping your life events."
+    },
+    {
+      "keywords": ["what is dasha", "mahadasha meaning", "planetary period"],
+      "answer": "A Dasha is a major planetary period in Vimshottari astrology that activates specific houses and planets in your chart over defined years."
+    }
+  ],
+  "career": [
+    {
+      "keywords": ["when will i get job", "job change timing", "new job offer", "switch job"],
+      "answer": "With your Ascendant in {ascendant} and Sun in {sun_sign}, major career changes align with transits over your 10th house (profession) or 6th house (work environment). Active Sun or Mercury periods bring favorable hiring opportunities."
+    },
+    {
+      "keywords": ["promotion timing", "salary appraisal", "get raise", "career growth"],
+      "answer": "Promotions occur when your 10th house lord and Sun (governing authority) receive positive aspects, highlighting your professional achievements to management."
+    },
+    {
+      "keywords": ["government job", "sarkari naukri", "civil service astrology", "public sector"],
+      "answer": "Success in government roles requires a strong Sun position. With your Sun placed in {sun_sign}, administrative roles align with favorable 10th house dasha timing."
+    },
+    {
+      "keywords": ["business vs job", "should i do business", "start enterprise", "entrepreneurship"],
+      "answer": "Business capability is ruled by the 7th house (partnerships/trade) and Mercury. Given your Lagna in {ascendant}, a strong 7th house lord favors self-employment over a traditional job."
+    },
+    {
+      "keywords": ["work abroad", "foreign job", "relocation for work", "overseas career"],
+      "answer": "Overseas career opportunities are activated when the 9th house (long journeys) and 12th house (foreign lands) connect with your 10th house lord."
+    }
+  ],
+  "professional_life": [
+    {
+      "keywords": ["workplace environment", "office culture", "corporate stress", "workplace dynamics"],
+      "answer": "Your daily work environment is governed by your 6th house. With your Moon in {moon_sign}, maintaining emotional balance during challenging Saturn transits helps reduce stress."
+    },
+    {
+      "keywords": ["leadership role", "becoming manager", "executive position", "authority at work"],
+      "answer": "Leadership capacity depends on your Sun in {sun_sign} and 10th house strength. Favorable Sun transits boost your authority and decision-making capabilities."
+    },
+    {
+      "keywords": ["office politics", "boss conflict", "colleague issues", "workplace jealousy"],
+      "answer": "Workplace friction is linked to 6th house afflictions. Maintaining formal communication during malefic transits protects your professional reputation."
+    },
+    {
+      "keywords": ["skill development", "upskilling", "learning new technology", "professional training"],
+      "answer": "Learning efforts are favored when Mercury (intellect) and your 5th house receive positive aspects from Jupiter, accelerating career progression."
+    }
+  ],
+  "finance": [
+    {
+      "keywords": ["where to invest", "investment advice", "best investment assets", "where to put money"],
+      "answer": "Wealth accumulation is strongest during favorable Jupiter transits over your 2nd house (wealth) and 11th house (gains). Focus on long-term assets when your Lagna ({ascendant}) is well-supported."
+    },
+    {
+      "keywords": ["wealth & finances", "wealth and finances", "wealth", "finances", "financial outlook", "when will i be rich", "wealth prediction", "financial growth", "will i be wealthy"],
+      "answer": "Financial growth depends on Dhana Yogas formed between the 2nd and 11th houses. With your Sun in {sun_sign} and Lagna in {ascendant}, sustained efforts during major dasha cycles build lasting wealth."
+    },
+    {
+      "keywords": ["clear debt", "how to clear loans", "debt relief", "pay off loan"],
+      "answer": "The 6th house rules debts and liabilities. Favorable Saturn and Mars transits create the stability needed to clear loans systematically."
+    },
+    {
+      "keywords": ["lottery prediction", "sudden wealth", "windfall money", "speculative gain"],
+      "answer": "Sudden wealth is governed by the 8th house and Rahu. Strong, unafflicted aspects on your 8th house lord during Rahu or Venus periods indicate potential windfalls."
+    }
+  ],
+  "financial_status": [
+    {
+      "keywords": ["financial standing", "net worth growth", "overall financial status", "wealth level"],
+      "answer": "Your overall financial standing is calculated from the connections between your 2nd house (accumulated wealth) and 11th house (income). With Moon in {moon_sign}, disciplined planning ensures steady growth."
+    },
+    {
+      "keywords": ["cash flow", "liquidity status", "disposable income", "liquid funds"],
+      "answer": "Cash flow flexibility is governed by the 2nd house lord and Mercury. Maintaining liquid reserves cushions against volatile transits."
+    },
+    {
+      "keywords": ["credit score", "borrowing capacity", "loan eligibility", "financial credibility"],
+      "answer": "Borrowing capacity depends on a well-placed 6th house lord. Timely debt repayments protect your financial standing."
+    },
+    {
+      "keywords": ["passive income", "retire early", "fire movement", "secondary earnings"],
+      "answer": "Passive income streams activate when your 11th house lord connects with Jupiter and the 9th house of fortune."
+    }
+  ],
+  "personal_life": [
+    {
+      "keywords": ["when will i marry", "marriage age", "wedding date timing", "marriage prediction"],
+      "answer": "Marriage timing is influenced by Jupiter transits over your 7th house (partnerships) and active Venus dasha periods. With your Ascendant in {ascendant}, relationship harmony is favored during major Venus aspects."
+    },
+    {
+      "keywords": ["love or arranged", "love marriage chance", "type of marriage"],
+      "answer": "A direct connection or aspect between the 5th house (romance) and 7th house (marriage) strongly indicates a love marriage."
+    },
+    {
+      "keywords": ["spouse nature", "life partner personality", "future husband wife"],
+      "answer": "Your partner's personality is reflected by the sign on your 7th house cusp and the placement of Venus (for men) or Jupiter (for women)."
+    },
+    {
+      "keywords": ["breakup reconciliation", "get ex back", "relationship recovery", "patch up"],
+      "answer": "Relationship strain often occurs during Rahu/Ketu transits across the 1st/7th axis. With Moon in {moon_sign}, open communication supports resolution."
+    },
+    {
+      "keywords": ["childbirth timing", "conception astrology", "family planning", "kids prediction"],
+      "answer": "Children and progeny are ruled by the 5th house and Jupiter. Favorable transits over your 5th house mark auspicious windows for family expansion."
+    }
+  ],
+  "health": [
+    {
+      "keywords": ["overall health", "health prediction", "general wellness", "immunity level"],
+      "answer": "Overall vitality is governed by your Ascendant lord ({ascendant}) and the Sun ({sun_sign}). Strengthening your Lagna lord enhances general immunity and resilience."
+    },
+    {
+      "keywords": ["mental stress", "anxiety relief", "depression astrology", "peace of mind"],
+      "answer": "Mental well-being is tied to your Moon sign in {moon_sign}. Soft aspects from Jupiter on the Moon help alleviate anxiety and mental fatigue."
+    },
+    {
+      "keywords": ["chronic illness", "disease recovery", "long term sickness", "health cure"],
+      "answer": "Health challenges relate to the 6th house (disease) and 8th house. Positive Saturn transits and disciplined daily routines support recovery."
+    },
+    {
+      "keywords": ["digestive issues", "stomach problem", "gut health astrology", "diet advice"],
+      "answer": "Digestive health is ruled by the 5th house and the Sun ({sun_sign}). Consuming simple, home-cooked meals during afflicted Sun transits supports digestion."
+    }
+  ]
+}

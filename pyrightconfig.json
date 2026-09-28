@@ -1,0 +1,16 @@
+{
+  "pythonVersion": "3.13",
+  "pythonPlatform": "Windows",
+  "pythonPath": "C:/Users/a/anaconda3/python.exe",
+  "include": [
+    "backend"
+  ],
+  "extraPaths": [
+    "backend",
+    "C:/Users/a/anaconda3/Lib/site-packages",
+    "C:/Users/a/Desktop/astro_env/Lib/site-packages"
+  ],
+  "typeCheckingMode": "basic",
+  "reportMissingImports": false,
+  "reportMissingModuleSource": false
+}

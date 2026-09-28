@@ -1,0 +1,11 @@
+fastapi
+uvicorn
+pyswisseph
+rapidfuzz
+google-genai
+slowapi
+redis
+scikit-learn
+sentence-transformers
+pydantic
+python-dotenv
