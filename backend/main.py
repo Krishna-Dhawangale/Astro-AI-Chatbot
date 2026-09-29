@@ -40,6 +40,13 @@ try:
 except ImportError:
     from backend.router import DOMAIN_KEYWORDS, IntentRouter
 
+try:
+    from backend.normalize import normalize_api_response, normalize_dasha_response
+    from backend.reasoning.pipeline_helper import execute_full_deterministic_pipeline
+    from backend.router.pipeline import route_question
+except ImportError:
+    pass
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
@@ -2278,34 +2285,64 @@ async def _handle_chat_response(request: ChatRequest):
             "related_questions": follow_ups,
         })
 
-    # Every non-FAQ query is interpreted by the LLM; local rules only provide domain context.
+    # Phase 4 Integration: ML Router -> API -> normalize.py -> Reasoning Engine -> Answerability
     raw_indirect_intent = resolve_indirect_intent(request.query)
     internal_query = request.query
-
-    # Normalize Hinglish before routing so keyword classifiers work.
     normalized_query = normalize_hinglish(internal_query)
+
+    # 1. ML Model Router & Complexity Check
+    route_info = route_question(normalized_query)
+    predicted_domain = route_info.get("domain", "general")
+    complexity = route_info.get("complexity", "needs_chart")
+    intent = route_info.get("intent", "general")
+
     try:
         dasha_data = await run_in_threadpool(fetch_dasha_details_external, birth_details)
-    except HTTPException as error:
-        print(f"[WARNING] Dasha lookup failed; continuing with chart data only: {error.detail}")
+    except Exception as error:
+        logger.warning("Dasha lookup failed; continuing with chart data only: %s", error)
         dasha_data = {}
 
-    ml_result = router.classify_and_predict(normalized_query, astro_features)
-    predicted_domain = ml_result.get('predicted_domain', 'General')
+    norm_dasha = normalize_dasha_response(dasha_data) if dasha_data else {}
+    dasha_hierarchy = norm_dasha.get("dasha_hierarchy", {})
+
+    # Logging / Observability: Log pipeline decision clearly
+    logger.info(
+        "[DECISION LOG] QUESTION: '%s' | DOMAIN: %s | INTENT: %s | COMPLEXITY: %s | ROUTE: %s | DASHA_SOURCE: %s",
+        request.query, predicted_domain, intent, complexity, route_info.get("route"), norm_dasha.get("raw_source", "None")
+    )
+
+    # 2. Check for Simple Deterministic Questions (Dasha / Moon Sign / Ascendant) -> NO Gemini needed
+    q_lower = normalized_query.lower()
+    if any(k in q_lower for k in ["what is my dasha", "my current dasha", "my mahadasha", "current antardasha"]):
+        mah = dasha_hierarchy.get("current_mahadasha") or dasha_hierarchy.get("output", {}).get("current_mahadasha", "Active Dasha")
+        ant = dasha_hierarchy.get("current_antardasha") or dasha_hierarchy.get("output", {}).get("current_antardasha", "Active Antardasha")
+        dasha_ans = (
+            f"Aapka current Mahadasha {mah} aur Antardasha {ant} hai."
+            if is_hinglish_query(request.query) else
+            f"Your current Mahadasha is {mah} and current Antardasha is {ant}."
+        )
+        USER_SESSIONS[request.user_id]["history"].append({"role": "user", "content": request.query})
+        USER_SESSIONS[request.user_id]["history"].append({"role": "assistant", "content": dasha_ans})
+        return JSONResponse(content={
+            "answer": label_answer_source(dasha_ans, "Deterministic API"),
+            "related_questions": fallback_related_questions([predicted_domain], request.query)
+        })
+
+    # 3. Normalize API Chart Data & Execute Reasoning Engine
+    norm_chart = normalize_api_response(_api_chart_data)
+    stage8_result = execute_full_deterministic_pipeline(norm_chart)
+    multi_domain = stage8_result.get("stage_8_22_multi_domain", {})
+    relevant_domains = multi_domain.get("relevant_domains", [])
+
     query_domains = infer_query_domains(
         internal_query,
         predicted_domain,
         include_semantic_fallback=False,
     )
-    indirect_intent = raw_indirect_intent or resolve_indirect_intent(internal_query)
 
-    # Track the topic in session profile for personalization
     session_profile = USER_SESSIONS[request.user_id].get("profile", {})
     topics = session_profile.setdefault("topics_asked", [])
-    resolved_topics = list(query_domains)
-    if indirect_intent and indirect_intent not in resolved_topics:
-        resolved_topics.append(indirect_intent)
-    for resolved_topic in resolved_topics:
+    for resolved_topic in query_domains:
         if resolved_topic not in ("general", "", None) and resolved_topic not in topics:
             topics.append(resolved_topic)
 

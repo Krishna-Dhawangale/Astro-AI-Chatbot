@@ -29,6 +29,16 @@ class IntentRouter:
         }
 
 
+DOMAIN_KEYWORDS = {
+    "career": ["career", "job", "profession", "work", "business", "promotion", "appraisal", "salary", "boss"],
+    "marriage": ["marriage", "married", "wedding", "spouse", "partner", "relationship", "love", "divorce"],
+    "wealth": ["money", "wealth", "finance", "financial", "property", "investment", "rich", "income"],
+    "health": ["health", "disease", "illness", "body", "medical", "surgery", "fitness"],
+    "travel": ["travel", "abroad", "foreign", "trip", "journey", "visa", "settle"],
+    "children": ["child", "children", "baby", "pregnancy", "son", "daughter", "progeny"],
+    "education": ["education", "study", "exam", "college", "degree", "learning"]
+}
+
 __all__ = [
     "route_question",
     "predict_domain",
@@ -36,4 +46,5 @@ __all__ = [
     "predict_complexity",
     "predict_intent",
     "IntentRouter",
+    "DOMAIN_KEYWORDS",
 ]
