@@ -1,0 +1,24 @@
+{
+    "model": "LogisticRegression",
+    "vectorizer": "TfidfVectorizer",
+    "ngram_range": [
+        1,
+        3
+    ],
+    "max_features": 50000,
+    "sublinear_tf": true,
+    "class_weight": "balanced",
+    "C": 2.0,
+    "max_iter": 3000,
+    "classes": [
+        "career",
+        "finance",
+        "health",
+        "marriage",
+        "other"
+    ],
+    "training_samples": 432,
+    "validation_samples": 63,
+    "validation_accuracy": 0.9365079365079365,
+    "sklearn_version": "1.6.1"
+}

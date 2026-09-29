@@ -1,0 +1,13 @@
+{
+    "model_type": "LogisticRegression",
+    "vectorizer": "TfidfVectorizer",
+    "ngram_range": [
+        1,
+        3
+    ],
+    "max_features": 50000,
+    "C": 2.0,
+    "class_weight": "balanced",
+    "training_dataset": "train_updated_2",
+    "purpose": "domain classifier experimental checkpoint"
+}
