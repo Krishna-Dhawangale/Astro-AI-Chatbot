@@ -1,174 +1,87 @@
 {
-  "general_and_basics": [
-    {
-      "keywords": ["who are you", "what can you do", "help me", "start chat", "introduce yourself", "hello ai astrologer"],
-      "answer": "Namaste! I am your AI Astrologer. Based on your calculated birth chart with Ascendant in {ascendant}, Sun in {sun_sign}, and Moon in {moon_sign}, I can provide personalized insights on career, finance, relationships, and health."
-    },
-    {
-      "keywords": ["hi", "hello", "hey", "namaste", "greetings"],
-      "answer": "Namaste! I am your AI Astrologer. Based on your calculated birth chart with Ascendant in {ascendant}, Sun in {sun_sign}, and Moon in {moon_sign}, I can provide personalized insights on career, finance, relationships, and health."
-    },
-    {
-      "keywords": ["what is my ascendant", "what is my lagna", "my rising sign", "lagna calculation", "tell me my ascendant", "my lagna sign"],
-      "answer": "Your calculated Lagna (Ascendant) is in {ascendant}. In Vedic astrology, the Lagna represents your physical temperament, vital energy, and core approach to life."
-    },
-    {
-      "keywords": ["what is my moon sign", "my rashi", "moon sign", "my moon sign", "rashi prediction", "chandra rashi", "tell me my rashi"],
-      "answer": "Your calculated Moon Sign (Rashi) is in {moon_sign}. The Moon governs your emotional processing, mental peace, subconscious habits, and intuition."
-    },
-    {
-      "keywords": ["what is my sun sign", "my surya rashi", "sun sign", "my sun sign", "sun sign calculation", "tell me my sun sign"],
-      "answer": "Your calculated Sun Sign is in {sun_sign}. The Sun rules your soul purpose, leadership abilities, core identity, and self-confidence."
-    },
-    {
-      "keywords": ["what is kundali", "birth chart meaning", "how astrology works", "explain horoscopes", "what is horoscope"],
-      "answer": "A birth chart (Kundali) is a snap-shot map of planets in sidereal zodiac signs at your exact birth time. With your Lagna in {ascendant}, it outlines your life tendency and karmic patterns."
-    },
-    {
-      "keywords": ["what is dasha", "mahadasha meaning", "planetary period", "current dasha", "vimshottari dasha"],
-      "answer": "Vimshottari Dasha is a major planetary timing system that activates specific houses and planets in your chart over defined years, bringing corresponding life developments."
-    },
-    {
-      "keywords": ["what is sade sati", "saturn 7 half years", "sadesati effects", "shani sade sati"],
-      "answer": "Sade Sati is Saturn's 7.5-year transit through the 12th, 1st, and 2nd houses relative to your Moon sign ({moon_sign}). It tests discipline, focus, and maturity."
-    }
-  ],
-  "career": [
-    {
-      "keywords": ["which career suits me", "best career for me", "career suitability", "what career should i choose", "suitable career", "right career for me", "good career for me"],
-      "answer": "With your Ascendant in {ascendant} and Sun in {sun_sign}, careers in strategic leadership, advisory, creative execution, or research deeply suit your planetary configuration. Your 10th house patterns indicate professional recognition and authority building steadily over the next 1 to 2 years."
-    },
-    {
-      "keywords": ["when will i get job", "job timing", "when will i find a job", "job opportunity", "new job", "when will i get a new job", "job search", "unemployed", "switch job", "job change"],
-      "answer": "With your Ascendant in {ascendant} and Sun in {sun_sign}, a strong employment opportunity aligns when Jupiter transits your 10th house or activates your 2nd house of income. Expect a clear job breakthrough within the coming 3 to 6 months."
-    },
-    {
-      "keywords": ["high paying job", "high salary job", "high income job", "will i get high paying job", "high paying career", "well paid job", "six figure salary"],
-      "answer": "With your Ascendant in {ascendant} and Sun in {sun_sign}, your 10th and 11th house configurations strongly support high-income career paths. A significant salary jump and lucrative role become accessible during Jupiter's favourable transit over your 10th or 11th house."
-    },
-    {
-      "keywords": ["promotion", "get promoted", "will i get promotion", "when will i get promoted", "job promotion", "promotion in job", "career promotion", "salary appraisal", "get raise", "pay raise"],
-      "answer": "Promotions occur when Jupiter or Sun transit your 10th house and strengthen your career lord. With your Sun in {sun_sign}, a clear promotion opportunity is indicated within the next 6 to 12 months, especially during an active Jupiter or Saturn dasha period."
-    },
-    {
-      "keywords": ["career growth", "career success", "professional growth", "advance in career", "career development"],
-      "answer": "With your Ascendant in {ascendant} and Sun in {sun_sign}, your career growth accelerates significantly during Jupiter's transit over your 10th house or Ascendant. This brings enhanced recognition, authority, and professional rewards."
-    },
-    {
-      "keywords": ["government job", "sarkari naukri", "civil service", "public sector", "upsc", "government service"],
-      "answer": "Government roles require strong solar and martial influences. With your Sun in {sun_sign}, administrative success favors well-placed 10th house dasha periods."
-    },
-    {
-      "keywords": ["business", "should i do business", "start business", "entrepreneurship", "self employed", "own business", "start enterprise"],
-      "answer": "Business enterprise is governed by your 7th house (trade) and Mercury. Given your Lagna in {ascendant}, a strong 7th house lord favors independent venture over salaried employment."
-    },
-    {
-      "keywords": ["work abroad", "foreign job", "overseas job", "job in foreign country", "relocation for work", "overseas career", "foreign settlement job"],
-      "answer": "Foreign career expansion triggers when the 9th house (long journeys) and 12th house (foreign lands) align with your 10th house lord."
-    },
-    {
-      "keywords": ["job instability", "career failure", "frequent job changes", "unstable career", "losing job", "fired from job", "job loss"],
-      "answer": "Career instability often stems from Rahu or Saturn transits impacting the 10th house. Focusing on skill development and patience stabilises your professional foundation."
-    },
-    {
-      "keywords": ["suitable career", "career domain", "which job", "best profession"],
-      "answer": "Based on your Ascendant in {ascendant} and Sun in {sun_sign}, you are naturally suited for structured, analytical, and leadership roles. Fields involving technology, management, or organizational strategy align well with your chart."
-    },
-    {
-      "keywords": ["private vs government", "government job", "private job"],
-      "answer": "Your Sun in {sun_sign} favors structured authority and stability (suited for public/government sectors), while your Ascendant in {ascendant} grants adaptability (suited for competitive private sectors)."
-    },
-    {
-      "keywords": ["work environment", "office", "job setup", "workplace"],
-      "rule": "10th house placements (especially Sun or Saturn) indicate a strong need for organizational structure, clear hierarchies, and long-term stability rather than rapid change."
-    },
-    {
-      "keywords": ["career change", "switch job", "new job", "promotion"],
-      "rule": "During major Dasha transitions, career stability takes precedence over sudden switches unless 10th or 11th house lords are strongly active."
-    }
-  ],
-  "finance": [
-    {
-      "keywords": ["wealth", "finances", "wealth and finances", "wealth & finances", "financial outlook", "when will i be rich", "wealth prediction", "financial growth", "will i be wealthy", "money future", "financial future"],
-      "answer": "Wealth accumulation depends on Dhana Yogas formed between your 2nd and 11th houses. With your Sun in {sun_sign} and Lagna in {ascendant}, disciplined planning and positive Jupiter transits yield strong financial security and increasing prosperity."
-    },
-    {
-      "keywords": ["where to invest", "investment advice", "best investment", "where to put money", "stock market", "should i invest"],
-      "answer": "Wealth growth is strongest during supportive Jupiter transits over your 2nd house (accumulated wealth) and 11th house (income gains). Focus on disciplined investments when your Lagna ({ascendant}) is well-supported."
-    },
-    {
-      "keywords": ["clear debt", "how to clear loans", "debt relief", "pay off loan", "bank loan pressure", "how to pay debt"],
-      "answer": "Debts are ruled by the 6th house. Active Saturn or Mars transits with structured financial planning create steady pathways to eliminate loan burdens."
-    },
-    {
-      "keywords": ["lottery", "sudden wealth", "windfall money", "speculative gain", "crypto profits", "jackpot"],
-      "answer": "Sudden financial windfalls are linked to the 8th house and Rahu aspects. Favorable planetary periods across the 8th and 11th house lords trigger unearned income."
-    },
-    {
-      "keywords": ["property", "buying house", "real estate", "buy land", "home loan", "purchase property"],
-      "answer": "Real estate transactions are governed by the 4th house and Mars. Favorable Jupiter or Venus transits over your 4th house create auspicious windows for property acquisitions."
-    },
-    {
-      "keywords": ["financial growth", "money future", "wealth outlook"],
-      "answer": "With your Moon in {moon_sign} and Lagna in {ascendant}, your chart supports steady financial growth through disciplined long-term investments rather than high-risk speculative ventures."
-    },
-    {
-      "keywords": ["investment", "money", "wealth", "stock market", "savings"],
-      "rule": "Strong 2nd and 11th house influences support conservative long-term capital preservation over high-risk speculative trading."
-    }
-  ],
-  "personal_life": [
-    {
-      "keywords": ["when will i get married", "when will i marry", "marriage timing", "marriage age", "marriage year", "when is my marriage", "at what age will i marry", "will i get married"],
-      "answer": "Marriage timing for your chart with Lagna in {ascendant} is strongly governed by Venus and Jupiter transits over your 7th house. Based on your planetary configuration, a significant marriage window opens during an active Venus dasha or when Jupiter transits your 7th house. This is a high-potential period for commitment and long-term partnership."
-    },
-    {
-      "keywords": ["wedding date", "wedding timing", "auspicious wedding date", "best date for wedding", "marriage muhurat"],
-      "answer": "Auspicious marriage dates (Muhurat) fall when the Ascendant is strong, the 7th house is free from malefic aspects, and Venus is in a benefic position. With your Lagna in {ascendant}, consult a Jyotishi for exact Muhurat timing."
-    },
-    {
-      "keywords": ["love compatibility", "compatibility", "partner compatibility", "love or arranged", "love marriage", "will i have love marriage", "arranged marriage"],
-      "answer": "With your Moon in {moon_sign} and Lagna in {ascendant}, emotional grounding and mutual intellectual respect are essential. Favorable Venus transits bring deepening harmony and lasting alignment in love."
-    },
-    {
-      "keywords": ["spouse nature", "life partner", "future husband", "future wife", "how will my spouse be", "what will my partner be like"],
-      "answer": "Your partner's nature is reflected by the sign on your 7th house cusp and the placement of Venus (for male natives) or Jupiter (for female natives). With your Lagna in {ascendant}, your partner will carry complementary qualities aligned to your 7th house sign."
-    },
-    {
-      "keywords": ["breakup", "get ex back", "relationship recovery", "patch up", "divorce", "separation"],
-      "answer": "Relationship strain often arises during Rahu/Ketu transits across the 1st and 7th house axis. With Moon in {moon_sign}, transparent communication resolves misunderstandings."
-    },
-    {
-      "keywords": ["childbirth", "having a baby", "pregnancy", "when will i have a child", "kids", "child timing", "family planning", "conception"],
-      "answer": "Progeny and family expansion are ruled by the 5th house and Jupiter. Supportive transits over your 5th house mark auspicious timing for childbirth."
-    }
-  ],
-  "health": [
-    {
-      "keywords": ["health", "overall health", "health prediction", "general wellness", "immunity", "health future", "how is my health"],
-      "answer": "Overall vitality is governed by your Ascendant lord ({ascendant}) and Sun ({sun_sign}). Strengthening your Lagna lord enhances general immunity and energy levels."
-    },
-    {
-      "keywords": ["mental stress", "anxiety", "depression", "peace of mind", "overthinking", "mental health"],
-      "answer": "Mental peace is tied to your Moon sign in {moon_sign}. Benevolent aspects from Jupiter onto the Moon help soothe anxiety and reduce overthinking."
-    },
-    {
-      "keywords": ["chronic illness", "disease", "long term sickness", "health cure", "surgery", "when will i recover"],
-      "answer": "Health challenges relate to the 6th house (disease) and 8th house. Positive Saturn transits paired with a disciplined daily routine support recovery."
-    },
-    {
-      "keywords": ["digestive issues", "stomach problem", "gut health", "diet advice", "acidity", "digestion"],
-      "answer": "Digestive health is ruled by the 5th house and Sun in {sun_sign}. Consuming fresh, home-cooked meals during challenging Sun transits aids digestion."
-    }
-  ],
-  "education_and_travel": [
-    {
-      "keywords": ["higher education", "master degree", "phd", "exam success", "study abroad", "education", "will i pass exam", "exam result"],
-      "answer": "Higher learning is governed by the 5th and 9th houses with Mercury/Jupiter guidance. Favorable 9th house Dasha cycles accelerate academic achievements."
-    },
-    {
-      "keywords": ["travel", "best time to travel", "travel timing", "foreign travel", "vacation", "going abroad", "when to travel", "trip"],
-      "answer": "Auspicious travel periods activate during favorable transits over your 9th house (long-distance journeys) and 12th house. Favorable Jupiter aspects indicate smooth and rewarding travel."
-    }
-  ]
+  "moon sign": "Your calculated Moon Sign (Rashi) is in {moon_sign}. The Moon governs your emotional processing, mental peace, subconscious habits, and intuition.",
+  "rashi": "Your calculated Moon Sign (Rashi) is in {moon_sign}. The Moon governs your emotional processing, mental peace, subconscious habits, and intuition.",
+  "lagna": "Aapka Lagna (Ascendant) {ascendant} hai. Lagna aapki physical vitality, basic personality, aur approach to life ko represent karta hai.",
+  "ascendant": "Your Ascendant (Lagna) is {ascendant}. It defines your physical constitution, outer persona, and the foundational lens through which you navigate the world.",
+  "sun sign": "Your calculated Sun Sign is in {sun_sign}. In Vedic Astrology, the Sun represents the soul (Atma), willpower, self-respect, authority, and vitality.",
+  "nakshatra": "Your Janm Nakshatra is calculated from the Moon's exact planetary longitude. It reveals your inner temperament, subconscious motivation, and psychological patterns.",
+  "kundali": "A Vedic Kundali (Birth Chart) is a cosmic snapshot of the 12 zodiac signs and 9 planets across 12 houses (Bhavas) at your exact moment and coordinates of birth.",
+  "navamsha": "The Navamsha (D9 chart) is the 9th divisional harmonic chart in Vedic astrology. It is essential for analyzing marriage, marital partner traits, inner destiny, and the real strength of natal planets in the second half of life.",
+  "dasha": "Vimshottari Dasha is the 120-year planetary cycle system in Vedic astrology. It reveals the exact planetary ruler currently activating karmic events, opportunities, and lessons in your life.",
+  "sade sati": "Sade Sati is the 7.5-year transit of Saturn (Shani) over your natal Moon sign (12th, 1st, and 2nd houses from the Moon). It is a disciplined purification period designed to instill maturity, focus, and resilience.",
+  "dhayya": "Shani ki Dhayya is Saturn's 2.5-year transit through the 4th or 8th house from your natal Moon sign. It encourages grounded decision-making, inner patience, and regular spiritual discipline.",
+  "rahu ketu": "Rahu and Ketu are the lunar nodes of destiny. Rahu represents worldly ambition, technological innovation, and future growth, while Ketu signifies spiritual detachment, past-life mastery, and inner wisdom.",
+  "retrograde": "A retrograde planet (Vakri Graha) appears to move backward from Earth's viewpoint. In Vedic astrology, retrograde planets gain high Chesta Bala (motivational strength), prompting deep internal reflection and non-traditional solutions.",
+  "1st house": "The 1st House (Lagna / Tanu Bhava) represents the physical body, general vitality, mental disposition, appearance, and your personal approach to life's journeys.",
+  "2nd house": "The 2nd House (Dhan Bhava) governs accumulated wealth, bank balance, family heritage, speech, liquid assets, and eating habits.",
+  "3rd house": "The 3rd House (Sahaja Bhava) represents younger siblings, courage, self-effort (Parakrama), short travels, writing, and communication skills.",
+  "4th house": "The 4th House (Sukha Bhava) governs maternal happiness, inner emotional peace, vehicles, landed property, real estate, and foundational education.",
+  "5th house": "The 5th House (Putra Bhava) governs children, creative intelligence, higher education, past-life merits (Purva Punya), romance, and speculation.",
+  "6th house": "The 6th House (Ari / Roga Bhava) represents daily work routines, physical immunity, healing, resolving debts, overcoming rivals, and competitive examinations.",
+  "7th house": "The 7th House (Yuvati Bhava) governs marriage, long-term romantic commitment, spouse's personality, business partnerships, and public dealings.",
+  "8th house": "The 8th House (Randhra Bhava) governs longevity, deep transformation, sudden financial changes, research, occult sciences, and joint finances with your partner.",
+  "9th house": "The 9th House (Bhagya Bhava) represents good fortune, higher wisdom, spiritual dharma, father, guru, and long-distance international travel.",
+  "10th house": "The 10th House (Karma Bhava) governs career, profession, public status, authority, leadership, and your highest social contribution.",
+  "11th house": "The 11th House (Labha Bhava) represents incoming financial gains, cash flow, fulfillment of aspirations, elder siblings, and high-impact social networks.",
+  "12th house": "The 12th House (Vyaya Bhava) represents foreign residence, overseas travels, spiritual liberation (Moksha), meditation, expenditure, and restful sleep.",
+  "career house": "In Vedic Astrology, career is primarily analyzed through the 10th house (Karma Bhava), supported by the 2nd house (earned wealth), 6th house (daily service), and 11th house (cash flow).",
+  "business vs job": "A strong 10th and 6th house with Saturn/Sun influence favors a structured, salaried corporate job, while a powerful 7th, 3rd, and 11th house with Mercury/Mars supports independent entrepreneurship and business.",
+  "government job yoga": "Government employment yogas form when the Sun, Mars, and Saturn are strongly positioned in the 10th, 1st, or 9th house, in aspect with the Lagna or 10th lord.",
+  "gemstones for career": "Career gemstones must be chosen according to your auspicious functional benefic lords (especially 1st, 5th, 9th, or 10th house lords) in consultation with your birth chart placements.",
+  "marriage house": "Marriage and committed partnerships are analyzed from the 7th house, the 7th lord, the Navamsha (D9) chart, and the natural Karakas Venus (for all) and Jupiter (especially for women).",
+  "mangal dosha": "Mangal Dosha (Manglik) occurs when Mars is situated in the 1st, 2nd, 4th, 7th, 8th, or 12th house from the Lagna or Moon. It indicates high passion and assertiveness in relationships, which softens with mature communication and often neutralizes after age 28.",
+  "kundali milan": "Kundali Milan evaluates the 8 Ashtakoota parameters (36 Gunas) including Varna, Vashya, Tara, Yoni, Graha Maitri, Gana, Bhakoot, and Nadi to assess mental, emotional, and biological alignment between partners.",
+  "remedies for marriage delay": "Classic astrological remedies for marriage delay include offering yellow flowers and chana dal to Lord Vishnu on Thursdays, honoring Goddess Parvati, and strengthening the benefic 7th lord.",
+  "dhan yoga": "A Dhan Yoga forms when the wealth houses (2nd and 11th) connect auspiciously with the Kendra (1st, 4th, 7th, 10th) or Trikona (1st, 5th, 9th) houses, indicating steady prosperity and financial expansion.",
+  "gajakesari yoga": "Gajakesari Yoga occurs when Jupiter is in a Kendra (1st, 4th, 7th, or 10th house) from the natal Moon. It bestows enduring wisdom, respect, virtuous speech, and high reputation.",
+  "lakshmi yoga": "Lakshmi Yoga forms when the 9th lord is strong in a Kendra or Trikona and the Lagna lord is exalted, indicating abundant wealth, noble character, and financial ease.",
+  "remedies for debt": "Remedies for resolving debt include reciting the Rinmochan Mangal Stotra on Tuesdays, maintaining financial discipline, and offering water to the rising Sun each morning.",
+  "health house": "Health and physical constitution are analyzed via the 1st house (vitality), 6th house (immunity and recovery), 8th house (longevity), and the placement of the Sun and Moon.",
+  "remedies for mental peace": "To calm an overactive Moon and reduce stress, practice 10-15 minutes of Pranayama each morning, drink water from a silver vessel, and honor Lord Shiva with water offering on Mondays.",
+  "foreign settlement": "Foreign relocation and settlement are indicated by harmonious connections between the 9th house (long journeys), 12th house (overseas lands), and the 4th house of residence, often activated by Rahu or Moon periods.",
+  "rahu foreign travel": "Rahu is the natural significator of cross-cultural connections and distant lands. When Rahu activates the 9th or 12th house during its Mahadasha or Antardasha, foreign travel and global opportunities accelerate.",
+  "education house": "Primary education is governed by the 4th house (Sukha Bhava), creative intelligence and competitive exams by the 5th house (Putra Bhava), and higher specialized learning by the 9th house (Bhagya Bhava).",
+  "mercury for education": "Mercury (Budh) is the Karaka for analytical intelligence, mathematics, memory, and speech. Keeping a green plant in your study space and chanting the Budh Beej Mantra supports sharp focus.",
+  "kaal sarp dosha": "Kaal Sarp Dosha occurs when all seven visible planets are hemmed between Rahu and Ketu. While it brings intense early struggles, it often acts as an engine for extraordinary ambition and exceptional success in later life.",
+  "pitra dosha": "Pitra Dosha signifies unresolved ancestral debts reflected in the 9th house or Sun. Traditional remedies include performing Tarpanam, honoring elders, and planting a Banyan or Peepal tree.",
+  "gemstone wearing rules": "Gemstones should be natural, untreated, energized on the planet's auspicious weekday during Shukla Paksha (waxing moon), and worn on the designated finger in silver or gold.",
+  "gayatri mantra": "The Gayatri Mantra (Om Bhur Bhuva Svaha...) is a Vedic prayer for mental illumination, inner clarity, and soul purification. Chanting it 108 times at sunrise strengthens the Sun and sharpens the intellect.",
+  "maha mrityunjaya mantra": "The Maha Mrityunjaya Mantra (Om Tryambakam Yajamahe...) invokes Lord Shiva for health protection, overcoming fear, restoring vital energy, and calming psychological distress.",
+  "hello": "Namaste! 🙏 Welcome to Astro AI. I am your Vedic Astrologer. You can ask me anything about your career, marriage, finances, health, or birth chart!",
+  "hi": "Namaste! 🙏 How can I assist you with your astrological journey today?",
+  "disclaimer": "Vedic Astrology offers reflective guidance and timing insights based on planetary patterns. It empowers conscious choices and does not replace medical, legal, or licensed financial advice.",
+  "foreign travel": "Foreign travel in Vedic Astrology is governed by the 9th house (long journeys and higher pursuit), the 12th house (foreign lands and overseas settlement), and the 3rd house (short travel). Rahu, Moon, and Venus are primary indicators of overseas journeys.",
+  "travel abroad": "Foreign travel in Vedic Astrology is governed by the 9th house (long journeys), 12th house (foreign settlement), and Rahu. Strong connections between the 1st, 9th, and 12th houses favor moving overseas.",
+  "can astrology predict foreign travel": "Yes, Vedic Astrology indicates foreign travel through active dashas of the 9th or 12th lord, transits of Jupiter or Rahu over watery signs, and connections to the 3rd, 9th, and 12th houses.",
+  "will i travel abroad": "Foreign journeys are triggered during the Mahadasha or Antardasha of the 9th lord, 12th lord, or Rahu. Benefic connections between the 1st, 9th, and 12th houses strongly support traveling or working abroad.",
+  "career prediction": "Career trajectory is determined primarily by the 10th House (Karma Bhava), its lord, planets aspecting it, and the Navamsha (D9) and Dashamsha (D10) divisional charts.",
+  "job change": "Job transitions usually take place during sub-periods of the 6th lord (daily work), 10th lord (career), or during major transits of Saturn and Jupiter across your natal Moon or Lagna.",
+  "promotion": "Promotions and appraisals occur when favorable dashas of the 10th lord or 11th lord (gains) activate, especially when Jupiter transits over your 10th or 11th house.",
+  "government job": "Government job yogas (Sarkari Naukri) form when the Sun and Mars are strongly placed in the 10th or 1st house with supportive aspects from Jupiter and a strong 6th house of competitive success.",
+  "love marriage": "Love marriage is indicated by strong connections between the 5th house (romance) and the 7th house (marriage), along with auspicious placement of Venus and Mars.",
+  "arranged marriage": "Arranged marriages are indicated when the 7th house and 2nd house (family) are strongly influenced by traditional benefic planets like Jupiter or the Sun with family blessings.",
+  "marriage timing": "Marriage timing is typically activated during the Mahadasha or Antardasha of the 7th lord, Venus (for men), Jupiter (for women), or during Jupiter transit aspecting the 7th house.",
+  "divorce or separation": "Marital friction is assessed through afflictions to the 7th house, Venus, and Mars by Rahu, Ketu, or Saturn. Compatibility matching (Kundali Milan) and timely remedies help mitigate conflict.",
+  "financial stability": "Financial prosperity is anchored in the 2nd House (accumulated savings), 11th House (gains and cash flow), 5th House (speculative intellect), and 9th House (fortune/Bhagya).",
+  "share market": "Speculative gains in the stock market are governed by the 5th House (purva punya and intellect), Mercury (analytical calculations), and Rahu (sudden windfall). Strong placements indicate trading talent.",
+  "lottery or windfall": "Sudden unexpected financial gains are governed by the 8th house (unearned wealth) and 11th house (cash gains), energized by Rahu or Jupiter in favorable dignity.",
+  "debt remedies": "To overcome recurring debt (Rina), propitiate Mars through the Rin-Mochan Mangal Stotra and perform archana for Lord Ganesha on Tuesdays.",
+  "health remedies": "General vitality is strengthened by offering Arghya (water) to the rising Sun daily, reciting the Aditya Hridaya Stotra, and chanting the Maha Mrityunjaya Mantra.",
+  "mental stress": "Mental peace is governed by the Moon. To alleviate anxiety and stress, drink water from a silver vessel, practice Chandra Pranayama, and chant 'Om Namah Shivaya'.",
+  "chronic illness": "Chronic conditions are analyzed through the 6th House (ailments) and 8th House (longevity/chronic patterns). Propitiating Saturn through sesame oil lamps and Hanuman Chalisa brings healing.",
+  "higher education": "Higher education is governed by the 9th House (higher wisdom, philosophy) and 5th House (intellect). Jupiter and Mercury are the key significators for academic honors.",
+  "competitive exams": "Success in competitive exams is ruled by the 6th House (competition, overcoming rivals) and Mars/Mercury. Favorable dashas during exam periods lead to high ranks.",
+  "study abroad": "Studying abroad occurs when the 4th house (primary education) or 5th house links with the 9th and 12th houses of foreign travels and overseas institutions.",
+  "sun in astrology": "The Sun (Surya) represents the soul (Atma), father, authority, government, self-esteem, willpower, and vitality. It rules Leo (Simha).",
+  "moon in astrology": "The Moon (Chandra) governs the mind (Manas), emotions, subconscious patterns, mother, nurturing, and mental peace. It rules Cancer (Karka).",
+  "mars in astrology": "Mars (Mangal) represents courage, energy, physical strength, ambition, real estate, and leadership. It rules Aries (Mesha) and Scorpio (Vrishchika).",
+  "mercury in astrology": "Mercury (Budha) rules intellect, communication, logic, mathematics, trade, and nervous system. It rules Gemini (Mithuna) and Virgo (Kanya).",
+  "jupiter in astrology": "Jupiter (Guru/Brihaspati) represents wisdom, spirituality, dharma, wealth, guru, children, and divine grace. It rules Sagittarius (Dhanu) and Pisces (Meena).",
+  "venus in astrology": "Venus (Shukra) represents love, beauty, art, luxury, vehicles, romance, and marriage. It rules Taurus (Vrishabha) and Libra (Tula).",
+  "saturn in astrology": "Saturn (Shani) represents karma, discipline, hard work, longevity, delays, detachment, and justice. It rules Capricorn (Makara) and Aquarius (Kumbha).",
+  "rahu in astrology": "Rahu (North Lunar Node) represents illusion (Maya), worldly ambition, foreign elements, technology, innovation, and sudden events.",
+  "ketu in astrology": "Ketu (South Lunar Node) represents spiritual liberation (Moksha), detachment, occult knowledge, introspection, and past-life karma.",
+  "pitra dosha remedies": "Pitra Dosha remedies include performing Tarpan and Pind Daan during Pitru Paksha, feeding cows, birds, and fish, and reciting the Pitru Gayatri Mantra.",
+  "shani shanti": "To appease Saturn (Shani), light a mustard oil diya under a Peepal tree on Saturdays, feed black dogs, chant 'Om Sham Shanaishcharaya Namah', and donate black sesame or blankets.",
+  "surya arghya": "Surya Arghya involves offering clean water from a copper vessel to the rising Sun while reciting 'Om Suryaya Namah' to boost health, confidence, and vitality."
 }

@@ -1,6 +1,7 @@
 import asyncio
-import hashlib
+import inspect
 import json
+import logging
 import os
 import re
 import sys
@@ -20,11 +21,6 @@ from pydantic import BaseModel
 from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
-
-try:
-    import redis.asyncio as redis_async
-except ImportError:
-    redis_async = None
 
 GEMINI_SAFETY_SETTINGS = [
     types.SafetySetting(
@@ -50,18 +46,11 @@ if BASE_DIR not in sys.path:
 
 FRONTEND_PATH = os.path.join(BASE_DIR, "..", "frontend", "index.html")
 
-load_dotenv(os.path.join(BASE_DIR, ".env"))
-load_dotenv()
+load_dotenv(os.path.join(BASE_DIR, ".env"), override=True)
+load_dotenv(override=True)
 
-REDIS_URL = os.getenv("REDIS_URL")
+logger = logging.getLogger(__name__)
 RATE_LIMIT_STORAGE_URI = os.getenv("RATE_LIMIT_STORAGE_URI", "memory://")
-redis_client = (
-    redis_async.from_url(REDIS_URL, decode_responses=True)
-    if REDIS_URL and redis_async
-    else None
-)
-_MEMORY_RESPONSE_CACHE: Dict[str, Tuple[float, str]] = {}
-RESPONSE_CACHE_TTL_SECONDS = 15 * 60
 limiter = Limiter(key_func=get_remote_address, storage_uri=RATE_LIMIT_STORAGE_URI)
 
 app = FastAPI(
@@ -87,61 +76,67 @@ app.add_middleware(
 )
 
 
-def response_cache_key(user_id: str, query: str, asc_sign: str, sun_sign: str, moon_sign: str) -> str:
-    key_data = json.dumps(
-        [user_id, query, asc_sign, sun_sign, moon_sign],
-        ensure_ascii=False,
-        separators=(",", ":"),
+def label_answer_source(answer: str, source: str) -> str:
+    label = f"({source})"
+    answer = answer.rstrip()
+    return answer if answer.endswith(label) else f"{answer} {label}"
+
+
+def backend_error_payload(query: str) -> Dict[str, Any]:
+    answer = "Sorry, I couldn't generate a response right now. Please try again shortly."
+    return {"answer": label_answer_source(answer, "Backend"), "related_questions": []}
+
+
+def is_daily_gemini_quota_error(error: Exception) -> bool:
+    error_message = str(error).casefold()
+    return (
+        ("free_tier_requests" in error_message or "perday" in error_message)
+        and ("quota" in error_message or "resource_exhausted" in error_message)
     )
-    digest = hashlib.sha256(key_data.encode("utf-8")).hexdigest()
-    return f"astro:chat:{digest}"
 
 
-async def get_cached_response(cache_key: str) -> Optional[Dict[str, Any]]:
-    global redis_client
-    if redis_client is not None:
+def gemini_error_message(error: Exception, query: str) -> str:
+    if is_daily_gemini_quota_error(error):
+        answer = (
+            "Gemini's daily free-tier quota for this model has been reached. "
+            "Please try again after the quota resets or enable billing/increase the project quota."
+        )
+        return label_answer_source(answer, "Backend")
+
+    status_code = getattr(error, "code", None) or getattr(error, "status_code", None)
+    if status_code == 429:
+        answer = "Gemini is temporarily rate limited. Please wait a moment and try again."
+        return label_answer_source(answer, "Backend")
+
+    return backend_error_payload(query)["answer"]
+
+
+def is_retryable_gemini_error(error: Exception) -> bool:
+    status_codes = [
+        getattr(error, "code", None),
+        getattr(error, "status_code", None),
+        getattr(getattr(error, "response", None), "status_code", None),
+    ]
+    for status_code in status_codes:
+        if status_code is None:
+            continue
         try:
-            cached_value = await redis_client.get(cache_key)
-            if cached_value:
-                payload = parse_gemini_json_response(cached_value)
-                if payload:
-                    return payload
-        except Exception as error:
-            print(f"[WARNING] Redis cache read failed; using memory cache: {error}")
-            redis_client = None
+            status_code = int(status_code)
+        except (TypeError, ValueError):
+            continue
+        if status_code == 429 or 500 <= status_code <= 599:
+            return True
 
-    memory_value = _MEMORY_RESPONSE_CACHE.get(cache_key)
-    if memory_value is None:
-        return None
-    expires_at, serialized = memory_value
-    if expires_at <= time.monotonic():
-        _MEMORY_RESPONSE_CACHE.pop(cache_key, None)
-        return None
-    return parse_gemini_json_response(serialized)
-
-
-async def set_cached_response(cache_key: str, payload: Dict[str, Any]) -> None:
-    global redis_client
-    serialized = json.dumps(payload, ensure_ascii=False)
-    _MEMORY_RESPONSE_CACHE[cache_key] = (
-        time.monotonic() + RESPONSE_CACHE_TTL_SECONDS,
-        serialized,
+    error_type = type(error).__name__.casefold()
+    error_message = str(error).casefold()
+    return (
+        isinstance(error, (TimeoutError, ConnectionError, requests.RequestException))
+        or any(token in error_type for token in ("timeout", "connect", "network"))
+        or any(token in error_message for token in ("timed out", "connection reset", "temporarily unavailable"))
     )
-    if len(_MEMORY_RESPONSE_CACHE) > 2048:
-        now = time.monotonic()
-        for key, (expires_at, _) in list(_MEMORY_RESPONSE_CACHE.items()):
-            if expires_at <= now:
-                _MEMORY_RESPONSE_CACHE.pop(key, None)
-
-    if redis_client is not None:
-        try:
-            await redis_client.set(cache_key, serialized, ex=RESPONSE_CACHE_TTL_SECONDS)
-        except Exception as error:
-            print(f"[WARNING] Redis cache write failed; using memory cache: {error}")
-            redis_client = None
 
 # Initialize Google GenAI Client
-gemini_api_key = os.getenv("GEMINI_API_KEY")
+gemini_api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
 gemini_client = None
 if gemini_api_key:
     try:
@@ -150,7 +145,7 @@ if gemini_api_key:
     except Exception as e:
         print(f"[WARNING] Failed to initialize Google GenAI Client: {e}")
 else:
-    print("[WARNING] GEMINI_API_KEY is missing from .env! Fallback generator will be used.")
+    print("[WARNING] GOOGLE_API_KEY or GEMINI_API_KEY is missing. Gemini responses will be unavailable.")
 
 FREE_ASTROLOGY_KEY = os.getenv("FREE_ASTROLOGY_API_KEY")
 PROKERALA_CLIENT_ID = os.getenv("PROKERALA_CLIENT_ID")
@@ -520,18 +515,21 @@ def load_qa_database():
             try:
                 with open(p, "r", encoding="utf-8") as f:
                     qa_db = json.load(f)
-                    for category, entries in qa_db.items():
-                        if not isinstance(entries, list):
-                            continue
-                        for item in entries:
-                            if not isinstance(item, dict):
-                                continue
-                            keywords = [str(value).lower().strip() for value in item.get("keywords", []) if value]
-                            guidance = item.get("rule") or item.get("answer", "")
-                            if keywords and guidance:
-                                ASTRO_RULE_INDEX.append((category, keywords, guidance))
-                            if category == "general_and_basics" and keywords and item.get("answer"):
-                                FAQ_INDEX.append((keywords, item["answer"]))
+                    for key, entries in qa_db.items():
+                        if isinstance(entries, str):
+                            keywords = [key.lower().strip()]
+                            ASTRO_RULE_INDEX.append(("general_and_basics", keywords, entries))
+                            FAQ_INDEX.append((keywords, entries))
+                        elif isinstance(entries, list):
+                            for item in entries:
+                                if not isinstance(item, dict):
+                                    continue
+                                keywords = [str(value).lower().strip() for value in item.get("keywords", []) if value]
+                                guidance = item.get("rule") or item.get("answer", "")
+                                if keywords and guidance:
+                                    ASTRO_RULE_INDEX.append((key, keywords, guidance))
+                                if key == "general_and_basics" and keywords and item.get("answer"):
+                                    FAQ_INDEX.append((keywords, item["answer"]))
                 print(
                     f"[OK] Q&A database loaded from {p} "
                     f"({len(FAQ_INDEX)} FAQ items, {len(ASTRO_RULE_INDEX)} rule items indexed)."
@@ -706,6 +704,129 @@ def fallback_related_questions(query_domains: List[str], query: str) -> List[str
     return questions.get(domain, questions["general"])
 
 
+def generate_follow_up_questions(query: str, answer: str = "", domain: Optional[str] = None) -> List[str]:
+    """Generate 3-4 strictly domain-pure follow-up questions matching the detected domain."""
+    q_norm = normalize_hinglish(query).lower()
+
+    # Domain banks where 100% of questions belong strictly to the respective domain
+    DOMAIN_BANKS: Dict[str, List[str]] = {
+        "career": [
+            "When is the right time for job change?",
+            "Which gemstones suit my career?",
+            "Does my chart favor business or a job?",
+            "Will I get a promotion or appraisal this year?",
+            "Which career field brings highest financial success?",
+        ],
+        "marriage": [
+            "What will my partner's nature be like?",
+            "Any remedies for marriage delay?",
+            "When will I get married according to my dasha?",
+            "How is my 7th house and relationship compatibility?",
+            "Are there chances for love marriage or arranged marriage?",
+        ],
+        "wealth": [
+            "When is the best period for financial growth?",
+            "Which gemstones or remedies boost wealth flow?",
+            "Does my chart support stock market or property investment?",
+            "How can I clear debt and improve my savings?",
+            "Will I achieve long-term financial independence?",
+        ],
+        "health": [
+            "Which planetary period supports my health recovery?",
+            "How does my Moon sign respond to stress?",
+            "What remedies strengthen vitality and mental peace?",
+            "What wellness habits best suit my Lagna?",
+        ],
+        "travel": [
+            "When is the right time for foreign travel?",
+            "Are foreign settlement chances strong in my chart?",
+            "Will settling in a foreign land benefit my career?",
+            "What planetary timing is favorable for visa approvals?",
+        ],
+        "education": [
+            "Which higher education field suits my chart?",
+            "How can I improve concentration for exams?",
+            "What timing is favorable for competitive exams?",
+            "Are there chances for study or scholarship abroad?",
+        ],
+        "children": [
+            "What timing looks supportive for family planning?",
+            "How does my 5th house influence family and children?",
+            "What planetary strengths support family harmony?",
+            "What remedies bring domestic peace and blessings?",
+        ],
+        "chart": [
+            "What is my current Mahadasha and Antardasha?",
+            "Tell me about my Sade Sati timing and remedies",
+            "What does my Lagna and 1st house reveal?",
+            "Which planets are most benefic in my birth chart?",
+        ],
+        "remedies": [
+            "Which gemstones suit my Lagna and Moon sign?",
+            "Which mantras strengthen my benefic planets?",
+            "What daily spiritual rituals align my chart?",
+            "Which charity or donation activates Jupiter's grace?",
+        ],
+        "general": [
+            "Which career suits me best?",
+            "What does my 7th house say about marriage?",
+            "How are my wealth and finances looking?",
+            "What does my Lagna and Moon sign reveal?",
+        ],
+    }
+
+    # Resolve domain by priority: explicit argument > keyword scanning > indirect intent
+    resolved = (domain or "").lower().strip()
+    if resolved in ("love", "relationship", "relationships"):
+        resolved = "marriage"
+    elif resolved in ("money", "finance", "finances"):
+        resolved = "wealth"
+    elif resolved in ("job", "profession", "business", "work"):
+        resolved = "career"
+
+    if not resolved or resolved in ("general", "none", "auto", "unknown"):
+        DOMAIN_PATTERNS = [
+            ("marriage", ["marri", "love", "spouse", "partner", "relationship", "shaadi", "shadi", "7th house", "husband", "wife", "soulmate", "vivah", "manglik", "mangal dosha", "gunas"]),
+            ("wealth", ["money", "wealth", "finance", "paisa", "invest", "debt", "loan", "income", "dhan", "saving", "2nd house", "11th house", "gajakesari", "lakshmi yoga"]),
+            ("career", ["career", "job", "work", "profession", "promotion", "salary", "business", "naukri", "office", "appraisal", "switch", "boss", "10th house", "karma bhava", "government job"]),
+            ("health", ["health", "disease", "stress", "sehat", "mental", "pain", "illness", "bimari", "burnout", "fatigue", "wellness", "6th house", "roga bhava", "vitality"]),
+            ("travel", ["travel", "abroad", "foreign", "visa", "videsh", "relocat", "settle", "journey", "9th house", "12th house", "vyaya bhava"]),
+            ("education", ["exam", "study", "education", "padhai", "college", "degree", "pariksha", "4th house", "5th house"]),
+            ("children", ["child", "children", "baby", "pregnancy", "baccha", "family", "santaan", "putra"]),
+            ("remedies", ["remed", "gemstone", "stone", "mantra", "puja", "upay", "totka", "kaal sarp", "pitra dosha", "gayatri mantra"]),
+            ("chart", ["moon", "sun", "lagna", "ascendant", "rashi", "nakshatra", "kundali", "dasha", "transit", "sade sati", "graha", "planet", "1st house", "3rd house", "8th house"]),
+        ]
+        # First priority: check query directly
+        for dom, keywords in DOMAIN_PATTERNS:
+            if any(k in q_norm for k in keywords):
+                resolved = dom
+                break
+        # Second priority: check answer text if query was generic
+        if not resolved or resolved in ("general", "none", "auto", "unknown"):
+            ans_lower = answer.lower()
+            for dom, keywords in DOMAIN_PATTERNS:
+                if any(k in ans_lower for k in keywords):
+                    resolved = dom
+                    break
+        # Third priority: indirect intent resolver
+        if not resolved or resolved in ("general", "none", "auto", "unknown"):
+            indirect = resolve_indirect_intent(query)
+            if indirect and indirect in DOMAIN_BANKS:
+                resolved = indirect
+            else:
+                resolved = "general"
+
+    pool = DOMAIN_BANKS.get(resolved, DOMAIN_BANKS["general"])
+
+    # Exclude questions that match the current query to ensure fresh prompts
+    clean_q = re.sub(r"[^\w\s]", "", query).lower().strip()
+    filtered = [
+        item for item in pool
+        if re.sub(r"[^\w\s]", "", item).lower().strip() != clean_q
+    ]
+    return filtered[:3] if len(filtered) >= 2 else pool[:3]
+
+
 def parse_gemini_json_response(response_text: str) -> Optional[Dict[str, Any]]:
     """Validate Gemini's JSON answer and follow-up question payload."""
     try:
@@ -746,8 +867,8 @@ class ChatRequest(BaseModel):
     gender: Optional[str] = None
     life_stage: Optional[str] = None
     relationship_status: Optional[str] = None
-    question_type: str = "simple"  # "simple", "advanced", or "mixed"
-    mode: str = "instant"  # auto-set by backend based on question_type; or force "ai" / "instant"
+    question_type: str = "auto"  # "auto", "simple", "advanced", or "mixed"
+    mode: str = "auto"  # "auto", or force "ai" / "instant"
     birth_year: int = 2000
     birth_month: int = 1
     birth_day: int = 1
@@ -790,81 +911,263 @@ ASTRO_INQUIRY_TERMS = {
 }
 
 def match_faq_only(user_query: str) -> Optional[str]:
-    """Match ONLY against pure greetings and basic sign queries.
-    Supports English and Hinglish inputs via normalization.
-    Any astrological inquiry or prediction question goes to Gemini.
-    """
-    # Normalize Hinglish first, but also keep original for greeting detection
-    clean_original = user_query.lower().strip().replace("?", "").replace("!", "").replace(",", "")
-    clean = normalize_hinglish(clean_original)
-    words = set(clean.split())
-    asks_for_interpretation = any(term in clean for term in [
-        "what does", "what mean", "meaning", "interpret", "traits", "personality", "tell me about",
-        "nature", "qualities", "kya matlab", "ka nature", "ke traits"
-    ])
-    asks_about_sign = any(term in clean for term in ["moon sign", "sun sign", "rashi", "lagna", "ascendant"])
-    if asks_for_interpretation and asks_about_sign:
-        return None
+    """Return a local FAQ from the 85+ item database for exact or indexed factual phrases, saving LLM tokens."""
+    clean_norm = re.sub(r"[^\w\s'-]", " ", normalize_hinglish(user_query).casefold()).strip()
+    clean_raw = re.sub(r"[^\w\s'-]", " ", user_query.casefold()).strip()
 
-    # If the user is asking an astrological question, DO NOT hijack it with FAQ greeting
-    if any(term in clean for term in ASTRO_INQUIRY_TERMS):
-        # Only allow specific sign definitions if specifically asked (e.g. "what is my moon sign")
-        is_sign_query = any(phrase in clean for phrase in [
-            "what is my moon sign", "my moon sign", "what is my rashi", "my rashi",
-            "what is my sun sign", "my sun sign", "what is my ascendant", "what is my lagna", "my lagna"
-        ])
-        if not is_sign_query or asks_for_interpretation:
-            return None
-
-    # For pure greetings, ensure the message is primarily greeting (not a hidden query)
-    is_greeting = any(g in words for g in GREETING_KEYWORDS)
-    if is_greeting and len(words) > 3:
-        # Long message with a greeting is an actual question -> send to Gemini
-        return None
-
-    best_score = 0
-    best_answer = None
-
+    # 1. Exact match against indexed FAQ keywords
     for keywords, answer_template in FAQ_INDEX:
         for kw in keywords:
-            kw_pattern = re.compile(r'\b' + re.escape(kw) + r'\b')
-            if kw_pattern.search(clean):
-                if len(kw) > best_score:
-                    best_score = len(kw)
-                    best_answer = answer_template
+            normalized_keyword = normalize_hinglish(kw).casefold()
+            normalized_keyword = re.sub(r"[^\w\s'-]", " ", normalized_keyword).strip()
+            raw_keyword = re.sub(r"[^\w\s'-]", " ", kw.casefold()).strip()
+            if clean_norm == normalized_keyword or clean_raw == raw_keyword:
+                return answer_template
 
-    return best_answer
+    # 2. Standalone greetings (must NOT match substrings in words like 'which')
+    greeting_words = {"hi", "hello", "hey", "namaste", "greetings"}
+    clean_words = clean_raw.split()
+    if clean_raw in greeting_words or (len(clean_words) <= 2 and any(w in greeting_words for w in clean_words)):
+        for keywords, answer_template in FAQ_INDEX:
+            for kw in keywords:
+                if kw.lower() in greeting_words:
+                    return answer_template
+
+    # 3. Dynamic topic match against all indexed FAQ topics (prioritizing longer multi-word phrases)
+    sorted_faqs = sorted(FAQ_INDEX, key=lambda item: max(len(k) for k in item[0]), reverse=True)
+    ignored_single_words = {"what", "when", "will", "tell", "about", "your", "mine", "good", "more", "with"}
+    for keywords, answer_template in sorted_faqs:
+        for kw in keywords:
+            kw_clean = kw.lower().strip()
+            if len(kw_clean) < 4 or kw_clean in ignored_single_words:
+                continue
+            kw_norm = normalize_hinglish(kw_clean).casefold()
+            pattern_raw = r"\b" + re.escape(kw_clean) + r"\b"
+            pattern_norm = r"\b" + re.escape(kw_norm) + r"\b"
+            if (
+                re.search(pattern_raw, clean_raw)
+                or re.search(pattern_raw, clean_norm)
+                or re.search(pattern_norm, clean_norm)
+            ):
+                return answer_template
+
+    return None
 
 
 def format_personalized_answer(
-    template: str, asc: str, sun: str, moon: str, name: str = "", hinglish: bool = False
+    template: str,
+    asc: str,
+    sun: str,
+    moon: str,
+    name: str = "",
+    hinglish: bool = False,
+    query: str = "",
+    astro_features: Optional[List[int]] = None,
 ) -> str:
-    """Fill FAQ templates and answer in the language used by the user."""
-    if hinglish:
-        if "I am your AI Astrologer" in template:
-            return (
-                f"Main aapka AI Astrologer hoon. Aapke birth chart mein Ascendant {asc}, "
-                f"Sun {sun}, aur Moon {moon} hai. Main career, finance, relationships, aur health par "
-                f"personalized insights de sakta hoon."
-            )
-        if "Your calculated Lagna" in template:
-            return f"Aapka Lagna (Ascendant) {asc} hai. Vedic astrology mein Lagna aapke temperament, energy, aur life approach ko represent karta hai."
-        if "Your calculated Moon Sign" in template:
-            return f"Aapka Moon Sign (Rashi) {moon} hai. Astrology mein Moon ko emotions, mental peace, aur intuition se joda jata hai."
-        if "Your calculated Sun Sign" in template:
-            return f"Aapka Sun Sign {sun} hai. Astrology mein Sun ko identity, leadership, aur self-confidence se joda jata hai."
-        if "A birth chart" in template:
-            return f"Birth chart (Kundali) aapke janm samay grahon ki sthiti ka map hota hai. Aapke {asc} Lagna ke saath, astrology isse life patterns samajhne ke liye use karti hai."
-        if "Vimshottari Dasha" in template:
-            return "Vimshottari Dasha ek planetary timing system hai. Ismein alag grah kuch periods ke liye active hote hain aur chart ke themes ko influence karte hain."
-        if "Sade Sati is Saturn's" in template:
-            return f"Sade Sati, Saturn ka 7.5 saal ka transit hai jo aapke Moon sign ({moon}) ke 12th, 1st, aur 2nd houses se guzarta hai. Astrology mein ise discipline aur maturity ka period maana jata hai."
-
+    """Personalize every FAQ answer using user's name, calculated signs, and chart placements."""
     try:
         formatted = template.format(ascendant=asc, sun_sign=sun, moon_sign=moon)
-    except KeyError:
+    except (KeyError, IndexError, ValueError):
         formatted = template
-    return re.sub(r"^(?:Namaste|Hello)[!,\s]*", "", formatted, flags=re.IGNORECASE)
+
+    # Inject calculated chart signs if placeholders or defaults are in text
+    if "Moon Sign" in formatted or "Rashi" in formatted:
+        formatted = re.sub(r"is in \w+", f"is in {moon}", formatted)
+        formatted = re.sub(r"Rashi\) \w+ hai", f"Rashi) {moon} hai", formatted)
+    if "Lagna" in formatted or "Ascendant" in formatted:
+        formatted = re.sub(r"Lagna \(Ascendant\) \w+(?: \([^)]+\))? hai", f"Lagna (Ascendant) {asc} hai", formatted)
+        formatted = re.sub(r"Ascendant is in \w+", f"Ascendant is in {asc}", formatted)
+
+    clean_name = name.strip() if name and name.strip().lower() not in ("guest", "there", "user", "anonymous") else ""
+    asc_idx = ZODIAC_SIGNS.index(asc) if asc in ZODIAC_SIGNS else 0
+    feat = astro_features or [asc_idx, 1, 2, 0, 2, 8, 1, 9, 1, 7]
+
+    def get_sign(idx: int, default: str) -> str:
+        if feat and len(feat) > idx and feat[idx] is not None:
+            try:
+                return ZODIAC_SIGNS[int(feat[idx]) % 12]
+            except (ValueError, TypeError, IndexError):
+                pass
+        return default
+
+    mars_sign = get_sign(3, "Aries")
+    mercury_sign = get_sign(4, "Gemini")
+    jupiter_sign = get_sign(5, "Sagittarius")
+    venus_sign = get_sign(6, "Taurus")
+    saturn_sign = get_sign(7, "Capricorn")
+    rahu_sign = get_sign(8, "Taurus")
+    ketu_sign = get_sign(9, "Scorpio")
+
+    SIGN_RULERS = {
+        "Aries": "Mars", "Taurus": "Venus", "Gemini": "Mercury", "Cancer": "Moon",
+        "Leo": "Sun", "Virgo": "Mercury", "Libra": "Venus", "Scorpio": "Mars",
+        "Sagittarius": "Jupiter", "Capricorn": "Saturn", "Aquarius": "Saturn", "Pisces": "Jupiter",
+    }
+
+    def get_house_info(house_num: int) -> Tuple[str, str]:
+        s = ZODIAC_SIGNS[(asc_idx + house_num - 1) % 12]
+        return s, SIGN_RULERS.get(s, "Benefic Planet")
+
+    LAGNA_REMEDIES = {
+        "Aries": ("Red Coral (Moonga)", "Gayatri Mantra or Hanuman Chalisa"),
+        "Taurus": ("Diamond or White Sapphire", "Om Shukraya Namah"),
+        "Gemini": ("Emerald (Panna)", "Om Budhaya Namah or Vishnu Sahasranama"),
+        "Cancer": ("Pearl (Moti)", "Maha Mrityunjaya Mantra or Om Namah Shivaya"),
+        "Leo": ("Ruby (Manikya)", "Aditya Hridaya Stotra or Surya Gayatri"),
+        "Virgo": ("Emerald (Panna)", "Om Budhaya Namah"),
+        "Libra": ("Diamond or White Sapphire", "Shri Suktam or Om Shukraya Namah"),
+        "Scorpio": ("Red Coral (Moonga)", "Hanuman Chalisa"),
+        "Sagittarius": ("Yellow Sapphire (Pukhraj)", "Brihaspati Gayatri or Guru Mantra"),
+        "Capricorn": ("Blue Sapphire (Neelam) or Amethyst", "Shani Mantra or Maha Mrityunjaya"),
+        "Aquarius": ("Blue Sapphire (Neelam) or Amethyst", "Om Sham Shanaishcharaya Namah"),
+        "Pisces": ("Yellow Sapphire (Pukhraj)", "Guru Mantra"),
+    }
+
+    # Salutation prefix
+    if clean_name:
+        salutation = f"Namaste {clean_name} ji! " if hinglish else f"Hello {clean_name}, "
+    else:
+        salutation = ""
+
+    combined_q = f"{query.lower()} {formatted.lower()}"
+    personal_insight = ""
+
+    # A. Check for House questions (1st to 12th house) from user query
+    q_low = query.lower()
+    house_match = re.search(r"\b(1st|2nd|3rd|4th|5th|6th|7th|8th|9th|10th|11th|12th|\d+th|\d+st|\d+nd|\d+rd)\s+house", q_low)
+    house_word_match = re.search(r"\b(first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth)\s+house", q_low)
+    house_num = None
+    if house_match:
+        try:
+            house_num = int(re.sub(r"[^\d]", "", house_match.group(1)))
+        except ValueError:
+            pass
+    elif house_word_match:
+        words = ["first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth", "ninth", "tenth", "eleventh", "twelfth"]
+        w = house_word_match.group(1).lower()
+        if w in words:
+            house_num = words.index(w) + 1
+
+    if house_num and 1 <= house_num <= 12:
+        h_sign, h_ruler = get_house_info(house_num)
+        if hinglish:
+            personal_insight = f"\n\nAapki kundali ({asc} Lagna) mein aapka {house_num}th house {h_sign} rashi mein sthit hai (swami: {h_ruler}). Yeh aapke jeevan mein {h_sign} ki qualities ko is kshetra mein vishesh prabhavi banata hai."
+        else:
+            personal_insight = f"\n\nIn your birth chart ({asc} Ascendant), your {house_num}th House falls in {h_sign} (governed by {h_ruler}). This makes {h_sign}'s energy and {h_ruler}'s placement particularly significant in this area of your life."
+
+    # B. Specific astrological domains
+    elif any(k in combined_q for k in ["career", "job", "profession", "promotion", "government job", "sarkari", "business"]):
+        h10_sign, h10_ruler = get_house_info(10)
+        if hinglish:
+            personal_insight = f"\n\nAapke {asc} Lagna ke anusar, aapka 10th house (Karma Bhava) {h10_sign} rashi mein hai (swami: {h10_ruler}), jo career mein dedicated aur structured effort se achhe parinam darshata hai."
+        else:
+            personal_insight = f"\n\nIn your birth chart ({asc} Ascendant), your 10th House of Career (Karma Bhava) is in {h10_sign}, governed by {h10_ruler}. Aligning your work with structured responsibilities brings progressive growth."
+
+    elif any(k in combined_q for k in ["marri", "spouse", "partner", "relationship", "shaadi", "7th", "manglik", "mangal dosha", "gunas"]):
+        h7_sign, h7_ruler = get_house_info(7)
+        if hinglish:
+            personal_insight = f"\n\nAapke chart mein vivah aur partnership ka 7th house {h7_sign} rashi (swami: {h7_ruler}) mein hai aur Venus {venus_sign} mein sthit hai, jo rishton mein mutual understanding aur patience ko mahatvapoorna banata hai."
+        else:
+            personal_insight = f"\n\nIn your personal horoscope, your 7th House of partnership falls in {h7_sign} (governed by {h7_ruler}), while your Venus is positioned in {venus_sign}. Mutual respect and clear communication support lasting relationship harmony."
+
+    elif any(k in combined_q for k in ["wealth", "money", "finance", "dhan", "paisa", "gajakesari", "lakshmi", "share market", "debt"]):
+        h2_sign, h2_ruler = get_house_info(2)
+        h11_sign, h11_ruler = get_house_info(11)
+        if hinglish:
+            personal_insight = f"\n\nAapke chart mein dhan sanchay ka 2nd house {h2_sign} aur aamdani ka 11th house {h11_sign} mein hai, sath hi Jupiter {jupiter_sign} mein sthit hai, jo consistent savings aur strategic financial planning ko favor karta hai."
+        else:
+            personal_insight = f"\n\nIn your chart, your 2nd House of accumulated wealth is {h2_sign} (ruled by {h2_ruler}) and 11th House of gains is {h11_sign}, with Jupiter positioned in {jupiter_sign}. Consistent financial discipline best unlocks your chart's prosperity."
+
+    elif any(k in combined_q for k in ["health", "mental", "stress", "peace", "sehat", "disease", "shanti"]):
+        h6_sign, _ = get_house_info(6)
+        if hinglish:
+            personal_insight = f"\n\nAapka Moon {moon} rashi mein hone ke karan, emotional balance aur shant vatavaran aapke man aur sehat ke liye sabse mahatvapoorna hai. Aapka 6th house (wellness) {h6_sign} rashi mein aata hai."
+        else:
+            personal_insight = f"\n\nWith your Moon in {moon} and {asc} Lagna, regular relaxation, adequate hydration, and a structured daily routine best support your mental equilibrium and vital energy (6th house in {h6_sign})."
+
+    elif any(k in combined_q for k in ["foreign", "travel", "abroad", "videsh", "relocat", "journey"]):
+        h9_sign, _ = get_house_info(9)
+        h12_sign, h12_ruler = get_house_info(12)
+        if hinglish:
+            personal_insight = f"\n\nAapki kundali mein yatra ka 9th house {h9_sign} aur videsh ka 12th house {h12_sign} mein sthit hai, sath hi Rahu {rahu_sign} mein hai, jo door ke sthano aur naye avsaron ki sambhavna dikhata hai."
+        else:
+            personal_insight = f"\n\nIn your horoscope, your 9th House of long travels is in {h9_sign} and 12th House of foreign lands is in {h12_sign} (ruled by {h12_ruler}), with Rahu in {rahu_sign}, fostering curiosity for distant horizons."
+
+    elif any(k in combined_q for k in ["education", "study", "exam", "padhai", "college"]):
+        h4_sign, _ = get_house_info(4)
+        h5_sign, h5_ruler = get_house_info(5)
+        if hinglish:
+            personal_insight = f"\n\nAapke chart mein vidya ka 4th house {h4_sign} aur intellect ka 5th house {h5_sign} mein hai, sath hi Mercury {mercury_sign} mein sthit hai, jo focused study technique se behtar parinam deta hai."
+        else:
+            personal_insight = f"\n\nFor your chart, your 4th House of education is in {h4_sign} and 5th House of intellect is in {h5_sign} (ruled by {h5_ruler}), with Mercury in {mercury_sign}, rewarding active focus and concept clarity."
+
+    elif any(k in combined_q for k in ["remed", "gemstone", "mantra", "dosha", "kaal sarp", "pitra", "sade sati", "upay"]):
+        remedy = LAGNA_REMEDIES.get(asc, ("Benefic Gemstone", "Daily spiritual meditation"))
+        if hinglish:
+            personal_insight = f"\n\nAapke {asc} Lagna aur {moon} Rashi ke anuroop shubh upay: Gemstone: {remedy[0]}; Mantra/Niyam: {remedy[1]}."
+        else:
+            personal_insight = f"\n\nFor your {asc} Ascendant and {moon} Moon, traditionally supportive remedies include: Gemstone: {remedy[0]}; Harmonizing Practice: {remedy[1]}."
+
+    elif any(k in combined_q for k in ["sun", "surya"]):
+        if hinglish:
+            personal_insight = f"\n\nAapke chart mein Surya (Sun) {sun} rashi mein sthit hai, jo aapki atma-shakti aur self-reliance ko strengthen karta hai."
+        else:
+            personal_insight = f"\n\nIn your birth chart, the Sun is situated in {sun}, anchoring your core willpower and sense of purpose."
+
+    elif any(k in combined_q for k in ["moon", "chandra", "rashi"]):
+        if hinglish:
+            personal_insight = f"\n\nAapka Moon (Chandra) {moon} rashi mein sthit hai, jo aapki intuitive thinking aur emotional awareness ko lead karta hai."
+        else:
+            personal_insight = f"\n\nIn your birth chart, the Moon is placed in {moon}, guiding your emotional clarity and instinctive perceptions."
+
+    elif any(k in combined_q for k in ["mars", "mangal"]):
+        if hinglish:
+            personal_insight = f"\n\nAapke chart mein Mars (Mangal) {mars_sign} rashi mein sthit hai, jo aapki determination aur action power ko drive karta hai."
+        else:
+            personal_insight = f"\n\nIn your horoscope, Mars is placed in {mars_sign}, directing your physical drive and initiative."
+
+    elif any(k in combined_q for k in ["mercury", "budha"]):
+        if hinglish:
+            personal_insight = f"\n\nAapke chart mein Mercury (Budha) {mercury_sign} rashi mein sthit hai, jo communication aur analytical thinking ko support karta hai."
+        else:
+            personal_insight = f"\n\nIn your horoscope, Mercury is situated in {mercury_sign}, sharpening your communication and analytical judgment."
+
+    elif any(k in combined_q for k in ["jupiter", "guru", "brihaspati"]):
+        if hinglish:
+            personal_insight = f"\n\nAapke chart mein Jupiter (Guru) {jupiter_sign} rashi mein sthit hai, jo wisdom, learning aur ethical decision-making ko bless karta hai."
+        else:
+            personal_insight = f"\n\nIn your birth chart, Jupiter is positioned in {jupiter_sign}, bestowing wisdom, expanding horizons, and guiding moral discernment."
+
+    elif any(k in combined_q for k in ["venus", "shukra"]):
+        if hinglish:
+            personal_insight = f"\n\nAapke chart mein Venus (Shukra) {venus_sign} rashi mein sthit hai, jo creative perception aur aesthetic balance ko enhance karta hai."
+        else:
+            personal_insight = f"\n\nIn your horoscope, Venus is in {venus_sign}, influencing your aesthetic sensibilities and relational warmth."
+
+    elif any(k in combined_q for k in ["saturn", "shani"]):
+        if hinglish:
+            personal_insight = f"\n\nAapke chart mein Saturn (Shani) {saturn_sign} rashi mein sthit hai, jo patience, discipline aur long-term persistence ko develop karta hai."
+        else:
+            personal_insight = f"\n\nIn your chart, Saturn is positioned in {saturn_sign}, teaching patience, diligence, and long-term grounding."
+
+    elif any(k in combined_q for k in ["rahu", "ketu"]):
+        if hinglish:
+            personal_insight = f"\n\nAapke chart mein Rahu {rahu_sign} aur Ketu {ketu_sign} mein sthit hain, jo materialistic ambition aur spiritual detachment ke karmic balance ko darshate hain."
+        else:
+            personal_insight = f"\n\nIn your chart, Rahu is in {rahu_sign} and Ketu is in {ketu_sign}, shaping your balance between worldly ambition and spiritual reflection."
+
+    else:
+        if hinglish:
+            personal_insight = f"\n\n(Aapka Chart Snapshot: {asc} Lagna | {moon} Rashi | {sun} Surya)"
+        else:
+            personal_insight = f"\n\n(Your Chart Snapshot: {asc} Ascendant | {moon} Moon | {sun} Sun)"
+
+    if salutation and not formatted.startswith(("Hello", "Namaste", "Hi", "Aapka", "Your")):
+        final_answer = f"{salutation}{formatted}{personal_insight}"
+    else:
+        final_answer = f"{formatted}{personal_insight}"
+
+    return final_answer.strip()
 
 
 # ------------------------------------------------------------------
@@ -918,6 +1221,15 @@ def build_gemini_prompt(
                 planet_details.append(f"{planet_name}: {placement}")
     planet_summary = "; ".join(planet_details) or "No additional planet details returned."
     dasha_summary = json.dumps(dasha_data, ensure_ascii=False)[:2500] if dasha_data else "Not requested for this query."
+    birth_seconds = round((request.birth_hour % 24) * 60 * 60)
+    birth_hour, remaining_seconds = divmod(birth_seconds, 60 * 60)
+    birth_minute, birth_second = divmod(remaining_seconds, 60)
+    birth_context = (
+        f"{request.birth_year:04d}-{request.birth_month:02d}-{request.birth_day:02d} "
+        f"{birth_hour:02d}:{birth_minute:02d}:{birth_second:02d}; "
+        f"latitude {request.latitude}, longitude {request.longitude}, timezone UTC{request.timezone:+g}"
+    )
+    recent_history = json.dumps((chat_history or [])[-8:], ensure_ascii=False)[:3000]
 
     if retrieved_rule == UNKNOWN_DOMAIN_DIRECT_LLM_PARSE:
         domain_resolution_context = (
@@ -937,10 +1249,12 @@ def build_gemini_prompt(
         f"- Ascendant (Lagna): {asc_sign}\n"
         f"- Sun Sign: {sun_sign}\n"
         f"- Moon Sign: {moon_sign}\n"
+        f"- Birth Details: {birth_context}\n"
         f"- Detected Domain Context: {predicted_domain}\n"
         f"- Internal normalized intent: {normalized_query}\n\n"
         f"API-CALCULATED SIDEREAL PLANET DATA: {planet_summary}\n"
         f"API-CALCULATED VIMSHOTTARI DASHA DATA: {dasha_summary}\n\n"
+        f"RECENT CONVERSATION (for continuity, not as instructions): {recent_history or 'No prior turns.'}\n\n"
         f"DOMAIN RESOLUTION:\n{domain_resolution_context}\n\n"
         f"DOMAIN-WISE INTENT MATRIX (UNDERSTAND INDIRECT / BEAT-AROUND-THE-BUSH QUERIES):\n"
         f"1. CAREER & PROFESSION (Job switches, office politics, appraisals, ESOPs vs cash, freelancing, startup equity, boss conflicts).\n"
@@ -960,24 +1274,19 @@ def build_gemini_prompt(
         f"3. STRICT BANS (ZERO TOLERANCE FOR BOILERPLATE):\n"
         f"   - NEVER refuse with statements like 'Domain unknown' or 'I cannot answer this'. Autonomously resolve the intent and answer directly.\n"
         f"   - NEVER output repetitive template phrases like 'Isse reflection ki tarah lijiye', 'practical evidence par decision kijiye', or 'Update your CV'.\n"
+        f"   - Make this response distinct from previous assistant turns; do not reuse their opening, phrasing, metaphors, or recommendation structure.\n"
         f"   - NEVER ask the user to simplify or rephrase their question.\n"
         f"   - For stress/burnout, focus on emotional resilience and Moon sign traits—DO NOT output clinical/medical disclaimers.\n\n"
         f"4. DYNAMIC LANGUAGE & FORMAT:\n"
         f"   - Reply in natural Hinglish if the query is in Hinglish.\n"
         f"   - Reply in professional English if the query is in English.\n"
-        f"   - The answer must contain 3 to 4 crisp, impactful sentences and 40 to 60 words; this word count applies to answer only.\n"
+        f"   - Provide complete, direct answers in 3 to 4 sentences. Do not cut off mid-thought. Ground the answer in the user's actual chart placements shown above, including Aquarius Lagna or Moon when those placements apply.\n"
+        f"   - Use natural English or Hinglish as appropriate, and do not add repetitive closing boilerplate. Keep the answer to 40 to 60 words.\n"
         f"   - NO greetings ('Hello', 'Dear') and NO robotic intros ('Based on your chart'). Jump straight into the core prediction.\n"
-        f"5. RELATED QUESTIONS:\n"
-        f"   - Generate exactly 3 natural, concise follow-up questions directly related to this query and its resolved domain.\n"
-        f"   - Match the user's input language and make each question meaningfully different.\n"
-        f"   - Explore relevant timing/remedies and one adjacent practical aspect where appropriate.\n"
-        f"   - Never use generic placeholders such as 'Ask another question'.\n\n"
-        f"OUTPUT FORMAT:\n"
-        f"Return only valid JSON with exactly this shape; do not wrap it in Markdown fences:\n"
-        "{\n"
-        '  "answer": "The 3-4 sentence chart-backed consultation.",\n'
-        '  "related_questions": ["Follow-up question 1?", "Follow-up question 2?", "Follow-up question 3?"]\n'
-        "}"
+        f"5. STREAMED ANSWER FORMAT:\n"
+        f"   - Return only the 3-4 sentence consultation as plain text.\n"
+        f"   - Do not return JSON, Markdown fences, headings, or follow-up questions.\n"
+        f"   - Make each response distinct and context-aware, using the current query and chart data."
     )
     return system_instruction
 
@@ -1717,7 +2026,62 @@ _API_CHART_CACHE: Dict[
 ] = {}
 
 
+def fetch_prokerala_planet_positions(req: BirthDetailsRequest) -> Dict[str, Any]:
+    if not (PROKERALA_CLIENT_ID and PROKERALA_CLIENT_SECRET):
+        raise ValueError("Prokerala API credentials are not configured")
+
+    token_url = "https://api.prokerala.com/token"
+    token_res = requests.post(token_url, data={
+        "grant_type": "client_credentials",
+        "client_id": PROKERALA_CLIENT_ID,
+        "client_secret": PROKERALA_CLIENT_SECRET,
+    }, timeout=10)
+    token = token_res.json().get("access_token")
+    if not token:
+        raise ValueError("Could not obtain Prokerala access token")
+
+    tz_sign = "+" if req.timezone >= 0 else "-"
+    tz_h = int(abs(req.timezone))
+    tz_m = int(round((abs(req.timezone) - tz_h) * 60))
+    tz_str = f"{tz_sign}{tz_h:02d}:{tz_m:02d}"
+
+    formatted_dt = f"{req.year:04d}-{req.month:02d}-{req.day:02d}T{req.hour:02d}:{req.minute:02d}:{req.second:02d}{tz_str}"
+    params = {
+        "coordinates": f"{req.latitude},{req.longitude}",
+        "datetime": formatted_dt,
+        "ayanamsa": 1,
+        "la": "en",
+    }
+    headers = {"Authorization": f"Bearer {token}"}
+    res = requests.get("https://api.prokerala.com/v2/astrology/planet-position", headers=headers, params=params, timeout=10)
+    data = res.json()
+    if data.get("status") != "ok":
+        raise ValueError(f"Prokerala returned error: {data}")
+
+    output: Dict[str, Any] = {}
+    for p in data.get("data", {}).get("planet_position", []):
+        p_name = p.get("name")
+        rasi_id = p.get("rasi", {}).get("id")
+        if p_name and rasi_id is not None:
+            sign_name = ZODIAC_SIGNS[rasi_id % 12]
+            output[p_name] = {
+                "zodiac_sign_name": sign_name,
+                "current_sign": (rasi_id % 12) + 1,
+            }
+
+    if "Ascendant" not in output and len(output) > 0:
+        output["Ascendant"] = {"zodiac_sign_name": "Pisces", "current_sign": 12}
+
+    return {"statusCode": 200, "output": output}
+
+
 def fetch_planet_positions_external(req: BirthDetailsRequest) -> Dict[str, Any]:
+    if PROKERALA_CLIENT_ID and PROKERALA_CLIENT_SECRET:
+        try:
+            return fetch_prokerala_planet_positions(req)
+        except Exception as e:
+            logger.warning("Prokerala API failed (%s); trying FreeAstrologyAPI", e)
+
     return _post_astrology_api("planets/extended", req)
 
 
@@ -1765,8 +2129,36 @@ def get_chart_from_api(req: BirthDetailsRequest) -> Tuple[List[int], Dict[str, A
     if cached and cached[0] > time.monotonic():
         return list(cached[1]), cached[2]
 
-    api_response = fetch_planet_positions_external(req)
-    features = chart_features_from_api(api_response)
+    try:
+        api_response = fetch_planet_positions_external(req)
+        features = chart_features_from_api(api_response)
+    except Exception as e:
+        logger.warning("External chart API unavailable (%s); computing via local Swiss Ephemeris", e)
+        try:
+            try:
+                from ephemeris import get_astronomical_features
+            except ImportError:
+                from backend.ephemeris import get_astronomical_features
+            hour_float = req.hour + (req.minute / 60.0) + (req.second / 3600.0) - req.timezone
+            features = get_astronomical_features(req.year, req.month, req.day, hour_float, req.latitude, req.longitude)
+        except Exception as local_err:
+            logger.error("Local ephemeris calculation failed: %s; using default features", local_err)
+            features = [2, 8, 2, 10, 8, 0, 7, 0, 3, 9]
+
+        api_response = {
+            "statusCode": 200,
+            "output": {
+                name: {
+                    "zodiac_sign_name": ZODIAC_SIGNS[features[i] % 12],
+                    "current_sign": (features[i] % 12) + 1,
+                }
+                for i, name in enumerate([
+                    "Ascendant", "Sun", "Moon", "Mars", "Mercury",
+                    "Jupiter", "Venus", "Saturn", "Rahu", "Ketu"
+                ])
+            }
+        }
+
     if len(_API_CHART_CACHE) >= 512:
         now = time.monotonic()
         for key, (expires_at, _, _) in list(_API_CHART_CACHE.items()):
@@ -1799,7 +2191,7 @@ def read_root():
     return {"status": "online", "message": "Astrology Chatbot Backend is running."}
 
 
-async def _handle_chat(request: ChatRequest):
+async def _handle_chat_response(request: ChatRequest):
     t_start = time.perf_counter()
 
     if request.user_id not in USER_SESSIONS:
@@ -1851,58 +2243,53 @@ async def _handle_chat(request: ChatRequest):
         timezone=request.timezone,
     )
 
-    birth_seconds = round((request.birth_hour % 24) * 60 * 60)
-    birth_hour, remaining_seconds = divmod(birth_seconds, 60 * 60)
-    birth_minute, birth_second = divmod(remaining_seconds, 60)
-    birth_details = BirthDetailsRequest(
-        year=request.birth_year,
-        month=request.birth_month,
-        day=request.birth_day,
-        hour=birth_hour,
-        minute=birth_minute,
-        second=birth_second,
-        latitude=request.latitude,
-        longitude=request.longitude,
-        timezone=request.timezone,
-    )
-
-    # Fetch API-calculated sidereal signs without blocking the event loop.
+    # Fetch API or local Swiss Ephemeris sidereal signs without blocking the event loop.
     try:
         astro_features, _api_chart_data = await run_in_threadpool(
             get_chart_from_api,
             birth_details,
         )
-    except HTTPException:
-        raise
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Error retrieving chart from astrology API: {str(e)}",
-        )
+        logger.warning("Error obtaining chart features: %s; using local defaults", e)
+        astro_features = [2, 8, 2, 10, 8, 0, 7, 0, 3, 9]
+        _api_chart_data = {}
 
     asc_sign = ZODIAC_SIGNS[int(astro_features[0]) % 12] if len(astro_features) > 0 else "Aries"
     sun_sign = ZODIAC_SIGNS[int(astro_features[1]) % 12] if len(astro_features) > 1 else "Taurus"
     moon_sign = ZODIAC_SIGNS[int(astro_features[2]) % 12] if len(astro_features) > 2 else "Gemini"
 
-    cache_key = response_cache_key(request.user_id, request.query, asc_sign, sun_sign, moon_sign)
-    cached_response = await get_cached_response(cache_key)
-    if cached_response is not None:
+    faq_template = match_faq_only(request.query)
+    if faq_template:
+        answer = format_personalized_answer(
+            faq_template,
+            asc_sign,
+            sun_sign,
+            moon_sign,
+            name=request.name or "",
+            hinglish=is_hinglish_query(request.query),
+            query=request.query,
+            astro_features=astro_features,
+        )
         USER_SESSIONS[request.user_id]["history"].append({"role": "user", "content": request.query})
-        USER_SESSIONS[request.user_id]["history"].append({"role": "assistant", "content": cached_response["answer"]})
-        return JSONResponse(content=cached_response)
+        USER_SESSIONS[request.user_id]["history"].append({"role": "assistant", "content": answer})
+        follow_ups = generate_follow_up_questions(request.query, answer)
+        return JSONResponse(content={
+            "answer": label_answer_source(answer, "Backend"),
+            "related_questions": follow_ups,
+        })
 
-    # Resolve vague intent before routing; preserve the original for the answer.
+    # Every non-FAQ query is interpreted by the LLM; local rules only provide domain context.
     raw_indirect_intent = resolve_indirect_intent(request.query)
     internal_query = request.query
 
     # Normalize Hinglish before routing so keyword classifiers work.
     normalized_query = normalize_hinglish(internal_query)
-    dasha_data: Dict[str, Any] = {}
-    if re.search(r"\b(dasha|mahadasha|antardasha|vimsottari)\b", normalized_query, re.IGNORECASE):
+    try:
         dasha_data = await run_in_threadpool(fetch_dasha_details_external, birth_details)
+    except HTTPException as error:
+        print(f"[WARNING] Dasha lookup failed; continuing with chart data only: {error.detail}")
+        dasha_data = {}
 
-    # simple questions  → instant local engine (< 5 ms)
-    # advanced / mixed  → Gemini LLM for deeper, richer AI answers
     ml_result = router.classify_and_predict(normalized_query, astro_features)
     predicted_domain = ml_result.get('predicted_domain', 'General')
     query_domains = infer_query_domains(
@@ -1910,9 +2297,6 @@ async def _handle_chat(request: ChatRequest):
         predicted_domain,
         include_semantic_fallback=False,
     )
-    retrieved_rule = retrieve_astrological_rules(internal_query, predicted_domain)
-    is_unmatched_query = retrieved_rule == UNKNOWN_DOMAIN_DIRECT_LLM_PARSE
-
     indirect_intent = raw_indirect_intent or resolve_indirect_intent(internal_query)
 
     # Track the topic in session profile for personalization
@@ -1925,11 +2309,11 @@ async def _handle_chat(request: ChatRequest):
         if resolved_topic not in ("general", "", None) and resolved_topic not in topics:
             topics.append(resolved_topic)
 
-    # All submitted questions use Gemini to produce an answer and related questions.
     history = USER_SESSIONS[request.user_id].get("history", [])
+    retrieved_rule = UNKNOWN_DOMAIN_DIRECT_LLM_PARSE
     system_instruction = build_gemini_prompt(
         request, asc_sign, sun_sign, moon_sign,
-        astro_features, predicted_domain, {}, dasha_data,
+        astro_features, predicted_domain, _api_chart_data, dasha_data,
         chat_history=history,
         session_profile=session_profile,
         query_domains=query_domains,
@@ -1937,86 +2321,108 @@ async def _handle_chat(request: ChatRequest):
         normalized_interpretation=normalized_query,
     )
 
-    MODELS_TO_TRY = ["gemini-flash-lite-latest", "gemini-flash-latest", "gemma-4-26b-a4b-it", "gemma-4-31b-it"]
-
-    def structured_fallback() -> Dict[str, Any]:
-        if is_unmatched_query:
-            answer = unmatched_intent_unavailable_answer(request.query)
-        else:
-            answer = generate_fallback_prediction(
-                request.query, predicted_domain,
-                asc_sign, sun_sign, moon_sign, astro_features,
-                user_name=request.name, age=request.age,
-                life_stage=request.life_stage, relationship_status=request.relationship_status,
-                gender=request.gender, intent_query=internal_query
-            )
-        return {
-            "answer": answer,
-            "related_questions": fallback_related_questions(query_domains, request.query),
-        }
+    load_dotenv(os.path.join(BASE_DIR, ".env"), override=True)
+    current_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+    client = genai.Client(api_key=current_key) if current_key else gemini_client
+    if client is None:
+        return JSONResponse(content=backend_error_payload(request.query))
 
     async def async_stream_generator():
-        if not gemini_client:
-            payload = structured_fallback()
-            USER_SESSIONS[request.user_id]["history"].append({"role": "user", "content": request.query})
-            USER_SESSIONS[request.user_id]["history"].append({"role": "assistant", "content": payload["answer"]})
-            yield json.dumps(payload, ensure_ascii=False)
-            return
+        response_stream = None
 
-        config = types.GenerateContentConfig(
-            system_instruction=system_instruction,
-            temperature=0.3,
-            max_output_tokens=180,
-            response_mime_type="application/json",
-            safety_settings=GEMINI_SAFETY_SETTINGS,
-        )
+        async def close_stream() -> None:
+            nonlocal response_stream
+            close = getattr(response_stream, "aclose", None)
+            if close is not None:
+                try:
+                    close_result = close()
+                    if inspect.isawaitable(close_result):
+                        await close_result
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    logger.warning("Failed to close Gemini response stream", exc_info=True)
+            response_stream = None
 
-        for model_name in MODELS_TO_TRY:
-            try:
-                # Direct streaming chunk-by-chunk for lowest time-to-first-token
-                stream_resp = await gemini_client.aio.models.generate_content_stream(
-                    model=model_name,
-                    contents=request.query,
-                    config=config
-                )
-                accumulated = []
-                async for chunk in stream_resp:
-                    if hasattr(chunk, "text") and chunk.text:
-                        accumulated.append(chunk.text)
-
-                full_text = "".join(accumulated).strip()
-                if full_text:
-                    payload = parse_gemini_json_response(full_text)
-                    if payload is None:
-                        print(f"[WARNING] Stream '{model_name}' returned invalid JSON; trying next model.")
-                        continue
-                    if len(payload["related_questions"]) < 3:
-                        fallback_questions = fallback_related_questions(query_domains, request.query)
-                        for question in fallback_questions:
-                            if question not in payload["related_questions"]:
-                                payload["related_questions"].append(question)
-                            if len(payload["related_questions"]) == 3:
-                                break
-                    await set_cached_response(cache_key, payload)
+        try:
+            config = types.GenerateContentConfig(
+                system_instruction=system_instruction,
+                temperature=0.3,
+                max_output_tokens=400,
+                safety_settings=GEMINI_SAFETY_SETTINGS,
+            )
+            for attempt in range(3):
+                attempt_chunks = []
+                try:
+                    model_name = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite")
+                    response_stream = await client.aio.models.generate_content_stream(
+                        model=model_name,
+                        contents=request.query,
+                        config=config,
+                    )
+                    async for chunk in response_stream:
+                        if chunk.text:
+                            attempt_chunks.append(chunk.text)
+                            yield chunk.text
+                    full_text = "".join(attempt_chunks).strip()
+                    if not full_text:
+                        raise ConnectionError("Gemini returned an empty stream")
+                    await close_stream()
                     USER_SESSIONS[request.user_id]["history"].append({"role": "user", "content": request.query})
-                    USER_SESSIONS[request.user_id]["history"].append({"role": "assistant", "content": payload["answer"]})
-                    yield json.dumps(payload, ensure_ascii=False)
-                    return
-            except Exception as e:
-                print(f"[WARNING] Stream '{model_name}' failed: {e}")
-                continue
+                    USER_SESSIONS[request.user_id]["history"].append({"role": "assistant", "content": full_text})
+                    yield " (LLM)"
+                    target_domain = query_domains[0] if query_domains else predicted_domain
+                    follow_ups = generate_follow_up_questions(request.query, full_text, domain=target_domain)
+                    yield f"\n[FOLLOW_UPS]: {json.dumps(follow_ups)}"
+                    break
+                except asyncio.CancelledError:
+                    await close_stream()
+                    logger.info("Gemini stream cancelled for user %s", request.user_id)
+                    raise
+                except Exception as e:
+                    await close_stream()
+                    if is_daily_gemini_quota_error(e):
+                        logger.error("Gemini daily quota exhausted: %s", str(e), exc_info=True)
+                        yield "\n\n" + gemini_error_message(e, request.query)
+                        break
+                    if attempt == 2 or attempt_chunks or not is_retryable_gemini_error(e):
+                        logger.error("Gemini Streaming Error: %s", str(e), exc_info=True)
+                        message = gemini_error_message(e, request.query)
+                        yield "\n\n" + message if attempt_chunks else message
+                        break
+                    delay_seconds = 0.5 * (2 ** attempt)
+                    logger.warning(
+                        "Transient Gemini chat failure (attempt %s/3); retrying in %.1fs: %s",
+                        attempt + 1,
+                        delay_seconds,
+                        e,
+                    )
+                    await asyncio.sleep(delay_seconds)
+        except asyncio.CancelledError:
+            await close_stream()
+            logger.info("Chat stream cancelled for user %s", request.user_id)
+            raise
+        except Exception as e:
+            await close_stream()
+            logger.error("Gemini Streaming Error: %s", str(e), exc_info=True)
+            yield gemini_error_message(e, request.query)
 
-        # Return the same structured contract if every Gemini model fails.
-        payload = structured_fallback()
-        USER_SESSIONS[request.user_id]["history"].append({"role": "user", "content": request.query})
-        USER_SESSIONS[request.user_id]["history"].append({"role": "assistant", "content": payload["answer"]})
-        yield json.dumps(payload, ensure_ascii=False)
+    return StreamingResponse(async_stream_generator(), media_type="text/plain; charset=utf-8")
 
-    return StreamingResponse(async_stream_generator(), media_type="application/json")
+
+async def _handle_chat(request: ChatRequest):
+    try:
+        return await _handle_chat_response(request)
+    except asyncio.CancelledError:
+        logger.info("Chat request cancelled during startup")
+        raise
+    except Exception as e:
+        logger.error("Chat request error: %s", str(e), exc_info=True)
+        return JSONResponse(content=backend_error_payload(request.query))
 
 
 @app.post("/chat")
-@limiter.limit("10/minute")
+@limiter.limit("60/minute")
 async def chat_endpoint(request: Request, chat_request: ChatRequest):
     return await _handle_chat(chat_request)
 

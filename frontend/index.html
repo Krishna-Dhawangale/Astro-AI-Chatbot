@@ -449,30 +449,33 @@
     .typing-indicator {
       display: flex;
       align-items: center;
-      gap: 5px;
-      padding: 14px 18px;
-      background: var(--bot-bubble);
-      border: 1px solid var(--bot-border);
-      border-radius: var(--radius-msg);
-      border-bottom-left-radius: 5px;
-      box-shadow: var(--shadow-xs);
-      width: fit-content;
+      gap: 6px;
     }
 
-    .typing-dot {
-      width: 7px;
-      height: 7px;
+    .loading-message {
+      display: flex;
+      align-items: center;
+      min-height: 46px;
+    }
+
+    .typing-indicator .dot {
+      width: 8px;
+      height: 8px;
       border-radius: 50%;
-      background: #f59e0b;
-      animation: bounce 1.3s ease-in-out infinite;
+      background: var(--accent-dark);
+      animation: bounce .9s ease-in-out infinite;
     }
 
-    .typing-dot:nth-child(2) {
-      animation-delay: .18s;
+    .typing-indicator .dot:nth-child(1) {
+      animation-delay: .2s;
     }
 
-    .typing-dot:nth-child(3) {
-      animation-delay: .36s;
+    .typing-indicator .dot:nth-child(2) {
+      animation-delay: .4s;
+    }
+
+    .typing-indicator .dot:nth-child(3) {
+      animation-delay: .6s;
     }
 
     /* ── Bottom Composer ──────────────────────────────────── */
@@ -1006,6 +1009,10 @@
           ? `Namaste ${rawName}! 🙏 Welcome to Astro AI. Your birth chart parameters are active. Ask me any question about your career, marriage, health, finances, or life path!`
           : `Namaste! 🙏 Welcome to Astro AI. Ask me any question about your career, relationships, health, finances, or life path!`;
         appendMessage(greeting, 'bot');
+        renderRelatedQuestions([
+          "Which career suits me best?",
+          "What does my 7th house say about marriage?"
+        ]);
       }
     }
 
@@ -1126,13 +1133,115 @@
       }
     }
 
+    const DOMAIN_FOLLOW_UPS = {
+      career: [
+        "When is the right time for job change?",
+        "Which gemstones suit my career?",
+        "Does my chart favor business or a job?",
+        "Will I get a promotion or appraisal this year?",
+        "Which career field brings highest financial success?"
+      ],
+      marriage: [
+        "What will my partner's nature be like?",
+        "Any remedies for marriage delay?",
+        "When will I get married according to my dasha?",
+        "How is my 7th house and relationship compatibility?",
+        "Are there chances for love marriage or arranged marriage?"
+      ],
+      love: [
+        "What will my partner's nature be like?",
+        "Any remedies for marriage delay?",
+        "When will I get married according to my dasha?",
+        "How is my 7th house and relationship compatibility?"
+      ],
+      wealth: [
+        "When is the best period for financial growth?",
+        "Which gemstones or remedies boost wealth flow?",
+        "Does my chart support stock market or property investment?",
+        "How can I clear debt and improve my savings?",
+        "Will I achieve long-term financial independence?"
+      ],
+      health: [
+        "Which planetary period supports my health recovery?",
+        "How does my Moon sign respond to stress?",
+        "What remedies strengthen vitality and mental peace?",
+        "What wellness habits best suit my Lagna?"
+      ],
+      travel: [
+        "When is the right time for foreign travel?",
+        "Are foreign settlement chances strong in my chart?",
+        "Will settling in a foreign land benefit my career?",
+        "What planetary timing is favorable for visa approvals?"
+      ],
+      education: [
+        "Which higher education field suits my chart?",
+        "How can I improve concentration for exams?",
+        "What timing is favorable for competitive exams?",
+        "Are there chances for study or scholarship abroad?"
+      ],
+      children: [
+        "What timing looks supportive for family planning?",
+        "How does my 5th house influence family and children?",
+        "What planetary strengths support family harmony?",
+        "What remedies bring domestic peace and blessings?"
+      ],
+      remedies: [
+        "Which gemstones suit my Lagna and Moon sign?",
+        "Which mantras strengthen my benefic planets?",
+        "What daily spiritual rituals align my chart?",
+        "Which charity or donation activates Jupiter's grace?"
+      ],
+      chart: [
+        "What is my current Mahadasha and Antardasha?",
+        "Tell me about my Sade Sati timing and remedies",
+        "What does my Lagna and 1st house reveal?",
+        "Which planets are most benefic in my birth chart?"
+      ],
+      general: [
+        "Which career field suits me best?",
+        "What does my 7th house say about marriage?",
+        "How are my wealth and finances looking?",
+        "What does my Lagna and Moon sign reveal?"
+      ]
+    };
+
+    function getFollowUpQuestionsForQuery(query) {
+      const q = (query || '').toLowerCase().trim();
+      let pool = DOMAIN_FOLLOW_UPS.general;
+
+      if (q.includes('career') || q.includes('job') || q.includes('work') || q.includes('promotion') || q.includes('salary') || q.includes('business') || q.includes('naukri') || q.includes('profession') || q.includes('company') || q.includes('office') || q.includes('appraisal') || q.includes('switch') || q.includes('boss')) {
+        pool = DOMAIN_FOLLOW_UPS.career;
+      } else if (q.includes('marri') || q.includes('love') || q.includes('partner') || q.includes('spouse') || q.includes('relationship') || q.includes('shaadi') || q.includes('shadi') || q.includes('7th house') || q.includes('husband') || q.includes('wife') || q.includes('soulmate') || q.includes('vivah')) {
+        pool = DOMAIN_FOLLOW_UPS.marriage;
+      } else if (q.includes('money') || q.includes('wealth') || q.includes('finance') || q.includes('paisa') || q.includes('paise') || q.includes('invest') || q.includes('debt') || q.includes('loan') || q.includes('dhan') || q.includes('saving') || q.includes('income')) {
+        pool = DOMAIN_FOLLOW_UPS.wealth;
+      } else if (q.includes('health') || q.includes('disease') || q.includes('stress') || q.includes('sehat') || q.includes('illness') || q.includes('mental') || q.includes('pain') || q.includes('bimari') || q.includes('burnout') || q.includes('fatigue') || q.includes('wellness')) {
+        pool = DOMAIN_FOLLOW_UPS.health;
+      } else if (q.includes('travel') || q.includes('abroad') || q.includes('foreign') || q.includes('visa') || q.includes('videsh') || q.includes('relocat') || q.includes('settle') || q.includes('journey')) {
+        pool = DOMAIN_FOLLOW_UPS.travel;
+      } else if (q.includes('exam') || q.includes('study') || q.includes('education') || q.includes('padhai') || q.includes('college') || q.includes('degree') || q.includes('pariksha')) {
+        pool = DOMAIN_FOLLOW_UPS.education;
+      } else if (q.includes('child') || q.includes('baby') || q.includes('pregnancy') || q.includes('baccha') || q.includes('family') || q.includes('santaan') || q.includes('parent')) {
+        pool = DOMAIN_FOLLOW_UPS.children;
+      } else if (q.includes('remed') || q.includes('gemstone') || q.includes('stone') || q.includes('mantra') || q.includes('puja') || q.includes('upay') || q.includes('totka')) {
+        pool = DOMAIN_FOLLOW_UPS.remedies;
+      } else if (q.includes('moon') || q.includes('sun') || q.includes('lagna') || q.includes('ascendant') || q.includes('rashi') || q.includes('nakshatra') || q.includes('kundali') || q.includes('dasha') || q.includes('sade sati') || q.includes('planet') || q.includes('graha')) {
+        pool = DOMAIN_FOLLOW_UPS.chart;
+      }
+
+      // Filter out the exact query so that subsequent follow-ups remain fresh within the same domain
+      const cleanQ = q.replace(/[^\w\s]/g, '').trim();
+      const filtered = pool.filter(item => item.toLowerCase().replace(/[^\w\s]/g, '').trim() !== cleanQ);
+      return filtered.length >= 2 ? filtered.slice(0, 4) : pool.slice(0, 4);
+    }
+
     function renderRelatedQuestions(questions) {
       const row = document.getElementById('chipRow');
       if (!row || !Array.isArray(questions)) return;
 
       const validQuestions = questions
         .filter(question => typeof question === 'string' && question.trim())
-        .slice(0, 3);
+        .slice(0, 4);
       if (!validQuestions.length) return;
 
       row.replaceChildren();
@@ -1185,14 +1294,11 @@
       if (!query || isProcessing) return;
 
       const type = classifyQuestion(query);
-      const isAIMode = true;
-
       if (input) input.value = ''; 
       setProcessing(true);
       appendMessage(query, 'user');
 
-      // Show appropriate indicator: AI sparkle badge for Gemini, dots for instant
-      const typingIndicator = isAIMode ? appendAIThinking() : appendTyping();
+      const typingIndicator = appendTyping();
 
       const rawAge = parseInt(document.getElementById('userAge')?.value, 10);
       const rawTimezone = parseFloat(document.getElementById('timezone')?.value);
@@ -1218,9 +1324,8 @@
           body: JSON.stringify(payload)
         });
 
-        if (typingIndicator) typingIndicator.remove();
-
         if (!resp.ok) { 
+          if (typingIndicator) typingIndicator.remove();
           const errDetail = await resp.text();
           appendMessage(`Notice: Received response with status ${resp.status}. Please try again.`, 'bot'); 
           setProcessing(false); 
@@ -1229,34 +1334,75 @@
 
         const contentType = resp.headers.get('content-type') || '';
         
-        // Instant engine response (JSON) — appears immediately
+        // Instant engine / FAQ response (JSON) — appears immediately
         if (contentType.includes('application/json')) {
           const data = await resp.json();
+          if (typingIndicator) typingIndicator.remove();
           appendMessage(data.answer || data.response || 'I could not generate an answer. Please try again.', 'bot');
-          renderRelatedQuestions(data.related_questions);
+          const followUps = (Array.isArray(data.related_questions) && data.related_questions.length) 
+            ? data.related_questions 
+            : getFollowUpQuestionsForQuery(query);
+          
+          renderRelatedQuestions(followUps);
         } 
         // Gemini LLM streaming response — text flows in real-time
         else {
-          const botMsgContainer = appendMessage('', 'bot');
           const reader = resp.body.getReader();
           const decoder = new TextDecoder('utf-8');
-          let firstChunk = true;
+          let botMsgContainer = null;
+          let streamText = '';
 
           while (true) {
             const { done, value } = await reader.read();
             if (done) break;
             const chunk = decoder.decode(value, { stream: true });
-            if (firstChunk) {
+            streamText += chunk;
+
+            // Strip [FOLLOW_UPS] metadata from visible bubble
+            const markerIdx = streamText.indexOf('[FOLLOW_UPS]:');
+            const displayText = markerIdx !== -1 ? streamText.slice(0, markerIdx).trim() : streamText;
+
+            if (!botMsgContainer) {
+              if (typingIndicator) typingIndicator.remove();
+              botMsgContainer = appendMessage('', 'bot');
               // Add AI badge on first streamed chunk
               const badge = document.createElement('span');
               badge.textContent = '✨ AI ';
               badge.style.cssText = 'font-size:11px;font-weight:700;color:#f59e0b;opacity:.75;margin-right:4px;';
-              botMsgContainer.prepend(badge);
-              firstChunk = false;
+              botMsgContainer.appendChild(badge);
             }
-            botMsgContainer.appendChild(document.createTextNode(chunk));
+            
+            let textNode = botMsgContainer.childNodes[1];
+            if (!textNode) {
+              textNode = document.createTextNode(displayText);
+              botMsgContainer.appendChild(textNode);
+            } else {
+              textNode.nodeValue = displayText;
+            }
             scrollToBottom(true);
           }
+
+          if (typingIndicator) typingIndicator.remove();
+          if (!botMsgContainer) {
+            appendMessage('The response stream ended without a reply. Please try again.', 'bot');
+          }
+
+          // Extract follow-ups from stream or fallback
+          let followUps = null;
+          const markerMatch = streamText.match(/\[FOLLOW_UPS\]:\s*(\[.*?\])/s);
+          if (markerMatch) {
+            try {
+              followUps = JSON.parse(markerMatch[1]);
+            } catch (e) {
+              console.warn('Failed to parse follow-ups JSON:', e);
+            }
+          }
+          if (!Array.isArray(followUps) || !followUps.length) {
+            followUps = getFollowUpQuestionsForQuery(query);
+          }
+
+          // Render follow-ups ONLY downward of the input section
+          renderRelatedQuestions(followUps);
         }
       } catch (err) {
         console.error('Network Error:', err);
@@ -1296,43 +1442,19 @@
       const container = document.getElementById('chatContainer');
       if (!container) return null;
 
-      const row = document.createElement('div'); 
-      row.className = 'message-row incoming';
-      row.innerHTML = '<div class="typing-indicator"><div class="typing-dot"></div><div class="typing-dot"></div><div class="typing-dot"></div></div>';
-      
-      container.appendChild(row); 
-      scrollToBottom(); 
-      return row;
-    }
-
-    function appendAIThinking() {
-      const container = document.getElementById('chatContainer');
-      if (!container) return null;
-
       const row = document.createElement('div');
       row.className = 'message-row incoming';
-      row.innerHTML = `
-        <div style="
-          display:inline-flex;align-items:center;gap:10px;
-          background:linear-gradient(135deg,#fffbeb,#fef3c7);
-          border:1px solid rgba(245,158,11,.35);
-          border-radius:16px;padding:10px 16px;
-          font-size:13px;font-weight:600;color:#92400e;
-          box-shadow:0 2px 10px rgba(245,158,11,.15);
-          animation:msgIn .25s ease;
-        ">
-          <span style="font-size:18px;animation:bounce 1.2s ease infinite;">✨</span>
-          <span>AI is consulting your birth chart…</span>
-          <div class="typing-indicator" style="margin:0;">
-            <div class="typing-dot"></div>
-            <div class="typing-dot"></div>
-            <div class="typing-dot"></div>
-          </div>
-        </div>`;
+      const bubble = document.createElement('div');
+      bubble.className = 'message bot loading-message';
+      bubble.id = 'typing-indicator';
+      bubble.setAttribute('role', 'status');
+      bubble.setAttribute('aria-label', 'Generating response');
+      bubble.innerHTML = '<div class="typing-indicator"><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>';
 
+      row.appendChild(bubble);
       container.appendChild(row);
-      scrollToBottom();
-      return row;
+      scrollToBottom(); 
+      return bubble;
     }
 
     function scrollToBottom(instant) {
