@@ -42,10 +42,31 @@ except ImportError:
 
 try:
     from backend.normalize import normalize_api_response, normalize_dasha_response
+    from backend.reasoning.interpretation import build_interpretation_analysis
     from backend.reasoning.pipeline_helper import execute_full_deterministic_pipeline
+    from backend.reasoning.direct_fact_engine import is_direct_fact_query, extract_direct_fact
+    from backend.reasoning.mode_selector import select_answer_mode
+    from backend.reasoning.llm_renderer import (
+        STRICT_RENDERER_SYSTEM_INSTRUCTION,
+        build_compact_evidence_package,
+        format_llm_assisted_prompt
+    )
     from backend.router.pipeline import route_question
 except ImportError:
-    pass
+    try:
+        from normalize import normalize_api_response, normalize_dasha_response
+        from reasoning.interpretation import build_interpretation_analysis
+        from reasoning.pipeline_helper import execute_full_deterministic_pipeline
+        from reasoning.direct_fact_engine import is_direct_fact_query, extract_direct_fact
+        from reasoning.mode_selector import select_answer_mode
+        from reasoning.llm_renderer import (
+            STRICT_RENDERER_SYSTEM_INSTRUCTION,
+            build_compact_evidence_package,
+            format_llm_assisted_prompt
+        )
+        from router.pipeline import route_question
+    except ImportError:
+        pass
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 if BASE_DIR not in sys.path:
@@ -2195,7 +2216,97 @@ def read_root():
         return FileResponse(FRONTEND_PATH)
     elif os.path.exists("index.html"):
         return FileResponse("index.html")
-    return {"status": "online", "message": "Astrology Chatbot Backend is running."}
+def check_intent_evidence_relevance(
+    domain: str,
+    intent: str,
+    interp_analysis: dict,
+) -> Tuple[bool, List[dict]]:
+    """
+    Evaluates whether relevant Stage 8 evidence exists for the SPECIFIC intent.
+    Evidence existence alone does NOT make a question locally answerable.
+    Returns (is_answerable, relevant_matched_rules).
+    """
+    domain_map = {
+        "wealth": "finance",
+        "money": "finance",
+        "finances": "finance",
+        "job": "career",
+        "work": "career",
+        "profession": "career",
+    }
+    target_domain = domain_map.get(domain.lower(), domain.lower())
+
+    domains = interp_analysis.get("domains", {})
+    if target_domain not in domains:
+        return False, []
+
+    domain_data = domains[target_domain]
+    matched_rules = domain_data.get("matched_interpretations", [])
+    timing = domain_data.get("timing", {})
+
+    intent_norm = intent.lower()
+
+    if any(k in intent_norm for k in ["timing", "promotion", "switch", "wedding"]):
+        dasha_conn = timing.get("dasha", [])
+        transit_conn = timing.get("transit", [])
+        dasha_transit_conn = timing.get("dasha_transit", [])
+
+        timing_rules = [
+            r for r in matched_rules
+            if any(k in r.get("interpretation_key", "") for k in ["dasha", "transit", "multi_factor"])
+        ]
+
+        if timing_rules or dasha_conn or transit_conn or dasha_transit_conn:
+            return True, timing_rules or matched_rules
+        return False, []
+
+    relevant_rules = [
+        r for r in matched_rules
+        if r.get("matched", False) and r.get("interpretation") is not None
+    ]
+
+    if relevant_rules:
+        return True, relevant_rules
+
+    return False, []
+
+
+def format_local_interpretation_answer(
+    domain: str,
+    intent: str,
+    evidence: List[dict],
+    asc_sign: str,
+    sun_sign: str,
+    moon_sign: str,
+    is_hinglish: bool = False,
+) -> str:
+    """
+    Converts matched Stage 8 interpretations into natural language.
+    Does NOT calculate planets or alter reasoning logic.
+    """
+    evidence_bullets = []
+    for item in evidence:
+        interp_text = item.get("interpretation")
+        if interp_text:
+            evidence_bullets.append(f"- {interp_text}")
+
+    if not evidence_bullets:
+        evidence_bullets.append(f"- Structured evidence is present for the {domain} domain.")
+
+    bullets_str = "\n".join(evidence_bullets)
+
+    if is_hinglish:
+        return (
+            f"Aapki kundali ({asc_sign} Lagna, {moon_sign} Moon, {sun_sign} Sun) ke deterministic Stage 8 reasoning evidence ke anusar:\n\n"
+            f"{bullets_str}\n\n"
+            f"Yeh parinam aapke natal placements aur planetary dignity ke deterministic rules par aadharit hain."
+        )
+
+    return (
+        f"Based on deterministic Stage 8 reasoning for your birth chart ({asc_sign} Ascendant, {sun_sign} Sun, {moon_sign} Moon):\n\n"
+        f"{bullets_str}\n\n"
+        f"These insights are derived from validated natal placement, lordship, and planetary dignity rules."
+    )
 
 
 async def _handle_chat_response(request: ChatRequest):
@@ -2290,11 +2401,33 @@ async def _handle_chat_response(request: ChatRequest):
     internal_query = request.query
     normalized_query = normalize_hinglish(internal_query)
 
-    # 1. ML Model Router & Complexity Check
+    # 1. ML Model Router & Intent Resolution
+    try:
+        from backend.router.intent import predict_intent_with_confidence
+    except ImportError:
+        from router.intent import predict_intent_with_confidence
+
+    intent_res = predict_intent_with_confidence(normalized_query)
+    raw_intent = intent_res.get("raw_intent", "general")
+    raw_confidence = intent_res.get("raw_confidence", 0.0)
+    resolved_intent = intent_res.get("resolved_intent", "general")
+    resolution_reason = intent_res.get("resolution_reason", "none")
+
     route_info = route_question(normalized_query)
     predicted_domain = route_info.get("domain", "general")
     complexity = route_info.get("complexity", "needs_chart")
-    intent = route_info.get("intent", "general")
+    intent = resolved_intent
+
+    # Log raw vs resolved intent metadata clearly
+    logger.info(
+        "\n[INTENT LOG]\n"
+        "QUESTION: %s\n"
+        "RAW INTENT: %s\n"
+        "RAW CONFIDENCE: %.4f\n"
+        "RESOLVED INTENT: %s\n"
+        "RESOLUTION REASON: %s",
+        request.query, raw_intent, raw_confidence, resolved_intent, resolution_reason
+    )
 
     try:
         dasha_data = await run_in_threadpool(fetch_dasha_details_external, birth_details)
@@ -2305,15 +2438,9 @@ async def _handle_chat_response(request: ChatRequest):
     norm_dasha = normalize_dasha_response(dasha_data) if dasha_data else {}
     dasha_hierarchy = norm_dasha.get("dasha_hierarchy", {})
 
-    # Logging / Observability: Log pipeline decision clearly
-    logger.info(
-        "[DECISION LOG] QUESTION: '%s' | DOMAIN: %s | INTENT: %s | COMPLEXITY: %s | ROUTE: %s | DASHA_SOURCE: %s",
-        request.query, predicted_domain, intent, complexity, route_info.get("route"), norm_dasha.get("raw_source", "None")
-    )
-
     # 2. Check for Simple Deterministic Questions (Dasha / Moon Sign / Ascendant) -> NO Gemini needed
     q_lower = normalized_query.lower()
-    if any(k in q_lower for k in ["what is my dasha", "my current dasha", "my mahadasha", "current antardasha"]):
+    if any(k in q_lower for k in ["what is my dasha", "my current dasha", "my mahadasha", "current antardasha"]) and resolved_intent != "multi_domain":
         mah = dasha_hierarchy.get("current_mahadasha") or dasha_hierarchy.get("output", {}).get("current_mahadasha", "Active Dasha")
         ant = dasha_hierarchy.get("current_antardasha") or dasha_hierarchy.get("output", {}).get("current_antardasha", "Active Antardasha")
         dasha_ans = (
@@ -2325,12 +2452,178 @@ async def _handle_chat_response(request: ChatRequest):
         USER_SESSIONS[request.user_id]["history"].append({"role": "assistant", "content": dasha_ans})
         return JSONResponse(content={
             "answer": label_answer_source(dasha_ans, "Deterministic API"),
-            "related_questions": fallback_related_questions([predicted_domain], request.query)
+            "related_questions": fallback_related_questions([predicted_domain], request.query),
+            "source": "deterministic_api",
         })
 
     # 3. Normalize API Chart Data & Execute Reasoning Engine
     norm_chart = normalize_api_response(_api_chart_data)
+
+    # 3b. HIGHEST PRIORITY FACT PATH (Mode 1: DIRECT)
+    direct_fact = extract_direct_fact(normalized_query, norm_chart, dasha_hierarchy)
+    if direct_fact:
+        ans_text = direct_fact["answer"]
+        USER_SESSIONS[request.user_id]["history"].append({"role": "user", "content": request.query})
+        USER_SESSIONS[request.user_id]["history"].append({"role": "assistant", "content": ans_text})
+        return JSONResponse(content={
+            "answer": label_answer_source(ans_text, "DIRECT"),
+            "answer_mode": "DIRECT",
+            "intent": resolved_intent,
+            "evidence_complete": True,
+            "gemini_calls": 0,
+            "evidence_ids": ["DIRECT_FACT_LOOKUP"],
+            "fallback_reason": None,
+            "related_questions": fallback_related_questions([predicted_domain], request.query),
+            "source": "direct_fact_engine",
+        })
+
     stage8_result = execute_full_deterministic_pipeline(norm_chart)
+
+    # 4. Stage 8.24 — Build Structured Interpretation (interpretation.py)
+    domain_rule_analyses = {
+        "career": stage8_result.get("stage_8_15_career_rules", {}),
+        "marriage": stage8_result.get("stage_8_16_marriage_rules", {}),
+        "finance": stage8_result.get("stage_8_17_finance_rules", {}),
+        "education": stage8_result.get("stage_8_18_education_rules", {}),
+        "property": stage8_result.get("stage_8_19_property_rules", {}),
+    }
+    interp_analysis = build_interpretation_analysis(
+        domain_rule_analyses=domain_rule_analyses,
+        stage_8_20_dasha_timing=stage8_result.get("stage_8_20_dasha_timing", {}),
+        stage_8_21_transit_timing=stage8_result.get("stage_8_21_transit_timing", {}),
+    )
+
+    # Master Mode Selector Evaluation
+    target_dom = predicted_domain.lower() if predicted_domain else "general"
+    matched_rules_list = []
+    if target_dom in domain_rule_analyses:
+        r_ana = domain_rule_analyses[target_dom]
+        matched_rules_list = [r for r in r_ana.get("rules", []) if r.get("matched")]
+
+    mode_info = select_answer_mode(
+        domain=target_dom,
+        intent=resolved_intent,
+        question=normalized_query,
+        matched_rules=matched_rules_list,
+        is_faq=(faq_template is not None)
+    )
+
+    # STATUS 4: UNSUPPORTED
+    if mode_info["mode"] == "UNSUPPORTED":
+        unsupported_text = (
+            "I don't currently have a supported chart-based analysis for that question. "
+            "Please ask a career, health, marriage, finance, education, or property question based on your birth chart."
+        )
+        return JSONResponse(content={
+            "answer": label_answer_source(unsupported_text, "UNSUPPORTED"),
+            "answer_mode": "UNSUPPORTED",
+            "intent": resolved_intent,
+            "evidence_complete": False,
+            "gemini_calls": 0,
+            "evidence_ids": [],
+            "fallback_reason": mode_info.get("fallback_reason"),
+            "related_questions": [],
+            "source": "unsupported_guard"
+        })
+
+    # 5. Multi-Domain Deterministic Answer Merger (e.g. Dasha API + Career Stage 8 Reasoning)
+    if resolved_intent == "multi_domain" and any(k in q_lower for k in ["dasha", "mahadasha", "antardasha"]):
+        mah = dasha_hierarchy.get("current_mahadasha") or dasha_hierarchy.get("output", {}).get("current_mahadasha", "Active Dasha")
+        ant = dasha_hierarchy.get("current_antardasha") or dasha_hierarchy.get("output", {}).get("current_antardasha", "Active Antardasha")
+        dasha_part = (
+            f"Aapka current Mahadasha {mah} aur Antardasha {ant} hai."
+            if is_hinglish_query(request.query) else
+            f"Your current Mahadasha is {mah} and current Antardasha is {ant}."
+        )
+
+        target_dom = "career" if any(k in q_lower for k in ["career", "job", "work"]) else predicted_domain
+        is_ans, rel_ev = check_intent_evidence_relevance(domain=target_dom, intent="career_general", interp_analysis=interp_analysis)
+        if is_ans:
+            domain_part = format_local_interpretation_answer(
+                domain=target_dom, intent="career_general", evidence=rel_ev,
+                asc_sign=asc_sign, sun_sign=sun_sign, moon_sign=moon_sign,
+                is_hinglish=is_hinglish_query(request.query)
+            )
+            merged_answer = f"{dasha_part}\n\n{domain_part}"
+
+            USER_SESSIONS[request.user_id]["history"].append({"role": "user", "content": request.query})
+            USER_SESSIONS[request.user_id]["history"].append({"role": "assistant", "content": merged_answer})
+            follow_ups = generate_follow_up_questions(request.query, merged_answer, domain=target_dom)
+            return JSONResponse(content={
+                "answer": label_answer_source(merged_answer, "RULE_BASED"),
+                "answer_mode": "RULE_BASED",
+                "intent": resolved_intent,
+                "evidence_complete": True,
+                "gemini_calls": 0,
+                "evidence_ids": mode_info.get("evidence_ids", []),
+                "fallback_reason": None,
+                "related_questions": follow_ups,
+                "source": "deterministic_reasoning",
+            })
+
+    # 6. MODE 2: RULE_BASED (Single-Domain Evidence Complete & Rules Matched)
+    is_answerable, relevant_evidence = check_intent_evidence_relevance(
+        domain=predicted_domain,
+        intent=intent,
+        interp_analysis=interp_analysis,
+    )
+
+    if mode_info["mode"] == "RULE_BASED" and is_answerable:
+        try:
+            local_answer = format_local_interpretation_answer(
+                domain=predicted_domain,
+                intent=intent,
+                evidence=relevant_evidence,
+                asc_sign=asc_sign,
+                sun_sign=sun_sign,
+                moon_sign=moon_sign,
+                is_hinglish=is_hinglish_query(request.query),
+            )
+
+            USER_SESSIONS[request.user_id]["history"].append({"role": "user", "content": request.query})
+            USER_SESSIONS[request.user_id]["history"].append({"role": "assistant", "content": local_answer})
+
+            follow_ups = generate_follow_up_questions(request.query, local_answer, domain=predicted_domain)
+            return JSONResponse(content={
+                "answer": label_answer_source(local_answer, "RULE_BASED"),
+                "answer_mode": "RULE_BASED",
+                "intent": resolved_intent,
+                "evidence_complete": True,
+                "gemini_calls": 0,
+                "evidence_ids": mode_info.get("evidence_ids", []),
+                "fallback_reason": None,
+                "related_questions": follow_ups,
+                "source": "deterministic_reasoning",
+            })
+        except Exception as format_err:
+            logger.error("[INTEGRATION ERROR] Local Interpretation Formatter failed: %s", format_err, exc_info=True)
+            return JSONResponse(
+                status_code=500,
+                content={
+                    "error": "Integration Error: Local interpretation formatting failed.",
+                    "detail": str(format_err)
+                }
+            )
+
+    # 7. Evidence Unavailable -> Fallback to Gemini
+    logger.info(
+        "\n[DECISION LOG]\n"
+        "QUESTION: %s\n"
+        "RAW INTENT: %s (Conf: %.4f)\n"
+        "RESOLVED INTENT: %s (%s)\n"
+        "DOMAIN: %s\n"
+        "COMPLEXITY: %s\n"
+        "DATA REQUIRED: Natal Chart & Planetary Placements\n"
+        "API CALLED: FreeAstrologyAPI / Prokerala\n"
+        "REASONING EXECUTED: True\n"
+        "EVIDENCE GENERATED: 0 relevant rules for intent\n"
+        "LOCAL ANSWERABLE: False\n"
+        "GEMINI CALLED: True\n"
+        "FINAL SOURCE: llm",
+        request.query, raw_intent, raw_confidence, resolved_intent, resolution_reason,
+        predicted_domain, complexity
+    )
+
     multi_domain = stage8_result.get("stage_8_22_multi_domain", {})
     relevant_domains = multi_domain.get("relevant_domains", [])
 
@@ -2346,17 +2639,16 @@ async def _handle_chat_response(request: ChatRequest):
         if resolved_topic not in ("general", "", None) and resolved_topic not in topics:
             topics.append(resolved_topic)
 
-    history = USER_SESSIONS[request.user_id].get("history", [])
-    retrieved_rule = UNKNOWN_DOMAIN_DIRECT_LLM_PARSE
-    system_instruction = build_gemini_prompt(
-        request, asc_sign, sun_sign, moon_sign,
-        astro_features, predicted_domain, _api_chart_data, dasha_data,
-        chat_history=history,
-        session_profile=session_profile,
-        query_domains=query_domains,
-        retrieved_rule=retrieved_rule,
-        normalized_interpretation=normalized_query,
+    # Mode 3: LLM_ASSISTED (Strict Evidence-Bound Renderer)
+    compact_evidence_pkg = build_compact_evidence_package(
+        domain=predicted_domain,
+        intent=resolved_intent,
+        chart_data=norm_chart,
+        matched_rules=matched_rules_list,
+        dasha_hierarchy=dasha_hierarchy
     )
+    llm_prompt = format_llm_assisted_prompt(request.query, compact_evidence_pkg)
+    system_instruction = STRICT_RENDERER_SYSTEM_INSTRUCTION
 
     load_dotenv(os.path.join(BASE_DIR, ".env"), override=True)
     current_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")

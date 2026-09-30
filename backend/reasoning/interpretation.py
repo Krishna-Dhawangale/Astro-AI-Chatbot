@@ -174,6 +174,41 @@ INTERPRETATION_TEMPLATES = {
 
     "property_multi_factor_activation":
         "Multiple independent property evidence categories are simultaneously active.",
+
+
+    # --------------------------------------------------------
+    # Health
+    # --------------------------------------------------------
+
+    "health_6th_house_lord":
+        "The 6th-house lord has available natal placement evidence.",
+
+    "health_8th_house_lord":
+        "The 8th-house lord has available natal placement evidence.",
+
+    "health_12th_house_lord":
+        "The 12th-house lord has available natal placement evidence.",
+
+    "health_karaka_presence":
+        "Health-related karaka planets have available natal placement evidence.",
+
+    "health_karaka_dignity":
+        "Health-related karaka planets have available dignity evidence.",
+
+    "health_relevant_houses":
+        "Natal planetary evidence is present in houses relevant to health.",
+
+    "health_dasha_activation":
+        "Current Dasha evidence is connected with the health domain.",
+
+    "health_transit_activation":
+        "Current transit evidence is connected with the health domain.",
+
+    "health_dasha_transit_activation":
+        "Dasha and transit evidence are connected with the health domain.",
+
+    "health_multi_factor_activation":
+        "Multiple independent health evidence categories are simultaneously active.",
 }
 
 
@@ -428,6 +463,29 @@ def build_interpretation_analysis(
             stage_8_21_transit_timing,
     )
 
+    # Stage 8.25 — Attach Phase 12 Synthesized Answers
+    try:
+        from .answer_synthesizer import synthesize_structured_answer
+    except ImportError:
+        try:
+            from backend.reasoning.answer_synthesizer import synthesize_structured_answer
+        except ImportError:
+            synthesize_structured_answer = None
+
+    if synthesize_structured_answer:
+        domains = interpretation.get("domains", {})
+        for domain, data in domains.items():
+            rule_analysis = domain_rule_analyses.get(domain, {})
+            rules = rule_analysis.get("rules", []) if isinstance(rule_analysis, dict) else []
+            matched_rules = [r for r in rules if r.get("matched")]
+            timing_info = data.get("timing", {})
+            
+            data["synthesized_answer"] = synthesize_structured_answer(
+                domain=domain,
+                matched_rules=matched_rules,
+                timing_data=timing_info
+            )
+
     return interpretation
 
 
@@ -460,6 +518,7 @@ def validate_interpretation_analysis(
         "finance",
         "education",
         "property",
+        "health",
     }
 
     assert set(domains.keys()) == (

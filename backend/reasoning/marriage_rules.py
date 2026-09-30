@@ -125,10 +125,10 @@ def evaluate_marriage_rules(
 
             karaka_evidence.append({
                 "planet": planet,
-                "house": data["house"],
-                "rashi": data["rashi"],
-                "nakshatra": data["nakshatra"],
-                "pada": data["pada"]
+                "house": data.get("house"),
+                "rashi": data.get("rashi"),
+                "nakshatra": data.get("nakshatra"),
+                "pada": data.get("pada")
             })
 
     rules.append({

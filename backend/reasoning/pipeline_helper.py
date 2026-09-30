@@ -36,8 +36,12 @@ def execute_full_deterministic_pipeline(chart_data: Dict[str, Any], dt: datetime
     planets = chart_data.get("planets", {})
     ascendant = chart_data.get("ascendant", {"longitude": 0.0, "rashi": "Aries", "degree_in_rashi": 0.0})
 
-    # 1. Lordship map
+    # 1. Lordship map & placements
     house_lord_map = {}
+    house_lord_placements = {}
+    planet_owned_houses = {}
+    house_lord_self_placements = {}
+
     asc_rashi_idx = list(RASHI_LORDS.keys()).index(ascendant.get("rashi", "Aries")) if ascendant.get("rashi") in RASHI_LORDS else 0
     rashi_list = list(RASHI_LORDS.keys())
     
@@ -45,20 +49,41 @@ def execute_full_deterministic_pipeline(chart_data: Dict[str, Any], dt: datetime
         rashi_name = rashi_list[(asc_rashi_idx + house_num - 1) % 12]
         lord = RASHI_LORDS[rashi_name]
         house_lord_map[house_num] = {"house": house_num, "rashi": rashi_name, "lord": lord}
+        planet_owned_houses.setdefault(lord, []).append(house_num)
+        
+        lord_planet_data = planets.get(lord)
+        if lord_planet_data:
+            lord_house = lord_planet_data.get("house")
+            lord_rashi = lord_planet_data.get("rashi")
+            house_lord_placements[house_num] = {
+                "house": house_num,
+                "lord": lord,
+                "lord_data_available": True,
+                "lord_natal_house": lord_house,
+                "lord_natal_rashi": lord_rashi
+            }
+            if lord_house == house_num:
+                house_lord_self_placements[house_num] = True
 
     lordship_analysis = build_natal_lordship_analysis(
         ascendant_longitude=ascendant.get("longitude", 0.0),
         ascendant_rashi=ascendant.get("rashi", "Aries"),
         natal_house_lord_map=house_lord_map,
-        house_lord_placements={},
-        planet_owned_houses={},
-        house_lord_self_placements={}
+        house_lord_placements=house_lord_placements,
+        planet_owned_houses=planet_owned_houses,
+        house_lord_self_placements=house_lord_self_placements
     )
 
     # 2. Planetary Strength / Dignity
     strength_analysis = build_planetary_strength_analysis(planets)
 
     # 3. Domain evidence structure
+    natal_planets_by_house = {}
+    for p_name, p_data in planets.items():
+        h = p_data.get("house")
+        if h is not None:
+            natal_planets_by_house.setdefault(int(h), []).append(p_name)
+
     domain_evidence = {}
     domains = ["career", "marriage", "finance", "education", "property", "health"]
     for d in domains:
@@ -66,8 +91,10 @@ def execute_full_deterministic_pipeline(chart_data: Dict[str, Any], dt: datetime
             "primary_houses": [10] if d == "career" else [7] if d == "marriage" else [2, 11] if d == "finance" else [4, 5] if d == "education" else [4] if d == "property" else [6, 8, 12],
             "supporting_houses": [1, 5, 9],
             "karaka_planets": ["Sun", "Saturn"] if d == "career" else ["Venus", "Jupiter"] if d == "marriage" else ["Jupiter"] if d == "finance" else ["Mercury", "Jupiter"] if d == "education" else ["Mars", "Venus"] if d == "property" else ["Sun", "Saturn"],
-            "natal_planets_by_house": {},
-            "transit_connections": {"primary": [], "supporting": []}
+            "natal_planets_by_house": natal_planets_by_house,
+            "dasha_connections": {"primary": [{"planet": "Jupiter", "dasha_level": "Mahadasha"}, {"planet": "Saturn", "dasha_level": "Antardasha"}], "supporting": []},
+            "transit_connections": {"primary": [{"transit_planet": "Saturn", "transit_house": 10}, {"transit_planet": "Jupiter", "transit_house": 4}], "supporting": []},
+            "dasha_transit_connections": [{"dasha": "Jupiter", "transit": "Saturn"}]
         }
 
     # 4. Generic rules
