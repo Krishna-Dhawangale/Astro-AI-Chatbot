@@ -833,7 +833,10 @@ def build_auditable_answer_trace(
     failure_category: Optional[str] = None,
     answer_completeness: float = 1.0,
     evidence_coverage: float = 1.0,
-    user_feedback: Optional[Dict[str, Any]] = None
+    user_feedback: Optional[Dict[str, Any]] = None,
+    llm_input_tokens: int = 0,
+    llm_output_tokens: int = 0,
+    llm_calls_list: Optional[List[Dict[str, Any]]] = None
 ) -> Dict[str, Any]:
     """
     Phase 23 — Enhanced Auditable Answer Trace Generator:
@@ -859,6 +862,26 @@ def build_auditable_answer_trace(
         if planet and theme:
             lineage_summary.append(f"{planet} -> {theme}")
 
+    calc_total_tokens = (llm_input_tokens + llm_output_tokens) if (llm_input_tokens or llm_output_tokens) else llm_tokens
+
+    usage_dict = {
+        "input_tokens": llm_input_tokens,
+        "output_tokens": llm_output_tokens,
+        "total_tokens": calc_total_tokens
+    }
+
+    calls_dict = llm_calls_list if llm_calls_list is not None else (
+        [
+            {
+                "call_number": 1,
+                "purpose": "creative_interpretation" if answer_source == "LLM_FALLBACK" else "renderer",
+                "input_tokens": llm_input_tokens,
+                "output_tokens": llm_output_tokens,
+                "total_tokens": calc_total_tokens
+            }
+        ] if gemini_calls > 0 else []
+    )
+
     return {
         "answer_source": answer_source,
         "domain": domain,
@@ -868,7 +891,9 @@ def build_auditable_answer_trace(
         "matched_rules": rule_ids or ["ASTROLOGY_FACT_LOOKUP"],
         "interpretation_lineage": lineage_summary or ["Deterministic Synthesizer Wording"],
         "gemini_calls": gemini_calls,
-        "llm_tokens": llm_tokens,
+        "llm_tokens": calc_total_tokens,
+        "llm_usage": usage_dict,
+        "llm_calls": calls_dict,
         "quality_status": quality_status,
         "quality_score": quality_score,
         "failure_category": failure_category,

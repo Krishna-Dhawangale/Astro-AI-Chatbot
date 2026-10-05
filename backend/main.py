@@ -52,6 +52,12 @@ try:
         format_llm_assisted_prompt
     )
     from backend.router.pipeline import route_question
+    from backend.reasoning.token_logger import (
+        print_llm_call_report,
+        print_request_total_report,
+        print_no_llm_call_report
+    )
+    from backend.router.decision_trace import record_production_decision_trace
 except ImportError:
     try:
         from normalize import normalize_api_response, normalize_dasha_response
@@ -65,6 +71,12 @@ except ImportError:
             format_llm_assisted_prompt
         )
         from router.pipeline import route_question
+        from reasoning.token_logger import (
+            print_llm_call_report,
+            print_request_total_report,
+            print_no_llm_call_report
+        )
+        from router.decision_trace import record_production_decision_trace
     except ImportError:
         pass
 
@@ -2450,6 +2462,14 @@ async def _handle_chat_response(request: ChatRequest):
         )
         USER_SESSIONS[request.user_id]["history"].append({"role": "user", "content": request.query})
         USER_SESSIONS[request.user_id]["history"].append({"role": "assistant", "content": dasha_ans})
+        print_no_llm_call_report("LOCAL", "Direct Dasha API calculation complete")
+        record_production_decision_trace(
+            question=request.query, domain=predicted_domain, selected_model="DIRECT",
+            domain_confidence=raw_confidence, intent=raw_intent, resolved_intent=resolved_intent,
+            complexity="simple", chart_required=True, chart_evidence=[], matched_rules=["DIRECT_DASHA_LOOKUP"],
+            evidence_score=1.0, evidence_status="complete", answer_source="LOCAL", gemini_calls=0,
+            llm_input_tokens=0, llm_output_tokens=0, llm_total_tokens=0, llm_call_details=[], latency_ms=2.0
+        )
         return JSONResponse(content={
             "answer": label_answer_source(dasha_ans, "Deterministic API"),
             "related_questions": fallback_related_questions([predicted_domain], request.query),
@@ -2465,6 +2485,14 @@ async def _handle_chat_response(request: ChatRequest):
         ans_text = direct_fact["answer"]
         USER_SESSIONS[request.user_id]["history"].append({"role": "user", "content": request.query})
         USER_SESSIONS[request.user_id]["history"].append({"role": "assistant", "content": ans_text})
+        print_no_llm_call_report("LOCAL", "Direct Fact Engine calculation complete")
+        record_production_decision_trace(
+            question=request.query, domain=predicted_domain, selected_model="DIRECT",
+            domain_confidence=raw_confidence, intent=raw_intent, resolved_intent=resolved_intent,
+            complexity="simple", chart_required=True, chart_evidence=[], matched_rules=["DIRECT_FACT_LOOKUP"],
+            evidence_score=1.0, evidence_status="complete", answer_source="LOCAL", gemini_calls=0,
+            llm_input_tokens=0, llm_output_tokens=0, llm_total_tokens=0, llm_call_details=[], latency_ms=2.0
+        )
         return JSONResponse(content={
             "answer": label_answer_source(ans_text, "DIRECT"),
             "answer_mode": "DIRECT",
@@ -2514,6 +2542,14 @@ async def _handle_chat_response(request: ChatRequest):
             "I don't currently have a supported chart-based analysis for that question. "
             "Please ask a career, health, marriage, finance, education, or property question based on your birth chart."
         )
+        print_no_llm_call_report("UNSUPPORTED", "Out of domain / unsupported query boundary enforced")
+        record_production_decision_trace(
+            question=request.query, domain=predicted_domain, selected_model="UNSUPPORTED",
+            domain_confidence=raw_confidence, intent=raw_intent, resolved_intent=resolved_intent,
+            complexity="unsupported", chart_required=False, chart_evidence=[], matched_rules=[],
+            evidence_score=0.0, evidence_status="unsupported", answer_source="UNSUPPORTED", gemini_calls=0,
+            llm_input_tokens=0, llm_output_tokens=0, llm_total_tokens=0, llm_call_details=[], latency_ms=1.5
+        )
         return JSONResponse(content={
             "answer": label_answer_source(unsupported_text, "UNSUPPORTED"),
             "answer_mode": "UNSUPPORTED",
@@ -2549,6 +2585,14 @@ async def _handle_chat_response(request: ChatRequest):
             USER_SESSIONS[request.user_id]["history"].append({"role": "user", "content": request.query})
             USER_SESSIONS[request.user_id]["history"].append({"role": "assistant", "content": merged_answer})
             follow_ups = generate_follow_up_questions(request.query, merged_answer, domain=target_dom)
+            print_no_llm_call_report("LOCAL", "Deterministic Multi-Domain Rule-based calculation complete")
+            record_production_decision_trace(
+                question=request.query, domain=target_dom, selected_model="V3",
+                domain_confidence=raw_confidence, intent=raw_intent, resolved_intent=resolved_intent,
+                complexity="multi_domain", chart_required=True, chart_evidence=[], matched_rules=["MULTI_DOMAIN_RULE_MERGER"],
+                evidence_score=1.0, evidence_status="complete", answer_source="LOCAL", gemini_calls=0,
+                llm_input_tokens=0, llm_output_tokens=0, llm_total_tokens=0, llm_call_details=[], latency_ms=12.0
+            )
             return JSONResponse(content={
                 "answer": label_answer_source(merged_answer, "RULE_BASED"),
                 "answer_mode": "RULE_BASED",
@@ -2584,6 +2628,14 @@ async def _handle_chat_response(request: ChatRequest):
             USER_SESSIONS[request.user_id]["history"].append({"role": "assistant", "content": local_answer})
 
             follow_ups = generate_follow_up_questions(request.query, local_answer, domain=predicted_domain)
+            print_no_llm_call_report("LOCAL", "Deterministic Rule-based interpretation complete")
+            record_production_decision_trace(
+                question=request.query, domain=predicted_domain, selected_model="V3",
+                domain_confidence=raw_confidence, intent=raw_intent, resolved_intent=resolved_intent,
+                complexity=complexity, chart_required=True, chart_evidence=[], matched_rules=mode_info.get("evidence_ids", []),
+                evidence_score=1.0, evidence_status="complete", answer_source="LOCAL", gemini_calls=0,
+                llm_input_tokens=0, llm_output_tokens=0, llm_total_tokens=0, llm_call_details=[], latency_ms=15.0
+            )
             return JSONResponse(content={
                 "answer": label_answer_source(local_answer, "RULE_BASED"),
                 "answer_mode": "RULE_BASED",
@@ -2658,6 +2710,8 @@ async def _handle_chat_response(request: ChatRequest):
 
     async def async_stream_generator():
         response_stream = None
+        req_start_time = time.time()
+        call_records = []
 
         async def close_stream() -> None:
             nonlocal response_stream
@@ -2682,6 +2736,8 @@ async def _handle_chat_response(request: ChatRequest):
             )
             for attempt in range(3):
                 attempt_chunks = []
+                last_usage_metadata = None
+                call_start_time = time.time()
                 try:
                     model_name = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite")
                     if attempt > 0:
@@ -2692,12 +2748,57 @@ async def _handle_chat_response(request: ChatRequest):
                         config=config,
                     )
                     async for chunk in response_stream:
+                        if hasattr(chunk, "usage_metadata") and chunk.usage_metadata:
+                            last_usage_metadata = chunk.usage_metadata
                         if chunk.text:
                             attempt_chunks.append(chunk.text)
                             yield chunk.text
                     full_text = "".join(attempt_chunks).strip()
                     if not full_text:
                         raise ConnectionError("Gemini returned an empty stream")
+
+                    call_latency = (time.time() - call_start_time) * 1000
+                    inp_tok = getattr(last_usage_metadata, "prompt_token_count", 0) if last_usage_metadata else 0
+                    out_tok = getattr(last_usage_metadata, "candidates_token_count", 0) if last_usage_metadata else 0
+
+                    evidence_rule_ids = [r.get("rule_id", "") for r in matched_rules_list if r.get("matched")]
+
+                    call_rec = print_llm_call_report(
+                        call_number=len(call_records) + 1,
+                        purpose="MODE_3_LLM_ASSISTED (Renderer)" if mode_info.get("mode") == "LLM_ASSISTED" else "MODE_4_LLM_FALLBACK",
+                        model_name=model_name,
+                        input_tokens=inp_tok,
+                        output_tokens=out_tok,
+                        evidence_sent=evidence_rule_ids or ["natal_chart_evidence"],
+                        latency_ms=call_latency
+                    )
+                    call_records.append(call_rec)
+
+                    total_req_latency = (time.time() - req_start_time) * 1000
+                    print_request_total_report(call_records, total_req_latency)
+
+                    record_production_decision_trace(
+                        question=request.query,
+                        domain=predicted_domain,
+                        selected_model=mode_info.get("selected_model", "V3"),
+                        domain_confidence=raw_confidence,
+                        intent=raw_intent,
+                        resolved_intent=resolved_intent,
+                        complexity=complexity,
+                        chart_required=True,
+                        chart_evidence=stage8_result.get("stage_8_14_evidence_matrix", {}).get("evidence_summary", []),
+                        matched_rules=evidence_rule_ids,
+                        evidence_score=1.0,
+                        evidence_status="complete",
+                        answer_source="PARTIAL_LOCAL_LLM" if mode_info.get("mode") == "LLM_ASSISTED" else "LLM_FALLBACK",
+                        gemini_calls=len(call_records),
+                        llm_input_tokens=sum(c["input_tokens"] for c in call_records),
+                        llm_output_tokens=sum(c["output_tokens"] for c in call_records),
+                        llm_total_tokens=sum(c["total_tokens"] for c in call_records),
+                        llm_call_details=call_records,
+                        latency_ms=total_req_latency
+                    )
+
                     await close_stream()
                     USER_SESSIONS[request.user_id]["history"].append({"role": "user", "content": request.query})
                     USER_SESSIONS[request.user_id]["history"].append({"role": "assistant", "content": full_text})

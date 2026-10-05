@@ -40,6 +40,8 @@ def record_production_decision_trace(
     domain_margin: float = 0.0,
     llm_input_tokens: int = 0,
     llm_output_tokens: int = 0,
+    llm_total_tokens: int = 0,
+    llm_call_details: Optional[List[Dict[str, Any]]] = None,
     latency_ms: float = 0.0,
     errors: Optional[List[str]] = None,
     local_answer_quality: Optional[Dict[str, bool]] = None,
@@ -48,6 +50,20 @@ def record_production_decision_trace(
     """
     Constructs and records an explicit Production Decision Trace entry for Phase 19 observation.
     """
+    calc_total_tokens = llm_total_tokens if llm_total_tokens > 0 else (llm_input_tokens + llm_output_tokens)
+    calls_details = llm_call_details if llm_call_details is not None else (
+        [
+            {
+                "call_number": i + 1,
+                "purpose": "creative_interpretation" if answer_source == "LLM_FALLBACK" else "renderer",
+                "input_tokens": llm_input_tokens,
+                "output_tokens": llm_output_tokens,
+                "total_tokens": calc_total_tokens
+            }
+            for i in range(gemini_calls)
+        ] if gemini_calls > 0 else []
+    )
+
     trace_record = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "question": question,
@@ -67,6 +83,8 @@ def record_production_decision_trace(
         "gemini_calls": gemini_calls,
         "llm_input_tokens": llm_input_tokens,
         "llm_output_tokens": llm_output_tokens,
+        "llm_total_tokens": calc_total_tokens,
+        "llm_call_details": calls_details,
         "latency_ms": round(latency_ms, 2),
         "errors": errors or [],
         "local_answer_quality": local_answer_quality or {
