@@ -152,7 +152,7 @@ def is_retryable_gemini_error(error: Exception) -> bool:
             status_code = int(status_code)
         except (TypeError, ValueError):
             continue
-        if status_code == 429 or 500 <= status_code <= 599:
+        if status_code in (404, 429) or 500 <= status_code <= 599:
             return True
 
     error_type = type(error).__name__.casefold()
@@ -160,7 +160,7 @@ def is_retryable_gemini_error(error: Exception) -> bool:
     return (
         isinstance(error, (TimeoutError, ConnectionError, requests.RequestException))
         or any(token in error_type for token in ("timeout", "connect", "network"))
-        or any(token in error_message for token in ("timed out", "connection reset", "temporarily unavailable"))
+        or any(token in error_message for token in ("timed out", "connection reset", "temporarily unavailable", "not_found", "not found", "no longer available"))
     )
 
 # Initialize Google GenAI Client
@@ -2684,6 +2684,8 @@ async def _handle_chat_response(request: ChatRequest):
                 attempt_chunks = []
                 try:
                     model_name = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite")
+                    if attempt > 0:
+                        model_name = "gemini-3.5-flash-lite"
                     response_stream = await client.aio.models.generate_content_stream(
                         model=model_name,
                         contents=request.query,

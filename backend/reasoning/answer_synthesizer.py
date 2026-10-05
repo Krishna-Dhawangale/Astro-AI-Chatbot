@@ -827,11 +827,18 @@ def build_auditable_answer_trace(
     matched_rules: List[Dict[str, Any]],
     theme_lineage: List[Dict[str, Any]],
     gemini_calls: int = 0,
-    llm_tokens: int = 0
+    llm_tokens: int = 0,
+    quality_status: str = "PASS",
+    quality_score: int = 100,
+    failure_category: Optional[str] = None,
+    answer_completeness: float = 1.0,
+    evidence_coverage: float = 1.0,
+    user_feedback: Optional[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
     """
-    Phase 22 — Internal Auditable Answer Trace Generator:
-    Guarantees every output statement is 100% traceable to backend evidence.
+    Phase 23 — Enhanced Auditable Answer Trace Generator:
+    Guarantees every output statement is 100% traceable to backend evidence,
+    and captures quality scoring, automatic failure categorization, completeness, and feedback.
     """
     req_evidence = ["10th_house", "10th_lord", "career_karakas"] if domain == "career" else [f"{domain}_house", f"{domain}_lord"]
     actual_ev = []
@@ -861,6 +868,13 @@ def build_auditable_answer_trace(
         "matched_rules": rule_ids or ["ASTROLOGY_FACT_LOOKUP"],
         "interpretation_lineage": lineage_summary or ["Deterministic Synthesizer Wording"],
         "gemini_calls": gemini_calls,
-        "llm_tokens": llm_tokens
+        "llm_tokens": llm_tokens,
+        "quality_status": quality_status,
+        "quality_score": quality_score,
+        "failure_category": failure_category,
+        "answer_completeness": answer_completeness,
+        "evidence_coverage": evidence_coverage,
+        "user_feedback": user_feedback
     }
+
 

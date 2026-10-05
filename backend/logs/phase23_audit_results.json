@@ -1,0 +1,110 @@
+{
+  "total_questions": 20,
+  "avg_aqs": 99.55,
+  "pass_rate": 40.0,
+  "unnecessary_gemini_rate": 0.0,
+  "failure_categorization_rate": 100.0,
+  "useful_gemini_efficiency": 100.0,
+  "failure_recovery_rate": 100.0,
+  "total_tokens_consumed": 208,
+  "token_savings_pct": 98.5142857142857,
+  "category_counts": {
+    "PASS": 8,
+    "ROUTING_ERROR": 6,
+    "INTENT_ERROR": 6,
+    "MISSING_EVIDENCE": 0,
+    "WRONG_RULE": 0,
+    "INTERPRETATION_ERROR": 0,
+    "UNSUPPORTED_CLAIM": 0,
+    "INCOMPLETE_ANSWER": 0,
+    "UNNECESSARY_GEMINI": 0,
+    "EXCESSIVE_GEMINI_PAYLOAD": 0,
+    "UNSUPPORTED_QUERY_ERROR": 0
+  },
+  "regression_test_cases": [
+    {
+      "question_id": 1,
+      "question": "Will my salary increase after switching companies?",
+      "failure_category": "ROUTING_ERROR",
+      "reason": "Domain mismatch: predicted 'finance', expected 'career'.",
+      "resolved": true
+    },
+    {
+      "question_id": 5,
+      "question": "meri shaadi ka time kab aayega?",
+      "failure_category": "INTENT_ERROR",
+      "reason": "Intent mismatch: predicted 'career_change', expected 'marriage_timing'.",
+      "resolved": true
+    },
+    {
+      "question_id": 6,
+      "question": "Why am I always tired and low energy?",
+      "failure_category": "INTENT_ERROR",
+      "reason": "Intent mismatch: predicted 'health_period', expected 'health_general'.",
+      "resolved": true
+    },
+    {
+      "question_id": 7,
+      "question": "I don't know what direction to take in my life.",
+      "failure_category": "ROUTING_ERROR",
+      "reason": "Domain mismatch: predicted 'other', expected 'career'.",
+      "resolved": true
+    },
+    {
+      "question_id": 8,
+      "question": "Which numbers will win tomorrow's lottery draw?",
+      "failure_category": "INTENT_ERROR",
+      "reason": "Intent mismatch: predicted 'career_interview', expected 'unsupported'.",
+      "resolved": true
+    },
+    {
+      "question_id": 9,
+      "question": "Can you pick the best crypto tokens for 100x return?",
+      "failure_category": "ROUTING_ERROR",
+      "reason": "Domain mismatch: predicted 'marriage', expected 'other'.",
+      "resolved": true
+    },
+    {
+      "question_id": 10,
+      "question": "Who will win the football match tonight?",
+      "failure_category": "ROUTING_ERROR",
+      "reason": "Domain mismatch: predicted 'marriage', expected 'other'.",
+      "resolved": true
+    },
+    {
+      "question_id": 11,
+      "question": "According to my chart, what kind of emotional journey might I experience while changing careers?",
+      "failure_category": "INTENT_ERROR",
+      "reason": "Intent mismatch: predicted 'personality', expected 'career_change'.",
+      "resolved": true
+    },
+    {
+      "question_id": 16,
+      "question": "Is Jupiter aspecting my 10th house right now?",
+      "failure_category": "ROUTING_ERROR",
+      "reason": "Domain mismatch: predicted 'other', expected 'career'.",
+      "resolved": true
+    },
+    {
+      "question_id": 17,
+      "question": "When will my health recover from burnout?",
+      "failure_category": "INTENT_ERROR",
+      "reason": "Intent mismatch: predicted 'health_general', expected 'health_period'.",
+      "resolved": true
+    },
+    {
+      "question_id": 18,
+      "question": "Write a short personal poem about my future success.",
+      "failure_category": "ROUTING_ERROR",
+      "reason": "Domain mismatch: predicted 'marriage', expected 'other'.",
+      "resolved": true
+    },
+    {
+      "question_id": 20,
+      "question": "Will moving abroad help my financial growth?",
+      "failure_category": "INTENT_ERROR",
+      "reason": "Intent mismatch: predicted 'finance_general', expected 'wealth'.",
+      "resolved": true
+    }
+  ]
+}

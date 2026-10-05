@@ -1,0 +1,162 @@
+[
+  {
+    "id": 1,
+    "question": "Will my salary increase after switching companies?",
+    "expected_domain": "career",
+    "expected_intent": "career_change",
+    "expected_source": "LOCAL",
+    "notes": "Career change + salary question"
+  },
+  {
+    "id": 2,
+    "question": "Mera career kaisa rahega?",
+    "expected_domain": "career",
+    "expected_intent": "career_general",
+    "expected_source": "LOCAL",
+    "notes": "Hinglish career general query"
+  },
+  {
+    "id": 3,
+    "question": "job change krna sahi hoga kya?",
+    "expected_domain": "career",
+    "expected_intent": "career_change",
+    "expected_source": "LOCAL",
+    "notes": "Hinglish career change query"
+  },
+  {
+    "id": 4,
+    "question": "paisa kab stable hoga?",
+    "expected_domain": "finance",
+    "expected_intent": "financial_stability",
+    "expected_source": "LOCAL",
+    "notes": "Hinglish timing query"
+  },
+  {
+    "id": 5,
+    "question": "meri shaadi ka time kab aayega?",
+    "expected_domain": "marriage",
+    "expected_intent": "marriage_timing",
+    "expected_source": "LOCAL",
+    "notes": "Hinglish marriage timing query"
+  },
+  {
+    "id": 6,
+    "question": "Why am I always tired and low energy?",
+    "expected_domain": "health",
+    "expected_intent": "health_general",
+    "expected_source": "LOCAL",
+    "notes": "Physical symptom / health vitality query"
+  },
+  {
+    "id": 7,
+    "question": "I don't know what direction to take in my life.",
+    "expected_domain": "career",
+    "expected_intent": "career_general",
+    "expected_source": "LOCAL",
+    "notes": "Conversational direction query"
+  },
+  {
+    "id": 8,
+    "question": "Which numbers will win tomorrow's lottery draw?",
+    "expected_domain": "other",
+    "expected_intent": "unsupported",
+    "expected_source": "UNSUPPORTED",
+    "notes": "Explicit OOD lottery query"
+  },
+  {
+    "id": 9,
+    "question": "Can you pick the best crypto tokens for 100x return?",
+    "expected_domain": "other",
+    "expected_intent": "unsupported",
+    "expected_source": "UNSUPPORTED",
+    "notes": "Explicit OOD gambling query"
+  },
+  {
+    "id": 10,
+    "question": "Who will win the football match tonight?",
+    "expected_domain": "other",
+    "expected_intent": "unsupported",
+    "expected_source": "UNSUPPORTED",
+    "notes": "Explicit OOD sports match query"
+  },
+  {
+    "id": 11,
+    "question": "According to my chart, what kind of emotional journey might I experience while changing careers?",
+    "expected_domain": "career",
+    "expected_intent": "career_change",
+    "expected_source": "PARTIAL_LOCAL_LLM",
+    "notes": "Nuanced query: local facts + Gemini emotional explanation"
+  },
+  {
+    "id": 12,
+    "question": "What is my Moon sign and current Dasha?",
+    "expected_domain": "other",
+    "expected_intent": "dasha",
+    "expected_source": "LOCAL",
+    "notes": "Direct API fact lookup"
+  },
+  {
+    "id": 13,
+    "question": "Should I start a business or stick to my corporate job?",
+    "expected_domain": "career",
+    "expected_intent": "career_business",
+    "expected_source": "LOCAL",
+    "notes": "Business vs job comparative query"
+  },
+  {
+    "id": 14,
+    "question": "Will my partner be supportive in my career after marriage?",
+    "expected_domain": "marriage",
+    "expected_intent": "multi_domain",
+    "expected_source": "LOCAL",
+    "notes": "Multi-domain: marriage + career synergy"
+  },
+  {
+    "id": 15,
+    "question": "I feel anxious about money and debt, will my wealth improve?",
+    "expected_domain": "finance",
+    "expected_intent": "wealth",
+    "expected_source": "LOCAL",
+    "notes": "Emotional financial worry query"
+  },
+  {
+    "id": 16,
+    "question": "Is Jupiter aspecting my 10th house right now?",
+    "expected_domain": "career",
+    "expected_intent": "career_timing",
+    "expected_source": "LOCAL",
+    "notes": "Transit aspect calculation"
+  },
+  {
+    "id": 17,
+    "question": "When will my health recover from burnout?",
+    "expected_domain": "health",
+    "expected_intent": "health_period",
+    "expected_source": "LOCAL",
+    "notes": "Health recovery timing"
+  },
+  {
+    "id": 18,
+    "question": "Write a short personal poem about my future success.",
+    "expected_domain": "other",
+    "expected_intent": "general",
+    "expected_source": "LLM_FALLBACK",
+    "notes": "Pure creative request requiring LLM fallback"
+  },
+  {
+    "id": 19,
+    "question": "Mera 7th house lord kaun sa planet hai?",
+    "expected_domain": "marriage",
+    "expected_intent": "definition",
+    "expected_source": "LOCAL",
+    "notes": "Hinglish direct fact query"
+  },
+  {
+    "id": 20,
+    "question": "Will moving abroad help my financial growth?",
+    "expected_domain": "finance",
+    "expected_intent": "wealth",
+    "expected_source": "LOCAL",
+    "notes": "Relocation + wealth query"
+  }
+]
