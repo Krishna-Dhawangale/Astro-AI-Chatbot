@@ -36,7 +36,7 @@ def resolve_intent_overlay(question: str, raw_intent: str, raw_confidence: float
     timing_signal = any(k in q_lower for k in ["right now", "now", "currently", "this year", "presently", "current period", "near future"])
 
     career_signal = any(k in q_lower for k in ["career", "job", "work", "profession", "business", "promotion", "naukri", "office"])
-    marriage_signal = any(k in q_lower for k in ["marri", "spouse", "partner", "relationship", "shaadi", "love"])
+    marriage_signal = any(k in q_lower for k in ["marri", "spouse", "partner", "relationship", "shaadi", "love", "crush", "couple"])
     finance_signal = any(k in q_lower for k in ["money", "finance", "wealth", "income", "paisa", "invest", "dhan"])
     health_signal = any(k in q_lower for k in ["health", "disease", "stress", "sehat", "energy", "sleep", "tired"])
 
@@ -75,6 +75,9 @@ def resolve_intent_overlay(question: str, raw_intent: str, raw_confidence: float
 
     if health_signal and any(k in q_lower for k in ["tired", "fatigue", "exhausted", "weakness", "low energy", "draining", "lethargic"]):
         return "health_period", "explicit_health_fatigue_keyword_match"
+
+    if any(k in q_lower for k in ["crush", "like them", "confess", "propose", "good couple"]) and raw_intent not in ["relationship", "love_marriage"]:
+        return "relationship", "explicit_relationship_crush_keyword_match"
 
     if "what is a nakshatra" in q_lower or "what is a birth chart" in q_lower:
         return "definition", "explicit_definition_keyword_match"

@@ -67,21 +67,24 @@ DOMAIN_SIGNALS: Dict[str, List[str]] = {
     "health": [
         "health", "tired", "exhausted", "energy", "sleep", "weak",
         "sleeping", "fatigue", "sick", "illness", "pain", "stress", "anxiety",
-        "depression", "wellness", "recovery", "bimaar", "sehat"
+        "depression", "wellness", "recovery", "bimaar", "sehat", "swasthya",
+        "tanav", "chinta", "bimari", "dawai", "neend", "thakaan"
     ],
     "career": [
-        "career", "job", "work", "promotion", "business", "naukri",
+        "career", "job", "work", "promotion", "business", "naukri", "naukari",
         "profession", "salary", "interview", "office", "boss", "resign",
-        "employment", "workplace", "company", "hire", "hired"
+        "employment", "workplace", "company", "hire", "hired", "vyapar",
+        "kaam", "kaamkaj"
     ],
     "marriage": [
         "marriage", "married", "wedding", "relationship", "spouse", "partner",
-        "crush", "shaadi", "love", "couple", "7th house", "vivah", "husband", "wife"
+        "crush", "shaadi", "love", "couple", "7th house", "vivah", "husband", "wife",
+        "rishta", "patni", "pati", "prem"
     ],
     "finance": [
         "money", "finance", "wealth", "income", "paisa", "invest", "investment",
         "investments", "rich", "loan", "debt", "savings", "financial", "profit",
-        "assets", "earning", "earnings", "dhan", "karz"
+        "assets", "earning", "earnings", "dhan", "karz", "kamai", "rupaye"
     ],
     "other": [
         "nakshatra", "astrology", "birth chart", "kundali", "ascendant", "rashi", "graha"
@@ -120,6 +123,7 @@ def load_domain_model_pool() -> Dict[str, Tuple[Any, Any]]:
 def predict_single_pair(model: Any, vectorizer: Any, question: str) -> Dict[str, Any]:
     """Execute prediction for a single model + vectorizer pair."""
     X = vectorizer.transform([question.strip()])
+    has_vocab_match = (getattr(X, "nnz", 0) > 0)
     pred_label = str(model.predict(X)[0])
 
     probs_map = {cls: 0.0 for cls in DOMAIN_CLASSES}
@@ -137,7 +141,8 @@ def predict_single_pair(model: Any, vectorizer: Any, question: str) -> Dict[str,
         "domain": pred_label,
         "confidence": top_prob,
         "margin": margin,
-        "probabilities": probs_map
+        "probabilities": probs_map,
+        "has_vocab_match": has_vocab_match
     }
 
 def detect_query_evidence(question: str) -> Dict[str, float]:
@@ -231,8 +236,17 @@ def evaluate_and_select_domain(question: str) -> Dict[str, Any]:
     winner = scored_candidates[0]
 
     # 4. Out-of-distribution / Uncertainty Abstention Check
+    has_any_vocab = any(res.get("has_vocab_match", False) for res in raw_predictions.values())
+    has_any_evidence = any(ev > 0 for ev in evidence.values())
     max_raw_conf = max(res["confidence"] for res in raw_predictions.values())
-    if len(unique_domains) == 3 and max_raw_conf < 0.35 and winner["score"] < 0.30:
+    word_count = len(question.strip().split())
+
+    if not has_any_vocab and not has_any_evidence and (max_raw_conf < 0.35 or word_count < 3):
+        selected_domain = "other"
+        selection_method = "abstain_due_to_zero_vocabulary_match"
+        selected_model = "none"
+        final_conf = 0.0
+    elif len(unique_domains) == 3 and max_raw_conf < 0.35 and winner["score"] < 0.30:
         selected_domain = "uncertain"
         selection_method = "abstain_due_to_high_disagreement"
         selected_model = "none"
