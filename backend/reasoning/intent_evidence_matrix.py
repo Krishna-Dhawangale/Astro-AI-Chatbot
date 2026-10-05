@@ -291,13 +291,13 @@ def evaluate_intent_evidence_sufficiency(
         has_field = False
         if req in ["10th_house", "10th_lord", "1st_house", "1st_lord", "7th_house", "7th_lord", "2nd_house", "2nd_lord", "11th_house", "11th_lord", "6th_house", "6th_lord", "5th_house", "5th_lord", "9th_house", "9th_lord"]:
             # Chart planets and ascendant present
-            has_field = bool(planets and ascendant)
+            has_field = bool(planets and ascendant and ascendant.get("rashi"))
         elif req in ["moon_sign", "moon_karaka"]:
             has_field = "Moon" in planets
         elif req in ["venus_karaka"]:
             has_field = "Venus" in planets
         elif req in ["ascendant", "sun_sign"]:
-            has_field = bool(ascendant and "Sun" in planets)
+            has_field = bool(ascendant and ascendant.get("rashi") and "Sun" in planets)
         elif req in ["mahadasha", "antardasha"]:
             has_field = bool(dasha_info or normalized_chart.get("current_dasha"))
         elif req in ["astrological_concept_terms", "sub_intent_1_mandatory"]:
@@ -316,7 +316,7 @@ def evaluate_intent_evidence_sufficiency(
         elif opt in ["jupiter_karaka", "sun_karaka", "mercury_karaka", "mars_karaka"]:
             has_opt = any(p in planets for p in ["Jupiter", "Sun", "Mercury", "Mars"])
         elif opt == "planetary_dignity":
-            has_opt = True
+            has_opt = bool(planets)
         elif opt == "ashtakoota_points":
             has_opt = False  # Optional supporting field requiring dual-chart compatibility payload
 

@@ -68,7 +68,8 @@ DOMAIN_SIGNALS: Dict[str, List[str]] = {
         "health", "tired", "exhausted", "energy", "sleep", "weak",
         "sleeping", "fatigue", "sick", "illness", "pain", "stress", "anxiety",
         "depression", "wellness", "recovery", "bimaar", "sehat", "swasthya",
-        "tanav", "chinta", "bimari", "dawai", "neend", "thakaan"
+        "tanav", "chinta", "bimari", "dawai", "neend", "thakaan", "stamina",
+        "vitality", "wellbeing", "lethargic", "drained", "body pain"
     ],
     "career": [
         "career", "job", "work", "promotion", "business", "naukri", "naukari",
@@ -83,8 +84,9 @@ DOMAIN_SIGNALS: Dict[str, List[str]] = {
     ],
     "finance": [
         "money", "finance", "wealth", "income", "paisa", "invest", "investment",
-        "investments", "rich", "loan", "debt", "savings", "financial", "profit",
-        "assets", "earning", "earnings", "dhan", "karz", "kamai", "rupaye"
+        "investments", "rich", "loan", "debt", "debts", "savings", "saving", "financial", "profit",
+        "assets", "earning", "earnings", "dhan", "karz", "kamai", "rupaye",
+        "lucrative", "monetary", "economic", "capital", "bonus", "funds"
     ],
     "other": [
         "nakshatra", "astrology", "birth chart", "kundali", "ascendant", "rashi", "graha"
