@@ -150,10 +150,16 @@ def detect_query_evidence(question: str) -> Dict[str, float]:
     q_lower = question.lower().strip()
     evidence_scores = {d: 0.0 for d in DOMAIN_CLASSES}
 
+    # Explicit OOD signal detection
+    ood_kws = ["lottery", "sports match", "sports prediction", "past life", "gambling", "stock picking", "crypto prediction"]
+    if any(kw in q_lower for kw in ood_kws):
+        evidence_scores["other"] = 0.75
+        return evidence_scores
+
     for domain, keywords in DOMAIN_SIGNALS.items():
         count = sum(1 for kw in keywords if kw in q_lower)
         if count > 0:
-            evidence_scores[domain] = min(0.35, 0.15 * count)
+            evidence_scores[domain] = min(0.60, 0.25 * count)
 
     return evidence_scores
 
@@ -184,56 +190,78 @@ def evaluate_and_select_domain(question: str) -> Dict[str, Any]:
     # 2. Query evidence calculation
     evidence = detect_query_evidence(question)
 
-    # 3. Multi-signal scoring for candidate predictions
+    # 3. Multi-signal scoring for candidate predictions across all domains
     scored_candidates = []
     for name, pred in raw_predictions.items():
-        pred_domain = pred["domain"]
-        raw_prob = pred["confidence"]
-        margin = pred["margin"]
+        probs_map = pred.get("probabilities", {})
+        top_domain = pred["domain"]
 
-        # Signal A: Historical validation reliability P(correct | model, domain)
-        reliability = DOMAIN_RELIABILITY_SCORES.get(name, {}).get(pred_domain, 0.50)
+        for target_domain in DOMAIN_CLASSES:
+            domain_prob = probs_map.get(target_domain, pred["confidence"] if target_domain == top_domain else 0.0)
+            if domain_prob <= 0.01:
+                continue
 
-        # Signal B: Agreement multiplier
-        agreement_count = predicted_domains.count(pred_domain)
-        agreement_bonus = 0.20 if agreement_count >= 2 else 0.0
-        if is_unanimous:
-            agreement_bonus = 0.35
+            # Signal A: Historical validation reliability P(correct | model, domain)
+            reliability = DOMAIN_RELIABILITY_SCORES.get(name, {}).get(target_domain, 0.50)
 
-        # Signal C: Semantic evidence boost
-        evidence_boost = evidence.get(pred_domain, 0.0)
+            # Signal B: Agreement multiplier
+            agreement_count = predicted_domains.count(target_domain)
+            agreement_bonus = 0.20 if agreement_count >= 2 else 0.0
+            if is_unanimous and target_domain == top_domain:
+                agreement_bonus = 0.35
 
-        # Signal D: Domain Mismatch Penalty
-        # If predicted domain has 0 evidence, but question has strong evidence for another domain, penalize mismatch
-        has_own_evidence = (evidence_boost > 0)
-        has_other_evidence = any(ev > 0 for d, ev in evidence.items() if d != pred_domain)
-        mismatch_penalty = 0.50 if (not has_own_evidence and has_other_evidence) else 1.0
+            # Signal C: Semantic evidence boost
+            evidence_boost = evidence.get(target_domain, 0.0)
 
-        # Signal E: Combined Score calculation
-        composite_score = (
-            reliability *
-            raw_prob *
-            (1.0 + min(0.5, margin)) *
-            (1.0 + agreement_bonus) *
-            (1.0 + evidence_boost) *
-            mismatch_penalty
-        )
+            # Signal D: Domain Mismatch Penalty
+            has_own_evidence = (evidence_boost > 0)
+            has_other_evidence = any(ev > 0 for d, ev in evidence.items() if d != target_domain)
+            mismatch_penalty = 0.25 if (not has_own_evidence and has_other_evidence) else 1.0
 
-        scored_candidates.append({
-            "model": name,
-            "domain": pred_domain,
-            "score": composite_score,
-            "raw_confidence": raw_prob,
-            "margin": margin,
-            "reliability": reliability,
-            "agreement_count": agreement_count,
-            "evidence_boost": evidence_boost,
-            "mismatch_penalty": mismatch_penalty
-        })
+            # Signal E: Combined Score calculation
+            composite_score = (
+                reliability *
+                domain_prob *
+                (1.0 + min(0.5, pred["margin"])) *
+                (1.0 + agreement_bonus) *
+                (1.0 + (2.0 * evidence_boost)) *
+                mismatch_penalty
+            )
+
+            scored_candidates.append({
+                "model": name,
+                "domain": target_domain,
+                "score": composite_score,
+                "raw_confidence": domain_prob,
+                "margin": pred["margin"],
+                "reliability": reliability,
+                "agreement_count": agreement_count,
+                "evidence_boost": evidence_boost,
+                "mismatch_penalty": mismatch_penalty
+            })
 
     # Sort scored candidates by composite score descending
     scored_candidates.sort(key=lambda x: x["score"], reverse=True)
     winner = scored_candidates[0]
+
+    # Check if a domain with strong evidence was penalized due to model misclassification
+    strongest_evidence_domain = max(evidence.items(), key=lambda x: x[1])[0] if any(v > 0 for v in evidence.values()) else None
+    max_ev = evidence.get(strongest_evidence_domain, 0.0) if strongest_evidence_domain else 0.0
+
+    if strongest_evidence_domain and max_ev >= 0.25 and winner["domain"] != strongest_evidence_domain and winner["raw_confidence"] < 0.75:
+        # Override winner domain with strongest evidence domain
+        selected_domain = strongest_evidence_domain
+        selected_model = winner["model"]
+        selection_method = f"semantic_evidence_override_{selected_domain}"
+        final_conf = max_ev
+    else:
+        selected_domain = winner["domain"]
+        selected_model = winner["model"]
+        final_conf = winner["raw_confidence"]
+        if is_unanimous:
+            selection_method = f"unanimous_agreement_{selected_model}"
+        else:
+            selection_method = f"evaluation_weighted_selector_{selected_model}"
 
     # 4. Out-of-distribution / Uncertainty Abstention Check
     has_any_vocab = any(res.get("has_vocab_match", False) for res in raw_predictions.values())
