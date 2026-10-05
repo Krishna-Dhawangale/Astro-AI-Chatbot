@@ -82,7 +82,11 @@ LLM_FALLBACK_KEYWORDS = [
     "short story",
     "creative story",
     "inspirational message",
-    "life journey"
+    "life journey",
+    "will things get better",
+    "when will my situation change",
+    "situation change",
+    "things get better"
 ]
 
 
