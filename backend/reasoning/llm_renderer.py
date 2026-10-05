@@ -8,23 +8,34 @@ that forbids the LLM from performing astrology calculations or inferring missing
 """
 
 import json
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Tuple
 
 
 STRICT_RENDERER_SYSTEM_INSTRUCTION = (
-    "You are a response renderer for a Vedic Astrology system.\n"
-    "The backend has already performed all astrological calculations and reasoning.\n\n"
-    "Use ONLY the supplied evidence JSON.\n\n"
-    "Rules:\n"
-    "1. Do not calculate astrology.\n"
-    "2. Do not infer missing chart facts.\n"
-    "3. Do not introduce planets, houses, Dashas, signs, aspects, or placements absent from the evidence.\n"
-    "4. Do not contradict the evidence.\n"
-    "5. Do not provide medical diagnosis or factual medical causation.\n"
-    "6. Do not add generic astrological claims unless explicitly present in the evidence.\n"
-    "7. Maximum 75 words.\n"
-    "8. If the evidence is insufficient, state that the available chart evidence is insufficient."
+    "You are the final-response renderer.\n"
+    "The backend has already performed:\n"
+    "- domain classification\n"
+    "- intent classification\n"
+    "- chart calculation\n"
+    "- Dasha calculation\n"
+    "- transit calculation\n"
+    "- deterministic reasoning\n\n"
+    "Do NOT recalculate astrology.\n"
+    "Use only the supplied evidence.\n"
+    "Answer only the unresolved portion of the user's question.\n"
+    "Do not invent missing chart information.\n"
+    "Keep the answer concise.\n"
+    "If evidence is insufficient, explicitly state the limitation."
 )
+
+
+def estimate_tokens(text: str) -> int:
+    """
+    Rough estimate of tokens (1 token ~ 4 characters).
+    """
+    if not text:
+        return 0
+    return max(1, len(text) // 4)
 
 
 def build_compact_evidence_package(
@@ -32,10 +43,12 @@ def build_compact_evidence_package(
     intent: str,
     chart_data: Dict[str, Any],
     matched_rules: List[Dict[str, Any]],
-    dasha_hierarchy: Dict[str, Any] = None
+    dasha_hierarchy: Dict[str, Any] = None,
+    unresolved_subquestion: str = None
 ) -> Dict[str, Any]:
     """
-    Builds a minimal evidence JSON containing ONLY backend-calculated facts and matched rules.
+    Builds a minimal evidence JSON package containing ONLY backend-calculated facts and matched rules.
+    If unresolved_subquestion is provided, restricts evidence focus to the unresolved portion.
     """
     planets = chart_data.get("planets", {})
     ascendant = chart_data.get("ascendant", {})
@@ -54,7 +67,7 @@ def build_compact_evidence_package(
         a = dasha_hierarchy.get("antardasha", {}).get("planet", "")
         dasha_str = f"{m} Mahadasha / {a} Antardasha" if m and a else m or "N/A"
 
-    return {
+    pkg = {
         "domain": domain,
         "intent": intent,
         "chart_summary": {
@@ -63,15 +76,26 @@ def build_compact_evidence_package(
         },
         "matched_evidence": evidence_items[:5]
     }
+    if unresolved_subquestion:
+        pkg["unresolved_subquestion"] = unresolved_subquestion
+
+    return pkg
 
 
-def format_llm_assisted_prompt(question: str, evidence_package: Dict[str, Any]) -> str:
+def format_llm_assisted_prompt(question: str, evidence_package: Dict[str, Any]) -> Tuple[str, int]:
     """
-    Formats the final prompt sent to Gemini in MODE 3.
+    Formats the final prompt sent to Gemini in MODE 3 / Fallback.
+    Returns (prompt_text, estimated_input_tokens).
     """
     evidence_json = json.dumps(evidence_package, indent=2)
-    return (
-        f"USER QUESTION: {question}\n\n"
+    unresolved = evidence_package.get("unresolved_subquestion", question)
+    
+    prompt = (
+        f"UNRESOLVED QUESTION PORTION: {unresolved}\n\n"
         f"SUPPLIED EVIDENCE JSON:\n{evidence_json}\n\n"
         f"Generate a concise, user-friendly response (max 75 words) using ONLY the supplied evidence."
     )
+    
+    full_text = f"{STRICT_RENDERER_SYSTEM_INSTRUCTION}\n\n{prompt}"
+    input_tokens = estimate_tokens(full_text)
+    return prompt, input_tokens
