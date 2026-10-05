@@ -119,10 +119,10 @@ def extract_direct_fact(question: str, chart_data: Dict[str, Any], dasha_hierarc
 
         if parts:
             if len(parts) == 2:
-                formatted_ans = f"Your {parts[0]} and your {parts[1]}."
+                formatted_ans = f"Your {parts[0]} and your {parts[1]}.\n\nIn Vedic Astrology, the Moon sign governs your emotional processing and mental peace, while your Janma Nakshatra reveals your inner temperament and subconscious motivation."
             else:
                 bullet_list = "\n".join(f"- {p}" for p in parts)
-                formatted_ans = f"Here are your requested birth chart facts:\n{bullet_list}"
+                formatted_ans = f"Here are your requested birth chart facts:\n{bullet_list}\n\nIn Vedic Astrology, these calculated placements govern your emotional disposition, core identity, and active karmic timings."
 
             return {
                 "answer": formatted_ans,
@@ -144,7 +144,7 @@ def extract_direct_fact(question: str, chart_data: Dict[str, Any], dasha_hierarc
             if lord: details.append(f"Lord: {lord}")
             detail_str = f" ({', '.join(details)})" if details else ""
             return {
-                "answer": f"Your Janma Nakshatra is **{nakshatra}**{detail_str}.",
+                "answer": f"Your Janma Nakshatra is **{nakshatra}**{detail_str}. It is calculated from the Moon's exact planetary longitude and reveals your inner temperament, subconscious motivation, and psychological patterns.",
                 "fact_type": "nakshatra",
                 "answer_mode": "DIRECT",
                 "gemini_calls": 0,
@@ -168,7 +168,7 @@ def extract_direct_fact(question: str, chart_data: Dict[str, Any], dasha_hierarc
             r_lord = moon_data.get("rashi_lord")
             lord_str = f" (Lord: {r_lord})" if r_lord else ""
             return {
-                "answer": f"Your Moon sign (Rashi) is **{moon_rashi}**{lord_str}.",
+                "answer": f"Your Moon sign (Rashi) is **{moon_rashi}**{lord_str}. The Moon governs your emotional processing, mental peace, subconscious habits, and intuition.",
                 "fact_type": "moon_sign",
                 "answer_mode": "DIRECT",
                 "gemini_calls": 0,
@@ -190,7 +190,7 @@ def extract_direct_fact(question: str, chart_data: Dict[str, Any], dasha_hierarc
         sun_rashi = sun_data.get("rashi")
         if sun_rashi and str(sun_rashi).strip() and str(sun_rashi).strip() != "None":
             return {
-                "answer": f"Your Sun sign is **{sun_rashi}**.",
+                "answer": f"Your calculated Sun Sign is **{sun_rashi}**. In Vedic Astrology, the Sun represents the soul (Atma), willpower, self-respect, authority, and vitality.",
                 "fact_type": "sun_sign",
                 "answer_mode": "DIRECT",
                 "gemini_calls": 0,
@@ -214,7 +214,7 @@ def extract_direct_fact(question: str, chart_data: Dict[str, Any], dasha_hierarc
         deg_str = f" at {asc_deg:.1f}°" if asc_deg is not None else ""
         if asc_rashi:
             return {
-                "answer": f"Your Lagna (Ascendant) is **{asc_rashi}**{deg_str}.",
+                "answer": f"Your Ascendant (Lagna) is **{asc_rashi}**{deg_str}. It defines your physical constitution, outer persona, and the foundational lens through which you navigate the world.",
                 "fact_type": "lagna",
                 "answer_mode": "DIRECT",
                 "gemini_calls": 0,
@@ -234,7 +234,7 @@ def extract_direct_fact(question: str, chart_data: Dict[str, Any], dasha_hierarc
                 antar_str = f" and **{c_antar} Antardasha**" if c_antar else ""
                 date_str = f" (active from {st_date} to {et_date})" if st_date and et_date else ""
                 return {
-                    "answer": f"Your current period is **{c_maha} Mahadasha**{antar_str}{date_str}.",
+                    "answer": f"Your current period is **{c_maha} Mahadasha**{antar_str}{date_str}. Vimshottari Dasha is the 120-year planetary cycle system in Vedic astrology, revealing the exact planetary ruler currently activating karmic events, opportunities, and lessons in your life.",
                     "fact_type": "current_dasha",
                     "answer_mode": "DIRECT",
                     "gemini_calls": 0,
