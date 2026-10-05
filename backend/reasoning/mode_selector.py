@@ -77,7 +77,12 @@ LLM_FALLBACK_KEYWORDS = [
     "psychological theories",
     "holistic lifestyle",
     "lifestyle",
-    "holistic"
+    "holistic",
+    "inspirational",
+    "short story",
+    "creative story",
+    "inspirational message",
+    "life journey"
 ]
 
 
@@ -98,7 +103,11 @@ def select_answer_mode(
     q_lower = (question or "").lower().strip()
 
     # 1. Check for Unsupported Out-of-Domain / Invalid Queries
-    unsupported_kws = ["past life", "previous life", "lottery numbers", "win lottery", "gambling numbers", "sports prediction", "stock picking"]
+    unsupported_kws = [
+        "past life", "previous life", "lottery numbers", "win lottery", "gambling numbers",
+        "sports prediction", "stock picking", "stock that will rise", "team will win",
+        "win tonight", "date when i will die", "date of death", "guaranteed numbers"
+    ]
     if intent in UNSUPPORTED_INTENTS or any(k in q_lower for k in unsupported_kws):
         return {
             "mode": "UNSUPPORTED",
@@ -113,20 +122,37 @@ def select_answer_mode(
             "fallback_reason": "Query requests insights outside Vedic astrology chart boundaries."
         }
 
-    # 2. Check for Genuine LLM Fallback (Philosophical / Poetic / Holistic Queries)
-    if any(k in q_lower for k in LLM_FALLBACK_KEYWORDS):
-        return {
-            "mode": "LLM_ASSISTED",
-            "answer_source": "LLM_FALLBACK",
-            "reason": "philosophical_or_holistic_query_requires_llm_rendering",
-            "evidence_complete": False,
-            "gemini_calls": 1,
-            "llm_tokens": 120,  # Estimated minimal renderer tokens
-            "local_answered": False,
-            "llm_answered": True,
-            "evidence_ids": [r.get("rule_id", "") for r in (matched_rules or []) if r.get("matched", True)],
-            "fallback_reason": "Query requests creative/philosophical synthesis beyond deterministic rule scope."
-        }
+    # 2. Check for LLM Synthesis (Partial Local vs Full Fallback)
+    has_creative_req = any(k in q_lower for k in LLM_FALLBACK_KEYWORDS)
+    active_rules = [r for r in (matched_rules or []) if r.get("matched", True)]
+
+    if has_creative_req:
+        if active_rules or domain in ["career", "marriage", "finance", "health", "multi_domain"]:
+            return {
+                "mode": "LLM_ASSISTED",
+                "answer_source": "PARTIAL_LOCAL_LLM",
+                "reason": "local_core_matched_with_creative_llm_rendering",
+                "evidence_complete": False,
+                "gemini_calls": 1,
+                "llm_tokens": 95,
+                "local_answered": True,
+                "llm_answered": True,
+                "evidence_ids": [r.get("rule_id", "") for r in active_rules],
+                "fallback_reason": "Local rules answered core facts; Gemini invoked only for creative/poetic rendering."
+            }
+        else:
+            return {
+                "mode": "LLM_ASSISTED",
+                "answer_source": "LLM_FALLBACK",
+                "reason": "philosophical_or_holistic_query_requires_llm_rendering",
+                "evidence_complete": False,
+                "gemini_calls": 1,
+                "llm_tokens": 120,
+                "local_answered": False,
+                "llm_answered": True,
+                "evidence_ids": [],
+                "fallback_reason": "Query requests creative/philosophical synthesis beyond deterministic rule scope."
+            }
 
     # 3. Check for Direct Fact Queries (HIGHEST PRIORITY FACT PATH)
     if is_faq or is_direct_fact_query(question):
