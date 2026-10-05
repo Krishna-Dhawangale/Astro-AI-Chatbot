@@ -2379,6 +2379,20 @@ async def _handle_chat_response(request: ChatRequest):
         timezone=request.timezone,
     )
 
+    current_birth_key = (
+        request.birth_year, request.birth_month, request.birth_day,
+        birth_hour, birth_minute, birth_second,
+        round(request.latitude, 4), round(request.longitude, 4), request.timezone
+    )
+    previous_birth_key = USER_SESSIONS[request.user_id].get("birth_key")
+    if previous_birth_key and previous_birth_key != current_birth_key:
+        logger.info(
+            "[PROFILE UPDATE] Birth details changed for user_id=%s. Clearing previous session conversation history.",
+            request.user_id
+        )
+        USER_SESSIONS[request.user_id]["history"] = []
+    USER_SESSIONS[request.user_id]["birth_key"] = current_birth_key
+
     # Fetch API or local Swiss Ephemeris sidereal signs without blocking the event loop.
     try:
         astro_features, _api_chart_data = await run_in_threadpool(

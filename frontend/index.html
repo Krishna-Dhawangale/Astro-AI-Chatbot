@@ -1000,6 +1000,7 @@
       }
       return false;
     }
+    loadSavedProfile();
 
     function initChatGreeting() {
       const container = document.getElementById('chatContainer');
@@ -1108,6 +1109,10 @@
         day, month, year, hour, place, lat, lon, timezone
       };
       localStorage.setItem('astro_user_profile', JSON.stringify(userProfile));
+
+      // Generate a fresh session USER_ID when profile is edited so session starts fresh
+      USER_ID = 'user_' + Math.random().toString(36).substring(2, 9);
+      localStorage.setItem('astro_user_id', USER_ID);
 
       const profileNameEl = document.getElementById('profileName');
       if (profileNameEl) profileNameEl.textContent = name;
@@ -1300,20 +1305,26 @@
 
       const typingIndicator = appendTyping();
 
-      const rawAge = parseInt(document.getElementById('userAge')?.value, 10);
-      const rawTimezone = parseFloat(document.getElementById('timezone')?.value);
+      let savedProf = {};
+      try {
+        const rawSaved = localStorage.getItem('astro_user_profile');
+        if (rawSaved) savedProf = JSON.parse(rawSaved) || {};
+      } catch (e) {}
+
+      const rawAge = parseInt(document.getElementById('userAge')?.value || savedProf.age, 10);
+      const rawTimezone = parseFloat(document.getElementById('timezone')?.value || savedProf.timezone);
       const payload = {
         user_id: USER_ID,
         query: query,
         question_type: type,   // 'simple' → instant engine (<5ms), 'advanced'/'mixed' → Gemini LLM
-        name: (document.getElementById('firstName')?.value || '').trim() || 'Guest',
+        name: (document.getElementById('firstName')?.value || savedProf.name || '').trim() || 'Guest',
         age: isNaN(rawAge) ? null : rawAge,
-        birth_year: parseInt(document.getElementById('birthYear')?.value, 10) || 2000,
-        birth_month: parseInt(document.getElementById('birthMonth')?.value, 10) || 1,
-        birth_day: parseInt(document.getElementById('birthDay')?.value, 10) || 1,
-        birth_hour: parseFloat(document.getElementById('birthHour')?.value) || 12.0,
-        latitude: parseFloat(document.getElementById('latitude')?.value) || 20.5937,
-        longitude: parseFloat(document.getElementById('longitude')?.value) || 78.9629,
+        birth_year: parseInt(document.getElementById('birthYear')?.value || savedProf.year, 10) || 2000,
+        birth_month: parseInt(document.getElementById('birthMonth')?.value || savedProf.month, 10) || 1,
+        birth_day: parseInt(document.getElementById('birthDay')?.value || savedProf.day, 10) || 1,
+        birth_hour: parseFloat(document.getElementById('birthHour')?.value || savedProf.hour) || 12.0,
+        latitude: parseFloat(document.getElementById('latitude')?.value || savedProf.lat) || 20.5937,
+        longitude: parseFloat(document.getElementById('longitude')?.value || savedProf.lon) || 78.9629,
         timezone: Number.isFinite(rawTimezone) ? rawTimezone : 5.5
       };
 
