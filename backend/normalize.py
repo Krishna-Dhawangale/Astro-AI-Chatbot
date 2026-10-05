@@ -39,36 +39,45 @@ def normalize_api_response(api_response: Dict[str, Any]) -> Dict[str, Any]:
         if not isinstance(p_data, dict):
             continue
 
-        # Extract Sign Name
+        # Extract Sign Name & Lord
         rashi = p_data.get("zodiac_sign_name")
         if not isinstance(rashi, str):
             curr_sign = p_data.get("current_sign")
             if isinstance(curr_sign, int) and 1 <= curr_sign <= 12:
                 rashi = ZODIAC_SIGNS[curr_sign - 1]
             else:
-                rashi = "Aries"
+                rashi = None
         else:
             rashi = rashi.strip().title()
 
+        rashi_lord = p_data.get("zodiac_sign_lord")
+
         # Extract Longitude / Degrees
-        full_deg = p_data.get("fullDegree", p_data.get("longitude", 0.0))
-        norm_deg = p_data.get("normDegree", full_deg % 30 if isinstance(full_deg, (int, float)) else 0.0)
+        full_deg = p_data.get("fullDegree", p_data.get("longitude"))
+        norm_deg = p_data.get("normDegree", full_deg % 30 if isinstance(full_deg, (int, float)) else None)
         house = p_data.get("house_number", 1)
-        nakshatra = p_data.get("nakshatra_name", "")
+
+        nakshatra = p_data.get("nakshatra_name")
+        nakshatra_pada = p_data.get("nakshatra_pada")
+        nakshatra_lord = p_data.get("nakshatra_vimsottari_lord") or p_data.get("nakshatra_lord_name")
 
         planet_obj = {
             "longitude": float(full_deg) if isinstance(full_deg, (int, float)) else 0.0,
             "degree_in_rashi": float(norm_deg) if isinstance(norm_deg, (int, float)) else 0.0,
             "rashi": rashi,
+            "rashi_lord": rashi_lord,
             "house": int(house) if isinstance(house, int) else 1,
-            "nakshatra": str(nakshatra)
+            "nakshatra": nakshatra,
+            "nakshatra_pada": nakshatra_pada,
+            "nakshatra_lord": nakshatra_lord
         }
 
         if p_name == "Ascendant":
             ascendant = {
                 "longitude": planet_obj["longitude"],
                 "rashi": planet_obj["rashi"],
-                "degree_in_rashi": planet_obj["degree_in_rashi"]
+                "degree_in_rashi": planet_obj["degree_in_rashi"],
+                "nakshatra": nakshatra
             }
         else:
             planets[p_name] = planet_obj
@@ -85,7 +94,7 @@ def normalize_dasha_response(dasha_response: Dict[str, Any]) -> Dict[str, Any]:
     Normalizes Vimshottari Dasha payload into standardized Dasha hierarchy.
     """
     if not isinstance(dasha_response, dict):
-        return {"current_dasha": {}, "dasha_list": []}
+        return {"current_dasha": {}, "dasha_hierarchy": {}, "raw_source": "FreeAstrologyAPI"}
 
     output = dasha_response.get("output", dasha_response)
     if isinstance(output, str):
@@ -95,7 +104,40 @@ def normalize_dasha_response(dasha_response: Dict[str, Any]) -> Dict[str, Any]:
         except Exception:
             output = {}
 
+    current_mahadasha = None
+    current_antardasha = None
+    start_date = None
+    end_date = None
+
+    if isinstance(output, dict):
+        from datetime import datetime
+        now = datetime.now()
+        for maha, antars in output.items():
+            if isinstance(antars, dict):
+                for antar, dates in antars.items():
+                    if isinstance(dates, dict):
+                        st_str = dates.get("start_time") or dates.get("start")
+                        et_str = dates.get("end_time") or dates.get("end")
+                        if st_str and et_str:
+                            try:
+                                st = datetime.strptime(st_str[:19], "%Y-%m-%d %H:%M:%S")
+                                et = datetime.strptime(et_str[:19], "%Y-%m-%d %H:%M:%S")
+                                if st <= now <= et:
+                                    current_mahadasha = maha
+                                    current_antardasha = antar
+                                    start_date = st_str
+                                    end_date = et_str
+                                    break
+                            except Exception:
+                                pass
+                if current_mahadasha:
+                    break
+
     return {
+        "current_mahadasha": current_mahadasha,
+        "current_antardasha": current_antardasha,
+        "start_date": start_date,
+        "end_date": end_date,
         "dasha_hierarchy": output if isinstance(output, (dict, list)) else {},
         "raw_source": "FreeAstrologyAPI"
     }

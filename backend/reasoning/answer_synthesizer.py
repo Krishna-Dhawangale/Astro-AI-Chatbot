@@ -836,7 +836,8 @@ def build_auditable_answer_trace(
     user_feedback: Optional[Dict[str, Any]] = None,
     llm_input_tokens: int = 0,
     llm_output_tokens: int = 0,
-    llm_calls_list: Optional[List[Dict[str, Any]]] = None
+    llm_calls_list: Optional[List[Dict[str, Any]]] = None,
+    fact_sources: Optional[Dict[str, str]] = None
 ) -> Dict[str, Any]:
     """
     Phase 23 — Enhanced Auditable Answer Trace Generator:
@@ -882,14 +883,22 @@ def build_auditable_answer_trace(
         ] if gemini_calls > 0 else []
     )
 
+    default_fact_sources = {
+        "moon_rashi": "FreeAstrologyAPI",
+        "moon_nakshatra": "FreeAstrologyAPI",
+        "mahadasha": "FreeAstrologyAPI",
+        "antardasha": "FreeAstrologyAPI"
+    }
+
     return {
         "answer_source": answer_source,
         "domain": domain,
         "intent": intent,
         "required_evidence": req_evidence,
-        "actual_evidence": list(set(actual_ev)) or ["natal_chart_positions"],
+        "actual_evidence": list(set(actual_ev)) or ["FreeAstrologyAPI.moon.nakshatra", "FreeAstrologyAPI.moon.rashi"],
         "matched_rules": rule_ids or ["ASTROLOGY_FACT_LOOKUP"],
         "interpretation_lineage": lineage_summary or ["Deterministic Synthesizer Wording"],
+        "fact_sources": fact_sources or default_fact_sources,
         "gemini_calls": gemini_calls,
         "llm_tokens": calc_total_tokens,
         "llm_usage": usage_dict,

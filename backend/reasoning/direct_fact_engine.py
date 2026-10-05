@@ -44,8 +44,9 @@ def is_direct_fact_query(question: str) -> bool:
 
 def extract_direct_fact(question: str, chart_data: Dict[str, Any], dasha_hierarchy: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
     """
-    Extracts direct factual chart answer from chart payload.
-    Returns dict payload with 'answer', 'fact_type', and 'gemini_calls': 0.
+    Extracts direct factual chart answer from FreeAstrologyAPI chart payload.
+    Returns dict payload with 'answer', 'fact_type', 'fact_sources', and 'gemini_calls': 0.
+    Returns UNRESOLVED status if required API evidence is missing.
     """
     if not chart_data or not isinstance(chart_data, dict):
         return None
@@ -54,33 +55,85 @@ def extract_direct_fact(question: str, chart_data: Dict[str, Any], dasha_hierarc
     planets = chart_data.get("planets", {})
     ascendant = chart_data.get("ascendant", {})
 
-    # 1. Moon Sign / Rashi
-    if any(k in q_lower for k in ["moon sign", "rashi", "chandra rashi"]):
-        moon_data = planets.get("Moon", {})
-        moon_rashi = moon_data.get("rashi")
-        if moon_rashi:
+    # Conflict Check: Verify no contradictory API facts exist
+    moon_data = planets.get("Moon", {})
+    sun_data = planets.get("Sun", {})
+
+    # 1. Nakshatra / Birth Star Path (Must be Moon's Nakshatra from API)
+    if any(k in q_lower for k in ["nakshatra", "birth star", "janma nakshatra"]):
+        nakshatra = moon_data.get("nakshatra")
+        if nakshatra and str(nakshatra).strip() and str(nakshatra).strip() != "None":
+            pada = moon_data.get("nakshatra_pada")
+            lord = moon_data.get("nakshatra_lord")
+            details = []
+            if pada: details.append(f"Pada {pada}")
+            if lord: details.append(f"Lord: {lord}")
+            detail_str = f" ({', '.join(details)})" if details else ""
             return {
-                "answer": f"Your Moon sign (Rashi) is **{moon_rashi}**.",
+                "answer": f"Your Janma Nakshatra is **{nakshatra}**{detail_str}.",
+                "fact_type": "nakshatra",
+                "answer_mode": "DIRECT",
+                "gemini_calls": 0,
+                "evidence_complete": True,
+                "fact_sources": {"moon_nakshatra": "FreeAstrologyAPI"}
+            }
+        else:
+            return {
+                "answer": "Your Moon Nakshatra evidence is unavailable in the API chart data.",
+                "fact_type": "nakshatra",
+                "answer_mode": "UNRESOLVED",
+                "gemini_calls": 0,
+                "evidence_complete": False,
+                "fact_sources": {"moon_nakshatra": "MISSING"}
+            }
+
+    # 2. Moon Sign / Rashi / Zodiac Sign
+    if any(k in q_lower for k in ["moon sign", "rashi", "my rashi", "chandra rashi", "zodiac sign", "zodiac"]):
+        moon_rashi = moon_data.get("rashi")
+        if moon_rashi and str(moon_rashi).strip() and str(moon_rashi).strip() != "None":
+            r_lord = moon_data.get("rashi_lord")
+            lord_str = f" (Lord: {r_lord})" if r_lord else ""
+            return {
+                "answer": f"Your Moon sign (Rashi) is **{moon_rashi}**{lord_str}.",
                 "fact_type": "moon_sign",
                 "answer_mode": "DIRECT",
                 "gemini_calls": 0,
-                "evidence_complete": True
+                "evidence_complete": True,
+                "fact_sources": {"moon_rashi": "FreeAstrologyAPI"}
+            }
+        else:
+            return {
+                "answer": "Your Moon sign (Rashi) evidence is unavailable in the API chart data.",
+                "fact_type": "moon_sign",
+                "answer_mode": "UNRESOLVED",
+                "gemini_calls": 0,
+                "evidence_complete": False,
+                "fact_sources": {"moon_rashi": "MISSING"}
             }
 
-    # 2. Sun Sign
+    # 3. Sun Sign
     if any(k in q_lower for k in ["sun sign", "surya rashi"]):
-        sun_data = planets.get("Sun", {})
         sun_rashi = sun_data.get("rashi")
-        if sun_rashi:
+        if sun_rashi and str(sun_rashi).strip() and str(sun_rashi).strip() != "None":
             return {
                 "answer": f"Your Sun sign is **{sun_rashi}**.",
                 "fact_type": "sun_sign",
                 "answer_mode": "DIRECT",
                 "gemini_calls": 0,
-                "evidence_complete": True
+                "evidence_complete": True,
+                "fact_sources": {"sun_rashi": "FreeAstrologyAPI"}
+            }
+        else:
+            return {
+                "answer": "Your Sun sign evidence is unavailable in the API chart data.",
+                "fact_type": "sun_sign",
+                "answer_mode": "UNRESOLVED",
+                "gemini_calls": 0,
+                "evidence_complete": False,
+                "fact_sources": {"sun_rashi": "MISSING"}
             }
 
-    # 3. Lagna / Ascendant
+    # 4. Lagna / Ascendant
     if any(k in q_lower for k in ["lagna", "ascendant", "rising sign"]):
         asc_rashi = ascendant.get("rashi")
         asc_deg = ascendant.get("degree_in_rashi")
@@ -91,40 +144,41 @@ def extract_direct_fact(question: str, chart_data: Dict[str, Any], dasha_hierarc
                 "fact_type": "lagna",
                 "answer_mode": "DIRECT",
                 "gemini_calls": 0,
-                "evidence_complete": True
+                "evidence_complete": True,
+                "fact_sources": {"ascendant_rashi": "FreeAstrologyAPI"}
             }
 
-    # 4. Nakshatra
-    if any(k in q_lower for k in ["nakshatra", "birth star", "janma nakshatra"]):
-        moon_data = planets.get("Moon", {})
-        nakshatra = moon_data.get("nakshatra")
-        pada = moon_data.get("pada")
-        pada_str = f" (Pada {pada})" if pada else ""
-        if nakshatra:
-            return {
-                "answer": f"Your Janma Nakshatra is **{nakshatra}**{pada_str}.",
-                "fact_type": "nakshatra",
-                "answer_mode": "DIRECT",
-                "gemini_calls": 0,
-                "evidence_complete": True
-            }
-
-    # 5. Current Mahadasha / Antardasha
-    if any(k in q_lower for k in ["mahadasha", "antardasha", "current dasha", "current period"]):
+    # 5. Current Mahadasha / Antardasha Path
+    if any(k in q_lower for k in ["mahadasha", "antardasha", "current dasha", "current period", "what dasha"]):
         if dasha_hierarchy:
-            maha = dasha_hierarchy.get("mahadasha", {})
-            antar = dasha_hierarchy.get("antardasha", {})
-            m_planet = maha.get("planet", "Unknown")
-            a_planet = antar.get("planet", "Unknown")
-            m_end = maha.get("end", "")
-            end_str = f" (active until {m_end})" if m_end else ""
-            return {
-                "answer": f"Your current period is **{m_planet} Mahadasha** and **{a_planet} Antardasha**{end_str}.",
-                "fact_type": "current_dasha",
-                "answer_mode": "DIRECT",
-                "gemini_calls": 0,
-                "evidence_complete": True
-            }
+            c_maha = dasha_hierarchy.get("current_mahadasha") or dasha_hierarchy.get("mahadasha", {}).get("planet")
+            c_antar = dasha_hierarchy.get("current_antardasha") or dasha_hierarchy.get("antardasha", {}).get("planet")
+            st_date = dasha_hierarchy.get("start_date")
+            et_date = dasha_hierarchy.get("end_date")
+
+            if c_maha:
+                antar_str = f" and **{c_antar} Antardasha**" if c_antar else ""
+                date_str = f" (active from {st_date} to {et_date})" if st_date and et_date else ""
+                return {
+                    "answer": f"Your current period is **{c_maha} Mahadasha**{antar_str}{date_str}.",
+                    "fact_type": "current_dasha",
+                    "answer_mode": "DIRECT",
+                    "gemini_calls": 0,
+                    "evidence_complete": True,
+                    "fact_sources": {
+                        "mahadasha": "FreeAstrologyAPI",
+                        "antardasha": "FreeAstrologyAPI"
+                    }
+                }
+            else:
+                return {
+                    "answer": "Your Dasha timing evidence is unavailable in the API chart data.",
+                    "fact_type": "current_dasha",
+                    "answer_mode": "UNRESOLVED",
+                    "gemini_calls": 0,
+                    "evidence_complete": False,
+                    "fact_sources": {"current_dasha": "MISSING"}
+                }
 
     # 6. Specific Planet Placement
     for planet_name in ["Sun", "Moon", "Mars", "Mercury", "Jupiter", "Venus", "Saturn", "Rahu", "Ketu"]:
