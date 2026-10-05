@@ -47,55 +47,53 @@ def build_compact_evidence_package(
     unresolved_subquestion: str = None
 ) -> Dict[str, Any]:
     """
-    Builds a minimal evidence JSON package containing ONLY backend-calculated facts and matched rules.
-    If unresolved_subquestion is provided, restricts evidence focus to the unresolved portion.
+    Builds an ultra-compact evidence package containing ONLY essential established backend facts.
     """
     planets = chart_data.get("planets", {})
     ascendant = chart_data.get("ascendant", {})
 
-    evidence_items = []
-    for r in matched_rules:
-        if r.get("matched", True):
-            r_id = r.get("rule_id", "")
-            ev = r.get("evidence", {})
-            interp = r.get("interpretation_key", "")
-            evidence_items.append(f"{r_id}: {interp} ({ev})")
-
-    dasha_str = "N/A"
+    facts = []
+    if ascendant and ascendant.get("rashi"):
+        facts.append(f"Ascendant: {ascendant.get('rashi')}")
+    
     if dasha_hierarchy:
         m = dasha_hierarchy.get("mahadasha", {}).get("planet", "")
         a = dasha_hierarchy.get("antardasha", {}).get("planet", "")
-        dasha_str = f"{m} Mahadasha / {a} Antardasha" if m and a else m or "N/A"
+        if m:
+            facts.append(f"Current Dasha: {m}{'/' + a if a else ''}")
 
-    pkg = {
+    for r in matched_rules[:3]:
+        if r.get("matched", True):
+            r_id = r.get("rule_id", "")
+            interp = r.get("interpretation_key", "")
+            facts.append(f"{r_id}: {interp}")
+
+    return {
         "domain": domain,
         "intent": intent,
-        "chart_summary": {
-            "ascendant": ascendant.get("rashi"),
-            "current_dasha": dasha_str,
-        },
-        "matched_evidence": evidence_items[:5]
+        "established_facts": facts,
+        "unresolved": unresolved_subquestion or ""
     }
-    if unresolved_subquestion:
-        pkg["unresolved_subquestion"] = unresolved_subquestion
-
-    return pkg
 
 
 def format_llm_assisted_prompt(question: str, evidence_package: Dict[str, Any]) -> Tuple[str, int]:
     """
-    Formats the final prompt sent to Gemini in MODE 3 / Fallback.
+    Formats an ultra-compact prompt sent to Gemini in Phase 21.
     Returns (prompt_text, estimated_input_tokens).
     """
-    evidence_json = json.dumps(evidence_package, indent=2)
-    unresolved = evidence_package.get("unresolved_subquestion", question)
-    
+    domain = evidence_package.get("domain", "astrology")
+    intent = evidence_package.get("intent", "general")
+    facts = evidence_package.get("established_facts", [])
+    unresolved = evidence_package.get("unresolved") or question
+
+    facts_str = "; ".join(facts) if facts else "Chart evidence established"
+
     prompt = (
-        f"UNRESOLVED QUESTION PORTION: {unresolved}\n\n"
-        f"SUPPLIED EVIDENCE JSON:\n{evidence_json}\n\n"
-        f"Generate a concise, user-friendly response (max 75 words) using ONLY the supplied evidence."
+        f"You are a response renderer for domain '{domain}' ({intent}).\n"
+        f"Established Backend Facts: {facts_str}\n"
+        f"Task: Render a concise response (max 50 words) for: \"{unresolved}\"\n"
+        f"Rules: Use ONLY established facts. Do NOT recalculate astrology. Do NOT introduce new claims."
     )
-    
-    full_text = f"{STRICT_RENDERER_SYSTEM_INSTRUCTION}\n\n{prompt}"
-    input_tokens = estimate_tokens(full_text)
+
+    input_tokens = estimate_tokens(prompt)
     return prompt, input_tokens
