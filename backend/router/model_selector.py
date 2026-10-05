@@ -65,26 +65,26 @@ DOMAIN_RELIABILITY_SCORES: Dict[str, Dict[str, float]] = {
 # Key domain evidence vocabulary for auxiliary signal calculation
 DOMAIN_SIGNALS: Dict[str, List[str]] = {
     "health": [
-        "health", "tired", "exhausted", "energy", "sleep", "weak",
-        "sleeping", "fatigue", "sick", "illness", "pain", "stress", "anxiety",
+        "health", "helth", "tired", "exhausted", "energy", "sleep", "weak",
+        "sleeping", "fatigue", "sick", "illness", "pain", "stress", "anxiety", "anxeity",
         "depression", "wellness", "recovery", "bimaar", "sehat", "swasthya",
         "tanav", "chinta", "bimari", "dawai", "neend", "thakaan", "stamina",
         "vitality", "wellbeing", "lethargic", "drained", "body pain"
     ],
     "career": [
-        "career", "job", "work", "promotion", "business", "naukri", "naukari",
-        "profession", "salary", "interview", "office", "boss", "resign",
+        "career", "carer", "carear", "karer", "job", "work", "promotion", "promtion", "business", "busines", "naukri", "naukari",
+        "profession", "profesion", "salary", "salery", "interview", "office", "boss", "resign",
         "employment", "workplace", "company", "hire", "hired", "vyapar",
         "kaam", "kaamkaj"
     ],
     "marriage": [
-        "marriage", "married", "wedding", "relationship", "spouse", "partner",
+        "marriage", "marrige", "marage", "marriag", "marriead", "marred", "married", "wedding", "weding", "relationship", "spouse", "partner",
         "crush", "shaadi", "love", "couple", "7th house", "vivah", "husband", "wife",
         "rishta", "patni", "pati", "prem"
     ],
     "finance": [
-        "money", "finance", "wealth", "income", "paisa", "invest", "investment",
-        "investments", "rich", "loan", "debt", "debts", "savings", "saving", "financial", "profit",
+        "money", "finance", "financial", "finiacial", "finacial", "financail", "finances", "wealth", "income", "incom", "paisa", "invest", "investment",
+        "investments", "rich", "loan", "debt", "debts", "savings", "saving", "profit",
         "assets", "earning", "earnings", "dhan", "karz", "kamai", "rupaye",
         "lucrative", "monetary", "economic", "capital", "bonus", "funds"
     ],

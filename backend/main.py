@@ -261,6 +261,18 @@ HINGLISH_MAP: Dict[str, str] = {
     "bata do": "please tell", "karo": "do", "mera": "my", "meri": "my",
     "mujhe": "me", "acha": "good", "achha": "good",
     "sambhavna": "possibility", "sambhavana": "possibility",
+    # Common domain typos & spelling variations
+    "marriead": "married", "marrige": "marriage", "marage": "marriage",
+    "marred": "married", "marriag": "marriage", "marriges": "marriages",
+    "weding": "wedding", "spous": "spouse",
+    "finiacial": "financial", "finacial": "financial", "financail": "financial",
+    "finances": "finance", "salery": "salary", "incom": "income",
+    "wealthh": "wealth", "carer": "career", "carear": "career",
+    "karer": "career", "promtion": "promotion", "promotn": "promotion",
+    "busines": "business", "bizness": "business", "profesion": "profession",
+    "helth": "health", "anxeity": "anxiety", "anxiet": "anxiety",
+    "desease": "disease", "forein": "foreign", "foriegn": "foreign",
+    "abroade": "abroad",
 }
 
 
