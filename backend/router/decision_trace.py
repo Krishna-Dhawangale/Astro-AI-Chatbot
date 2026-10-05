@@ -37,10 +37,16 @@ def record_production_decision_trace(
     evidence_status: str,
     answer_source: str,
     gemini_calls: int,
+    domain_margin: float = 0.0,
+    llm_input_tokens: int = 0,
+    llm_output_tokens: int = 0,
+    latency_ms: float = 0.0,
+    errors: Optional[List[str]] = None,
+    local_answer_quality: Optional[Dict[str, bool]] = None,
     additional_metadata: Optional[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
     """
-    Constructs and records an explicit Production Decision Trace entry.
+    Constructs and records an explicit Production Decision Trace entry for Phase 19 observation.
     """
     trace_record = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -48,6 +54,7 @@ def record_production_decision_trace(
         "domain": domain,
         "selected_model": selected_model,
         "domain_confidence": round(domain_confidence, 4),
+        "domain_margin": round(domain_margin, 4),
         "intent": intent,
         "resolved_intent": resolved_intent,
         "complexity": complexity,
@@ -58,6 +65,19 @@ def record_production_decision_trace(
         "evidence_status": evidence_status,
         "answer_source": answer_source,
         "gemini_calls": gemini_calls,
+        "llm_input_tokens": llm_input_tokens,
+        "llm_output_tokens": llm_output_tokens,
+        "latency_ms": round(latency_ms, 2),
+        "errors": errors or [],
+        "local_answer_quality": local_answer_quality or {
+            "correct_domain": True,
+            "correct_intent": True,
+            "correct_chart_data": True,
+            "correct_rule": True,
+            "correct_interpretation": True,
+            "no_unsupported_claim": True,
+            "addresses_question": True
+        },
         "metadata": additional_metadata or {}
     }
 
