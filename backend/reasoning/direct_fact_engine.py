@@ -59,6 +59,80 @@ def extract_direct_fact(question: str, chart_data: Dict[str, Any], dasha_hierarc
     moon_data = planets.get("Moon", {})
     sun_data = planets.get("Sun", {})
 
+    # Check for compound queries requesting multiple facts (e.g. Nakshatra AND Zodiac sign)
+    wants_nakshatra = any(k in q_lower for k in ["nakshatra", "birth star", "janma nakshatra"])
+    wants_moon_sign = any(k in q_lower for k in ["moon sign", "rashi", "my rashi", "chandra rashi", "zodiac sign", "zodiac"])
+    wants_sun_sign = any(k in q_lower for k in ["sun sign", "surya rashi"])
+    wants_lagna = any(k in q_lower for k in ["lagna", "ascendant", "rising sign"])
+    wants_dasha = any(k in q_lower for k in ["mahadasha", "antardasha", "current dasha", "current period", "what dasha"])
+
+    matched_flags = [wants_nakshatra, wants_moon_sign, wants_sun_sign, wants_lagna, wants_dasha]
+    if sum(matched_flags) > 1:
+        parts = []
+        fact_sources = {}
+        
+        if wants_nakshatra:
+            nakshatra = moon_data.get("nakshatra")
+            if nakshatra and str(nakshatra).strip() and str(nakshatra).strip() != "None":
+                pada = moon_data.get("nakshatra_pada")
+                lord = moon_data.get("nakshatra_lord")
+                details = []
+                if pada: details.append(f"Pada {pada}")
+                if lord: details.append(f"Lord: {lord}")
+                detail_str = f" ({', '.join(details)})" if details else ""
+                parts.append(f"Janma Nakshatra is **{nakshatra}**{detail_str}")
+                fact_sources["moon_nakshatra"] = "FreeAstrologyAPI"
+            else:
+                parts.append("Janma Nakshatra is unavailable in the API chart data")
+
+        if wants_moon_sign:
+            moon_rashi = moon_data.get("rashi")
+            if moon_rashi and str(moon_rashi).strip() and str(moon_rashi).strip() != "None":
+                r_lord = moon_data.get("rashi_lord")
+                lord_str = f" (Lord: {r_lord})" if r_lord else ""
+                parts.append(f"Moon sign (Zodiac) is **{moon_rashi}**{lord_str}")
+                fact_sources["moon_rashi"] = "FreeAstrologyAPI"
+            else:
+                parts.append("Moon sign (Zodiac) is unavailable in the API chart data")
+
+        if wants_sun_sign:
+            sun_rashi = sun_data.get("rashi")
+            if sun_rashi and str(sun_rashi).strip() and str(sun_rashi).strip() != "None":
+                parts.append(f"Sun sign is **{sun_rashi}**")
+                fact_sources["sun_rashi"] = "FreeAstrologyAPI"
+
+        if wants_lagna:
+            asc_rashi = ascendant.get("rashi")
+            asc_deg = ascendant.get("degree_in_rashi")
+            deg_str = f" at {asc_deg:.1f}°" if asc_deg is not None else ""
+            if asc_rashi:
+                parts.append(f"Lagna (Ascendant) is **{asc_rashi}**{deg_str}")
+                fact_sources["ascendant_rashi"] = "FreeAstrologyAPI"
+
+        if wants_dasha and dasha_hierarchy:
+            c_maha = dasha_hierarchy.get("current_mahadasha") or dasha_hierarchy.get("mahadasha", {}).get("planet")
+            c_antar = dasha_hierarchy.get("current_antardasha") or dasha_hierarchy.get("antardasha", {}).get("planet")
+            if c_maha:
+                antar_str = f" and **{c_antar} Antardasha**" if c_antar else ""
+                parts.append(f"current period is **{c_maha} Mahadasha**{antar_str}")
+                fact_sources["current_dasha"] = "FreeAstrologyAPI"
+
+        if parts:
+            if len(parts) == 2:
+                formatted_ans = f"Your {parts[0]} and your {parts[1]}."
+            else:
+                bullet_list = "\n".join(f"- {p}" for p in parts)
+                formatted_ans = f"Here are your requested birth chart facts:\n{bullet_list}"
+
+            return {
+                "answer": formatted_ans,
+                "fact_type": "compound_fact",
+                "answer_mode": "DIRECT",
+                "gemini_calls": 0,
+                "evidence_complete": True,
+                "fact_sources": fact_sources
+            }
+
     # 1. Nakshatra / Birth Star Path (Must be Moon's Nakshatra from API)
     if any(k in q_lower for k in ["nakshatra", "birth star", "janma nakshatra"]):
         nakshatra = moon_data.get("nakshatra")

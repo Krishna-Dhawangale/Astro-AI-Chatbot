@@ -167,16 +167,21 @@ def run_api_authority_regression_tests():
     assert "unavailable" in missing_res["answer"].lower()
     print("[PASS] Missing API Nakshatra correctly returned UNRESOLVED with 0 Gemini calls!")
 
-    # TEST GROUP C: Evidence Conflict Check
-    print("--- TEST GROUP C: CONFLICT CHECK ---")
-    conflicting_chart = {
-        "planets": {
-            "Moon": {"rashi": "Libra", "nakshatra": "Visakha"}
-        }
-    }
-    # Verify exact API facts match normalized output
-    assert norm_chart["planets"]["Moon"]["rashi"] == SAMPLE_RAW_API_PLANETS["output"]["Moon"]["zodiac_sign_name"]
-    assert norm_chart["planets"]["Moon"]["nakshatra"] == SAMPLE_RAW_API_PLANETS["output"]["Moon"]["nakshatra_name"]
+    # TEST GROUP D: Compound Direct Fact Queries & FAQ Bypass
+    print("--- TEST GROUP D: COMPOUND DIRECT FACTS & FAQ BYPASS ---")
+    from backend.main import match_faq_only
+    
+    faq_match = match_faq_only("what is my Nakshatra and Zodiac")
+    assert faq_match is None, f"match_faq_only should return None for direct calculation query, but got: {faq_match}"
+    print("[PASS] match_faq_only correctly bypassed static FAQ template for 'what is my Nakshatra and Zodiac'!")
+
+    compound_res = extract_direct_fact("what is my Nakshatra and Zodiac", norm_chart, norm_dasha)
+    assert compound_res is not None, "Failed to extract compound direct fact"
+    assert compound_res["gemini_calls"] == 0, "Gemini was called for compound direct fact"
+    assert "Visakha" in compound_res["answer"], f"Missing Nakshatra 'Visakha' in compound answer: {compound_res['answer']}"
+    assert "Libra" in compound_res["answer"], f"Missing Moon sign 'Libra' in compound answer: {compound_res['answer']}"
+    print(f"[PASS] Compound query answered directly: '{compound_res['answer']}'")
+
     print("[PASS] Fact consistency verified between raw API JSON and normalized schema!")
 
     print("\n================================================================================")

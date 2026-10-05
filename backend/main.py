@@ -187,7 +187,7 @@ if gemini_api_key:
 else:
     print("[WARNING] GOOGLE_API_KEY or GEMINI_API_KEY is missing. Gemini responses will be unavailable.")
 
-FREE_ASTROLOGY_KEY = os.getenv("FREE_ASTROLOGY_API_KEY")
+FREE_ASTROLOGY_KEY = os.getenv("FREE_ASTROLOGY_API_KEY") or os.getenv("FREE_ASTROLOGY_KEY")
 PROKERALA_CLIENT_ID = os.getenv("PROKERALA_CLIENT_ID")
 PROKERALA_CLIENT_SECRET = os.getenv("PROKERALA_CLIENT_SECRET")
 
@@ -952,6 +952,9 @@ ASTRO_INQUIRY_TERMS = {
 
 def match_faq_only(user_query: str) -> Optional[str]:
     """Return a local FAQ from the 85+ item database for exact or indexed factual phrases, saving LLM tokens."""
+    if is_direct_fact_query(user_query):
+        return None
+
     clean_norm = re.sub(r"[^\w\s'-]", " ", normalize_hinglish(user_query).casefold()).strip()
     clean_raw = re.sub(r"[^\w\s'-]", " ", user_query.casefold()).strip()
 
@@ -2116,13 +2119,16 @@ def fetch_prokerala_planet_positions(req: BirthDetailsRequest) -> Dict[str, Any]
 
 
 def fetch_planet_positions_external(req: BirthDetailsRequest) -> Dict[str, Any]:
-    if PROKERALA_CLIENT_ID and PROKERALA_CLIENT_SECRET:
-        try:
-            return fetch_prokerala_planet_positions(req)
-        except Exception as e:
-            logger.warning("Prokerala API failed (%s); trying FreeAstrologyAPI", e)
-
-    return _post_astrology_api("planets/extended", req)
+    try:
+        return _post_astrology_api("planets/extended", req)
+    except Exception as e:
+        logger.warning("FreeAstrologyAPI failed (%s); trying Prokerala API fallback", e)
+        if PROKERALA_CLIENT_ID and PROKERALA_CLIENT_SECRET:
+            try:
+                return fetch_prokerala_planet_positions(req)
+            except Exception as pk_err:
+                logger.warning("Prokerala API failed: %s", pk_err)
+        raise
 
 
 def chart_features_from_api(api_response: Dict[str, Any]) -> List[int]:
