@@ -1,10 +1,10 @@
 from locust import HttpUser, task, between
 import random
 
-class ChatbotUser(HttpUser):
+class AstrologyChatbotUser(HttpUser):
     # Set host explicitly so Locust web UI defaults to this exact URL
     host = "http://127.0.0.1:8000"
-    wait_time = between(0.5, 1.5)
+    wait_time = between(5, 12)  # Pause 5 to 12 seconds between questions
 
     @task
     def send_chat_request(self):

@@ -1,4 +1,5 @@
 import asyncio
+import datetime
 import inspect
 import json
 import logging
@@ -35,10 +36,69 @@ GEMINI_SAFETY_SETTINGS = [
     )
 ]
 
+from requests.adapters import HTTPAdapter
+from urllib3.util import Retry
+
 try:
     from router import DOMAIN_KEYWORDS, IntentRouter
+    from qa_engine import intercept_qa, strip_greeting
+    from llm_router import (
+        stream_chat_response,
+        stream_cascading_router,
+        build_system_prompt,
+        compress_user_profile,
+        filter_chat_history,
+        is_conversational_fluff,
+        clean_llm_output,
+        trim_to_last_sentence,
+        format_llm_response,
+        strip_server_metadata,
+        STRUCTURED_SYSTEM_PROMPT,
+        ULTRA_COMPACT_SYSTEM_PROMPT,
+        format_compact_user_profile,
+        apply_sliding_window,
+        GROQ_MODELS,
+        MODEL_CASCADE,
+        get_local_qa_response,
+        qa_database_index,
+        should_bypass_local_qa,
+        SYSTEM_BUSY_MESSAGE,
+        SYSTEM_BUSY_PAYLOAD,
+        get_system_busy_payload,
+        calculate_house_rulerships,
+        get_user_natal_context,
+        format_local_qa_response,
+    )
 except ImportError:
     from backend.router import DOMAIN_KEYWORDS, IntentRouter
+    from backend.qa_engine import intercept_qa, strip_greeting
+    from backend.llm_router import (
+        stream_chat_response,
+        stream_cascading_router,
+        build_system_prompt,
+        compress_user_profile,
+        filter_chat_history,
+        is_conversational_fluff,
+        clean_llm_output,
+        trim_to_last_sentence,
+        format_llm_response,
+        strip_server_metadata,
+        STRUCTURED_SYSTEM_PROMPT,
+        ULTRA_COMPACT_SYSTEM_PROMPT,
+        format_compact_user_profile,
+        apply_sliding_window,
+        GROQ_MODELS,
+        MODEL_CASCADE,
+        get_local_qa_response,
+        qa_database_index,
+        should_bypass_local_qa,
+        SYSTEM_BUSY_MESSAGE,
+        SYSTEM_BUSY_PAYLOAD,
+        get_system_busy_payload,
+        calculate_house_rulerships,
+        get_user_natal_context,
+        format_local_qa_response,
+    )
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 if BASE_DIR not in sys.path:
@@ -53,6 +113,16 @@ logger = logging.getLogger(__name__)
 RATE_LIMIT_STORAGE_URI = os.getenv("RATE_LIMIT_STORAGE_URI", "memory://")
 limiter = Limiter(key_func=get_remote_address, storage_uri=RATE_LIMIT_STORAGE_URI)
 
+# Expanded outgoing HTTP connection pool to prevent socket exhaustion during concurrent bursts
+_requests_session = requests.Session()
+_adapter = HTTPAdapter(
+    pool_connections=200,
+    pool_maxsize=200,
+    max_retries=Retry(total=3, backoff_factor=0.2, status_forcelist=[500, 502, 503, 504]),
+)
+_requests_session.mount("http://", _adapter)
+_requests_session.mount("https://", _adapter)
+
 app = FastAPI(
     title="Astrology AI Chatbot & External API Backend",
     description="FastAPI service optimized for dynamic, user-specific AI predictions."
@@ -62,9 +132,14 @@ app.state.limiter = limiter
 
 @app.exception_handler(RateLimitExceeded)
 async def rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded) -> JSONResponse:
+    """
+    Gracefully catches local SlowAPI rate limits and returns HTTP 200 OK
+    with the system busy payload instead of raw 429 client errors.
+    """
+    logger.warning("Local SlowAPI rate limit triggered for %s", request.client.host if request.client else "unknown")
     return JSONResponse(
-        status_code=429,
-        content={"error": "Too many requests. Please wait a minute before asking another question."},
+        status_code=200,
+        content=dict(SYSTEM_BUSY_PAYLOAD),
     )
 
 app.add_middleware(
@@ -73,6 +148,8 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
+    max_age=86400,
 )
 
 
@@ -83,8 +160,14 @@ def label_answer_source(answer: str, source: str) -> str:
 
 
 def backend_error_payload(query: str) -> Dict[str, Any]:
-    answer = "Sorry, I couldn't generate a response right now. Please try again shortly."
-    return {"answer": label_answer_source(answer, "Backend"), "related_questions": []}
+    answer = SYSTEM_BUSY_MESSAGE
+    return {
+        "status": "busy",
+        "response": answer,
+        "answer": label_answer_source(answer, "Backend"),
+        "usage": {"prompt_tokens": 0, "completion_tokens": 0},
+        "related_questions": [],
+    }
 
 
 def is_daily_gemini_quota_error(error: Exception) -> bool:
@@ -498,12 +581,16 @@ def resolve_indirect_intent(query: str) -> Optional[str]:
 UNKNOWN_DOMAIN_DIRECT_LLM_PARSE = "UNKNOWN_DOMAIN_DIRECT_LLM_PARSE"
 FAQ_INDEX: List[Tuple[List[str], str]] = []
 ASTRO_RULE_INDEX: List[Tuple[str, List[str], str]] = []
+QA_DATABASE: Dict[str, str] = {}
+QA_STRUCTURED_DATABASE: Dict[str, dict] = {}
 
 def load_qa_database():
-    """Index greeting FAQs separately and retain all database rules for retrieval."""
-    global FAQ_INDEX, ASTRO_RULE_INDEX
+    """Index greeting FAQs separately and retain all database rules and templates for retrieval."""
+    global FAQ_INDEX, ASTRO_RULE_INDEX, QA_DATABASE, QA_STRUCTURED_DATABASE
     FAQ_INDEX.clear()
     ASTRO_RULE_INDEX.clear()
+    QA_DATABASE.clear()
+    QA_STRUCTURED_DATABASE.clear()
 
     possible_paths = [
         os.path.join(BASE_DIR, "qa_database.json"),
@@ -517,9 +604,34 @@ def load_qa_database():
                     qa_db = json.load(f)
                     for key, entries in qa_db.items():
                         if isinstance(entries, str):
+                            QA_DATABASE[key.lower().strip()] = entries
                             keywords = [key.lower().strip()]
                             ASTRO_RULE_INDEX.append(("general_and_basics", keywords, entries))
                             FAQ_INDEX.append((keywords, entries))
+                        elif isinstance(entries, dict):
+                            clean_k = key.lower().strip()
+                            QA_STRUCTURED_DATABASE[clean_k] = entries
+                            for kw in entries.get("keywords", []):
+                                clean_kw = str(kw).lower().strip()
+                                if clean_kw:
+                                    QA_STRUCTURED_DATABASE[clean_kw] = entries
+                            concept = entries.get("concept", key.title())
+                            analogy = entries.get("simple_analogy", entries.get("analogy", ""))
+                            meaning = entries.get("core_meaning", entries.get("core_analysis", ""))
+                            impact = entries.get("what_it_means", entries.get("dasha_influence", ""))
+                            takeaway = entries.get("actionable_takeaway", entries.get("recommendation", ""))
+                            parts = [f"{concept}:", analogy, meaning]
+                            if impact:
+                                parts.append(f"What it means: {impact}")
+                            if takeaway:
+                                parts.append(f"Actionable takeaway: {takeaway}")
+                            formatted_answer = " ".join([p for p in parts if p]).strip()
+                            QA_DATABASE[clean_k] = formatted_answer
+                            keywords = [clean_k] + [str(kw).lower().strip() for kw in entries.get("keywords", []) if kw]
+                            for kw in keywords:
+                                QA_DATABASE[kw] = formatted_answer
+                            ASTRO_RULE_INDEX.append(("general_and_basics", keywords, formatted_answer))
+                            FAQ_INDEX.append((keywords, formatted_answer))
                         elif isinstance(entries, list):
                             for item in entries:
                                 if not isinstance(item, dict):
@@ -527,12 +639,14 @@ def load_qa_database():
                                 keywords = [str(value).lower().strip() for value in item.get("keywords", []) if value]
                                 guidance = item.get("rule") or item.get("answer", "")
                                 if keywords and guidance:
+                                    for kw in keywords:
+                                        QA_DATABASE[kw] = guidance
                                     ASTRO_RULE_INDEX.append((key, keywords, guidance))
                                 if key == "general_and_basics" and keywords and item.get("answer"):
                                     FAQ_INDEX.append((keywords, item["answer"]))
                 print(
                     f"[OK] Q&A database loaded from {p} "
-                    f"({len(FAQ_INDEX)} FAQ items, {len(ASTRO_RULE_INDEX)} rule items indexed)."
+                    f"({len(QA_DATABASE)} QA entries, {len(FAQ_INDEX)} FAQ items, {len(ASTRO_RULE_INDEX)} rule items indexed)."
                 )
                 return
             except Exception as e:
@@ -704,76 +818,286 @@ def fallback_related_questions(query_domains: List[str], query: str) -> List[str
     return questions.get(domain, questions["general"])
 
 
+# Domain banks -- 20 questions per domain across 12 domains.
+# generate_follow_up_questions() picks 3 per response, excluding the current question.
+DOMAIN_BANKS: Dict[str, List[str]] = {
+    "career": [
+        "When is the right time for job change?",
+        "Which gemstones suit my career?",
+        "Does my chart favor business or a job?",
+        "Will I get a promotion or appraisal this year?",
+        "Which career field brings highest financial success?",
+        "How does my 10th house karma bhava affect my career?",
+        "Are there yogas for a government job in my chart?",
+        "How does my current dasha influence my career growth?",
+        "What workplace challenges should I prepare for?",
+        "Which planet is the primary career ruler in my chart?",
+        "What is the best time to start my own business?",
+        "How does my Sun sign influence my leadership style?",
+        "Will I ever work abroad or in a multinational company?",
+        "Which planetary dasha supports a breakthrough in my career?",
+        "How does Saturn transit affect my professional stability?",
+        "What skills should I develop based on my Mercury placement?",
+        "Is a career switch advisable for me in the next 6 months?",
+        "How does my Mars placement impact my drive and ambition?",
+        "Will my hard work be recognized and rewarded this year?",
+        "What astrological timing favors a salary negotiation?",
+    ],
+    "marriage": [
+        "What will my partner nature be like?",
+        "Any remedies for marriage delay?",
+        "When will I get married according to my dasha?",
+        "How is my 7th house and relationship compatibility?",
+        "Are there chances for love marriage or arranged marriage?",
+        "How does Mangal Dosha or Mars influence my relationships?",
+        "What role does the Navamsha D9 chart play in my marriage?",
+        "Which planets bring harmony to my married life?",
+        "How can I resolve relationship conflicts according to astrology?",
+        "What are the key compatibility factors in Kundali Milan?",
+        "What does my Venus placement say about love and romance?",
+        "How does my 7th lord position impact relationship longevity?",
+        "Will I have a happy and peaceful married life?",
+        "What remedies strengthen emotional bonding with my partner?",
+        "How does Rahu in the 7th house affect my marriage prospects?",
+        "What is the ideal partner profile for my Lagna?",
+        "How do transits of Jupiter influence my marriage timing?",
+        "Can past-life karma affect my current relationship patterns?",
+        "What chart combinations indicate a strong and lasting bond?",
+        "How should I handle recurring arguments in my relationship?",
+    ],
+    "wealth": [
+        "When is the best period for financial growth?",
+        "Which gemstones or remedies boost wealth flow?",
+        "Does my chart support stock market or property investment?",
+        "How can I clear debt and improve my savings?",
+        "Will I achieve long-term financial independence?",
+        "What does my 2nd house of accumulated wealth reveal?",
+        "How does my 11th house of financial gains operate?",
+        "Are there strong Dhan Yogas or Lakshmi Yogas in my chart?",
+        "How does Jupiter influence my wealth and prosperity?",
+        "What unexpected financial windfalls or risks are indicated?",
+        "Is this a good period to start investing in mutual funds?",
+        "How does Saturn in my chart impact long-term wealth accumulation?",
+        "What planetary combinations indicate sudden wealth or lottery luck?",
+        "How can I attract abundance and reduce financial stress?",
+        "What is the best approach: active income or passive income for my chart?",
+        "Does my chart indicate inheritance or ancestral wealth?",
+        "How do I know if a business partnership will be financially beneficial?",
+        "What astrological remedies reduce financial losses and debts?",
+        "Which sectors or industries are most aligned with my wealth house?",
+        "How does Venus placement shape my spending habits and luxuries?",
+    ],
+    "health": [
+        "Which planetary period supports my health recovery?",
+        "How does my Moon sign respond to stress?",
+        "What remedies strengthen vitality and mental peace?",
+        "What wellness habits best suit my Lagna?",
+        "What does my 6th house indicate about immunity and illness?",
+        "How can I balance my emotional wellbeing and reduce anxiety?",
+        "Which planetary transit affects my physical energy right now?",
+        "What daily Ayurvedic and spiritual practices benefit my chart?",
+        "How does my 8th house influence longevity and vitality?",
+        "What astrological precautions should I take for chronic health issues?",
+        "Which body parts or organs are astrologically sensitive for my Lagna?",
+        "How does Mars placement influence my energy levels and immunity?",
+        "What diet or lifestyle changes align with my chart for better health?",
+        "Is this a high-risk period for illness or accidents in my chart?",
+        "How does my Ketu placement relate to mysterious health issues?",
+        "What does Sade Sati mean for my mental health and emotional stability?",
+        "How can I use meditation or pranayama aligned with my Moon sign?",
+        "Which gemstone or crystal supports physical healing for my chart?",
+        "What astrological indicators point to good or poor sleep quality?",
+        "How does my Ascendant lord strength affect my overall constitution?",
+    ],
+    "travel": [
+        "When is the right time for foreign travel?",
+        "Are foreign settlement chances strong in my chart?",
+        "Will settling in a foreign land benefit my career?",
+        "What planetary timing is favorable for visa approvals?",
+        "How does my 12th house affect overseas residence and journeys?",
+        "How does my 9th house of long journeys support global opportunities?",
+        "What role does Rahu play in foreign travel for my chart?",
+        "Will I return to my homeland or permanently settle abroad?",
+        "What remedies remove obstacles in foreign visa processing?",
+        "Which directional relocations are most auspicious for me?",
+        "Which country or continent is most favorable for my chart?",
+        "How does my Jupiter placement affect long-distance travel luck?",
+        "Is a short domestic trip astrologically favorable this month?",
+        "What planetary combinations support permanent overseas settlement?",
+        "How does Ketu in the 12th house affect spiritual or international travel?",
+        "Will I face challenges or smooth sailing during an upcoming trip?",
+        "What are auspicious days or muhurtas for beginning a journey?",
+        "How does moving to a new city affect my chart and destiny?",
+        "Can astrology predict immigration success and timeline?",
+        "What precautions should I take before traveling during Mercury retrograde?",
+    ],
+    "education": [
+        "Which higher education field suits my chart?",
+        "How can I improve concentration for exams?",
+        "What timing is favorable for competitive exams?",
+        "Are there chances for study or scholarship abroad?",
+        "How does my 4th house influence foundational education?",
+        "What does my 5th house say about intellect and creative learning?",
+        "How can Mercury and Jupiter enhance my academic memory?",
+        "Which field of specialization aligns best with my planets?",
+        "What remedies boost confidence before crucial exams?",
+        "Will I achieve honors and recognition in my academic career?",
+        "Which subjects or streams align best with my Mercury placement?",
+        "How does Jupiter transit impact my academic success this year?",
+        "Is pursuing a postgraduate degree or certification favorable now?",
+        "What are the chart indicators for a career in research or academia?",
+        "How does my 3rd house support writing and communication skills?",
+        "What Vedic remedies help overcome exam fear and performance anxiety?",
+        "Will I get admission to a prestigious institution I am aiming for?",
+        "How does my Ketu placement influence intuitive learning abilities?",
+        "What is the best study schedule aligned with my Lagna energy peaks?",
+        "Which language or creative skill would come most naturally to my chart?",
+    ],
+    "children": [
+        "What timing looks supportive for family planning?",
+        "How does my 5th house influence family and children?",
+        "What planetary strengths support family harmony?",
+        "What remedies bring domestic peace and blessings?",
+        "How does Jupiter Putrakaraka bless parenthood in my chart?",
+        "What astrological remedies overcome delays in childbirth?",
+        "How will my children temperament and bond with me be?",
+        "What does my 4th house reveal about maternal peace and home life?",
+        "How can planetary harmony be maintained between family members?",
+        "What prayers or mantras protect children growth and health?",
+        "Is there a Putra Dosha or obstacle to parenthood in my chart?",
+        "What astrological indicators suggest a large or small family?",
+        "How does my Moon sign affect my parenting style and emotional bond?",
+        "When is the most favorable time to conceive according to my dasha?",
+        "What can my chart reveal about my relationship with my parents?",
+        "Which planetary blessings ensure happiness and health for my children?",
+        "How does Saturn in the 5th house affect parenthood and family karma?",
+        "What rituals support a safe and healthy pregnancy astrologically?",
+        "How do I handle generational differences with my parents or children?",
+        "Which deity or mantra protects my family from negative energies?",
+    ],
+    "chart": [
+        "What is my current Mahadasha and Antardasha?",
+        "Tell me about my Sade Sati timing and remedies",
+        "What does my Lagna and 1st house reveal?",
+        "Which planets are most benefic in my birth chart?",
+        "What are the strengths of my Sun sign and Moon sign?",
+        "Where is Jupiter placed in my chart and what does it indicate?",
+        "How do retrograde planets function in my birth chart?",
+        "What karmic lessons do Rahu and Ketu highlight for me?",
+        "How does my Navamsha D9 divisional chart compare to Rashi?",
+        "What are the major yogas formed in my birth chart?",
+        "What is the significance of my Atmakaraka planet?",
+        "How does my Darakaraka planet describe my ideal partner?",
+        "What does my Amatyakaraka planet reveal about my career path?",
+        "How does Parivartana Yoga in my chart change planetary outcomes?",
+        "What does a strong or weak Lagna lord signify in my chart?",
+        "How does my Panchamsha D5 divisional chart reveal spiritual merit?",
+        "What are the effects of Kala Sarpa Yoga if present in my chart?",
+        "How does my rising Nakshatra influence my personality and fate?",
+        "What does my chart reveal about past life debts or karmic patterns?",
+        "How does the strength of my Ascendant affect life outcomes overall?",
+    ],
+    "remedies": [
+        "Which gemstones suit my Lagna and Moon sign?",
+        "Which mantras strengthen my benefic planets?",
+        "What daily spiritual rituals align my chart?",
+        "Which charity or donation activates Jupiter grace?",
+        "How should I pacify Saturn during Sade Sati?",
+        "What remedies pacify Rahu and Ketu doshas?",
+        "What are the exact rules for energizing and wearing gemstones?",
+        "How does chanting Maha Mrityunjaya Mantra protect vitality?",
+        "What rituals for Pitra Dosha or ancestral peace should I perform?",
+        "Which weekday fasting or vrat strengthens my Lagna lord?",
+        "What is the most powerful mantra for my current dasha period?",
+        "How does Rudraksha wearing help align planetary energies?",
+        "What Navgraha puja should I perform for overall chart balance?",
+        "Which colors and metals are auspicious for my Ascendant?",
+        "How does lighting a ghee diya benefit my planetary placements?",
+        "What yantra should I keep at home for wealth and protection?",
+        "Can changing my name spelling astrologically improve my life?",
+        "What role does Surya Namaskar play in strengthening my Sun sign?",
+        "How does water offering to ancestors pacify Pitra Dosha?",
+        "Which auspicious muhurta should I use before starting something new?",
+    ],
+    "general": [
+        "Which career suits me best?",
+        "What does my 7th house say about marriage?",
+        "How are my wealth and finances looking?",
+        "What does my Lagna and Moon sign reveal?",
+        "What is my dominant life purpose according to my chart?",
+        "What are my greatest astrological strengths and hidden gifts?",
+        "Which planetary phase in my life brings the greatest turning point?",
+        "How can I balance spiritual growth with worldly duties?",
+        "What major lessons is my current dasha trying to teach me?",
+        "What simple daily mindset aligns with my cosmic blueprint?",
+        "What area of life needs the most attention in my chart right now?",
+        "How does my birth Nakshatra shape my overall destiny?",
+        "What is the most transformative period of my life astrologically?",
+        "Which planet is my strongest ally and how do I activate it?",
+        "What does my chart say about my overall luck and fortune this year?",
+        "How do I align my decisions with favorable planetary windows?",
+        "What is my soul deeper purpose according to Vedic astrology?",
+        "How can I overcome recurring obstacles or bad luck patterns?",
+        "What does my chart suggest about my social reputation and public image?",
+        "Which upcoming transit will most impact my life in the next year?",
+    ],
+    "spirituality": [
+        "What does my chart reveal about my spiritual path and growth?",
+        "Which dasha period is most conducive for deep meditation practice?",
+        "How does my 12th house of moksha and liberation influence my life?",
+        "What deity or Ishta Devata is aligned with my birth chart?",
+        "How does Ketu placement shape my spiritual detachment and wisdom?",
+        "What Vedic practices accelerate my spiritual progress?",
+        "Are there yoga or enlightenment combinations in my birth chart?",
+        "How does my Jupiter placement guide my philosophical worldview?",
+        "What does my chart say about past life spiritual karma?",
+        "Which pilgrimage or sacred place holds the highest energy for my chart?",
+        "What is the role of the 8th house in my spiritual transformation?",
+        "How do eclipses trigger spiritual breakthroughs in my life?",
+        "Which mantra practice best matches my Nakshatra deity?",
+        "Does my chart show tendencies toward renunciation or monastic life?",
+        "How does my rising sign influence my meditative strengths?",
+    ],
+    "property": [
+        "Is this a good time to buy a house or property?",
+        "What does my 4th house reveal about real estate success?",
+        "Which direction is most auspicious for my new home?",
+        "Will I own multiple properties in my lifetime?",
+        "How does Saturn placement affect property acquisition timing?",
+        "Are there planetary combinations for ancestral property disputes?",
+        "What remedies remove obstacles in property purchase or registration?",
+        "When is the best muhurta for signing a property agreement?",
+        "Will I benefit more from renting or owning a home astrologically?",
+        "How does my 12th house affect foreign property investment?",
+        "What does Jupiter transit mean for property gains this year?",
+        "Is this a favorable period to sell property for maximum profit?",
+        "How does Vastu combine with astrology for home buying decisions?",
+        "Which gemstone or yantra protects the home from negative energies?",
+        "What are the signs of a lucky property placement in my chart?",
+    ],
+    "personality": [
+        "What does my Lagna lord reveal about my core personality?",
+        "How does my Sun sign define my ego and sense of identity?",
+        "What does my Moon sign say about my emotional nature?",
+        "How does my Ascendant Nakshatra shape my physical appearance?",
+        "Which planet most dominates my decision-making style?",
+        "What hidden personality traits does my 12th house reveal?",
+        "How does my Mars placement shape my temper and assertiveness?",
+        "What communication style does my Mercury placement suggest?",
+        "How does Venus in my chart influence my aesthetic sense and values?",
+        "What does my dominant element say about me?",
+        "How does Saturn placement shape my sense of discipline and patience?",
+        "Which Nakshatra gives me my most unique and defining character trait?",
+        "How do retrograde planets create internalized personality patterns?",
+        "What are my astrological blind spots or shadow traits to be aware of?",
+        "How does my chart indicate introversion or extroversion tendencies?",
+    ],
+}
+
+
 def generate_follow_up_questions(query: str, answer: str = "", domain: Optional[str] = None) -> List[str]:
     """Generate 3-4 strictly domain-pure follow-up questions matching the detected domain."""
     q_norm = normalize_hinglish(query).lower()
-
-    # Domain banks where 100% of questions belong strictly to the respective domain
-    DOMAIN_BANKS: Dict[str, List[str]] = {
-        "career": [
-            "When is the right time for job change?",
-            "Which gemstones suit my career?",
-            "Does my chart favor business or a job?",
-            "Will I get a promotion or appraisal this year?",
-            "Which career field brings highest financial success?",
-        ],
-        "marriage": [
-            "What will my partner's nature be like?",
-            "Any remedies for marriage delay?",
-            "When will I get married according to my dasha?",
-            "How is my 7th house and relationship compatibility?",
-            "Are there chances for love marriage or arranged marriage?",
-        ],
-        "wealth": [
-            "When is the best period for financial growth?",
-            "Which gemstones or remedies boost wealth flow?",
-            "Does my chart support stock market or property investment?",
-            "How can I clear debt and improve my savings?",
-            "Will I achieve long-term financial independence?",
-        ],
-        "health": [
-            "Which planetary period supports my health recovery?",
-            "How does my Moon sign respond to stress?",
-            "What remedies strengthen vitality and mental peace?",
-            "What wellness habits best suit my Lagna?",
-        ],
-        "travel": [
-            "When is the right time for foreign travel?",
-            "Are foreign settlement chances strong in my chart?",
-            "Will settling in a foreign land benefit my career?",
-            "What planetary timing is favorable for visa approvals?",
-        ],
-        "education": [
-            "Which higher education field suits my chart?",
-            "How can I improve concentration for exams?",
-            "What timing is favorable for competitive exams?",
-            "Are there chances for study or scholarship abroad?",
-        ],
-        "children": [
-            "What timing looks supportive for family planning?",
-            "How does my 5th house influence family and children?",
-            "What planetary strengths support family harmony?",
-            "What remedies bring domestic peace and blessings?",
-        ],
-        "chart": [
-            "What is my current Mahadasha and Antardasha?",
-            "Tell me about my Sade Sati timing and remedies",
-            "What does my Lagna and 1st house reveal?",
-            "Which planets are most benefic in my birth chart?",
-        ],
-        "remedies": [
-            "Which gemstones suit my Lagna and Moon sign?",
-            "Which mantras strengthen my benefic planets?",
-            "What daily spiritual rituals align my chart?",
-            "Which charity or donation activates Jupiter's grace?",
-        ],
-        "general": [
-            "Which career suits me best?",
-            "What does my 7th house say about marriage?",
-            "How are my wealth and finances looking?",
-            "What does my Lagna and Moon sign reveal?",
-        ],
-    }
 
     # Resolve domain by priority: explicit argument > keyword scanning > indirect intent
     resolved = (domain or "").lower().strip()
@@ -859,10 +1183,21 @@ ZODIAC_SIGNS = [
 ]
 
 
+class UserChartProfile(BaseModel):
+    name: str = "Friend"
+    lagna: str = "Libra"
+    moon_sign: str = "Gemini"
+    sun_sign: str = "Cancer"
+    jupiter_house: str = "1st house"
+    current_dasha: str = "Rahu-Moon"
+
+
 class ChatRequest(BaseModel):
-    user_id: str
-    query: str
-    name: Optional[str] = "Guest"
+    user_query: str = ""
+    profile: UserChartProfile = UserChartProfile()
+    user_id: str = "default_user"
+    query: Optional[str] = None
+    name: Optional[str] = None
     age: Optional[int] = None
     gender: Optional[str] = None
     life_stage: Optional[str] = None
@@ -876,6 +1211,15 @@ class ChatRequest(BaseModel):
     latitude: float = 20.5937
     longitude: float = 78.9629
     timezone: float = 5.5
+    already_greeted: Optional[bool] = None
+
+    def model_post_init(self, __context: Any) -> None:
+        if not self.user_query and self.query:
+            self.user_query = self.query
+        elif not self.query and self.user_query:
+            self.query = self.user_query
+        if self.name and (not self.profile.name or self.profile.name == "Friend"):
+            self.profile.name = self.name
 
 
 class BirthDetailsRequest(BaseModel):
@@ -888,6 +1232,130 @@ class BirthDetailsRequest(BaseModel):
     latitude: float
     longitude: float
     timezone: float = 5.5
+
+
+def check_qa_database(
+    query: str,
+    profile: Optional[UserChartProfile] = None,
+    already_greeted: bool = False,
+    user_natal_context: Optional[Dict[str, Any]] = None,
+) -> Optional[str]:
+    """Search qa_database.json for a matching key/keyword and format with user profile.
+
+    Step 1 & 4 Ground-Truth Injection:
+    If matched against structured QA database entry, dynamically populates fields
+    with user_natal_context using format_local_qa_response.
+    """
+    if not query or (not QA_DATABASE and not QA_STRUCTURED_DATABASE):
+        return None
+
+    # Strict Length & Intent Guard for Local QA (< 10 words, no personal intents)
+    if should_bypass_local_qa(query):
+        return None
+
+    words = query.strip().split()
+    if len(words) >= 10:
+        return None
+
+    if profile is None:
+        profile = UserChartProfile()
+
+    # Pre-calculate user_natal_context if not passed
+    if not user_natal_context:
+        asc = getattr(profile, "ascendant", None) or getattr(profile, "lagna", "Libra")
+        moon = getattr(profile, "rashi", None) or getattr(profile, "moon_sign", "Gemini")
+        dasha = getattr(profile, "dasha", None) or getattr(profile, "current_dasha", "Rahu-Mars")
+        user_natal_context = {
+            "ascendant": asc,
+            "moon_sign": moon,
+            "active_dasha": str(dasha),
+            "house_rulerships": calculate_house_rulerships(asc),
+        }
+
+    # a. Clean and normalize the query (lowercase, remove punctuation/quotes)
+    cleaned_query = re.sub(r'[\'\".,?!;:()\[\]{}_+\-=/\\<>]', ' ', query.lower())
+    cleaned_query = " ".join(cleaned_query.split())
+    if not cleaned_query:
+        return None
+
+    # Check QA_STRUCTURED_DATABASE first for exact or keyword boundary matches
+    sorted_struct = sorted(QA_STRUCTURED_DATABASE.items(), key=lambda item: len(item[0]), reverse=True)
+    for key, qa_dict in sorted_struct:
+        clean_key = re.sub(r'[\'\".,?!;:()\[\]{}_+\-=/\\<>]', ' ', key.lower()).strip()
+        clean_key = " ".join(clean_key.split())
+        if clean_key and cleaned_query == clean_key:
+            return format_local_qa_response(qa_dict, user_natal_context)
+        if clean_key and len(clean_key) >= 2:
+            pattern = rf'^\s*(?:what\s+is\s+(?:a\s+|an\s+)?|define\s+|definition\s+of\s+|tell\s+me\s+about\s+|explain\s+)?{re.escape(clean_key)}\s*$'
+            if re.match(pattern, cleaned_query):
+                return format_local_qa_response(qa_dict, user_natal_context)
+
+    # b. Match against keys/keywords in qa_database.json
+    matched_template: Optional[str] = None
+    matched_key: str = ""
+
+    # Prioritize longer multi-word keys (e.g., 'current dasha' before 'dasha')
+    sorted_entries = sorted(QA_DATABASE.items(), key=lambda item: len(item[0]), reverse=True)
+
+    # 1. Exact match check
+    for key, template in sorted_entries:
+        clean_key = re.sub(r'[\'\".,?!;:()\[\]{}_+\-=/\\<>]', ' ', key.lower()).strip()
+        clean_key = " ".join(clean_key.split())
+        if clean_key and cleaned_query == clean_key:
+            matched_template = template
+            matched_key = clean_key
+            break
+
+    # 2. Exact Keyword Boundary Matching: only match exact short question structures
+    if not matched_template:
+        for key, template in sorted_entries:
+            clean_key = re.sub(r'[\'\".,?!;:()\[\]{}_+\-=/\\<>]', ' ', key.lower()).strip()
+            clean_key = " ".join(clean_key.split())
+            if not clean_key or len(clean_key) < 2:
+                continue
+            pattern = rf'^\s*(?:what\s+is\s+(?:a\s+|an\s+)?|define\s+|definition\s+of\s+|tell\s+me\s+about\s+|explain\s+)?{re.escape(clean_key)}\s*$'
+            if re.match(pattern, cleaned_query):
+                matched_template = template
+                matched_key = clean_key
+                break
+
+    if not matched_template:
+        return None
+
+    params = profile.model_dump()
+    # Backward compatibility aliases
+    if "ascendant" not in params and "lagna" in params:
+        params["ascendant"] = params["lagna"]
+    if "lagna" not in params and "ascendant" in params:
+        params["lagna"] = params["ascendant"]
+    if "moon" not in params and "moon_sign" in params:
+        params["moon"] = params["moon_sign"]
+    if "sun" not in params and "sun_sign" in params:
+        params["sun"] = params["sun_sign"]
+    if "dasha" not in params and "current_dasha" in params:
+        params["dasha"] = params["current_dasha"]
+    if "jupiter" not in params and "jupiter_house" in params:
+        params["jupiter"] = params["jupiter_house"]
+
+    # 3. Exception Handling: Safely handle missing template keys using KeyError
+    try:
+        formatted_text = matched_template.format(**params)
+    except KeyError as exc:
+        logger.warning("Missing template key %s in profile during formatting; applying safe fallback", exc)
+        class SafeDict(dict):
+            def __missing__(self, k):
+                return f"{{{k}}}"
+        formatted_text = matched_template.format_map(SafeDict(**params))
+    except Exception as exc:
+        logger.warning("Unexpected error formatting template: %s", exc)
+        formatted_text = matched_template
+
+    # Strip repeated greetings if already greeted and not a greeting query
+    is_greeting_key = matched_key in {"hello", "hi", "namaste", "hey", "greetings"}
+    if already_greeted and not is_greeting_key:
+        formatted_text = strip_greeting(formatted_text)
+
+    return formatted_text
 
 
 # ------------------------------------------------------------------
@@ -912,6 +1380,13 @@ ASTRO_INQUIRY_TERMS = {
 
 def match_faq_only(user_query: str) -> Optional[str]:
     """Return a local FAQ from the 85+ item database for exact or indexed factual phrases, saving LLM tokens."""
+    if not user_query:
+        return None
+
+    # Strict Length & Intent Guard: Never match FAQ if query contains personal intent or >= 10 words
+    if should_bypass_local_qa(user_query):
+        return None
+
     clean_norm = re.sub(r"[^\w\s'-]", " ", normalize_hinglish(user_query).casefold()).strip()
     clean_raw = re.sub(r"[^\w\s'-]", " ", user_query.casefold()).strip()
 
@@ -963,11 +1438,27 @@ def format_personalized_answer(
     hinglish: bool = False,
     query: str = "",
     astro_features: Optional[List[int]] = None,
+    current_dasha: str = "Rahu-Moon",
+    jupiter_house: str = "1st house",
 ) -> str:
     """Personalize every FAQ answer using user's name, calculated signs, and chart placements."""
+    params = {
+        "ascendant": asc,
+        "lagna": asc,
+        "sun_sign": sun,
+        "moon_sign": moon,
+        "current_dasha": current_dasha,
+        "jupiter_house": jupiter_house,
+        "name": name or "Friend",
+    }
     try:
-        formatted = template.format(ascendant=asc, sun_sign=sun, moon_sign=moon)
-    except (KeyError, IndexError, ValueError):
+        formatted = template.format(**params)
+    except KeyError:
+        class SafeDict(dict):
+            def __missing__(self, k):
+                return f"{{{k}}}"
+        formatted = template.format_map(SafeDict(**params))
+    except (IndexError, ValueError):
         formatted = template
 
     # Inject calculated chart signs if placeholders or defaults are in text
@@ -977,6 +1468,11 @@ def format_personalized_answer(
     if "Lagna" in formatted or "Ascendant" in formatted:
         formatted = re.sub(r"Lagna \(Ascendant\) \w+(?: \([^)]+\))? hai", f"Lagna (Ascendant) {asc} hai", formatted)
         formatted = re.sub(r"Ascendant is in \w+", f"Ascendant is in {asc}", formatted)
+    if "Sun Sign" in formatted or "Sun sign" in formatted:
+        formatted = re.sub(r"Sun Sign is in \w+", f"Sun Sign is in {sun}", formatted)
+        formatted = re.sub(r"Sun sign in \w+", f"Sun sign in {sun}", formatted)
+    if "dasha" in formatted.lower() or "mahadasha" in formatted.lower():
+        formatted = re.sub(r"currently running the [A-Za-z0-9\-]+ dasha", f"currently running the {current_dasha} dasha", formatted)
 
     clean_name = name.strip() if name and name.strip().lower() not in ("guest", "there", "user", "anonymous") else ""
     asc_idx = ZODIAC_SIGNS.index(asc) if asc in ZODIAC_SIGNS else 0
@@ -1175,120 +1671,47 @@ def format_personalized_answer(
 # ------------------------------------------------------------------
 def build_gemini_prompt(
     request: ChatRequest,
-    asc_sign: str, sun_sign: str, moon_sign: str,
+    asc_sign: str,
+    sun_sign: str,
+    moon_sign: str,
     astro_features: list,
     predicted_domain: str,
     planet_data: dict,
     dasha_data: dict,
+    current_dasha: Optional[str] = None,
     chat_history: Optional[List[Dict[str, Any]]] = None,
     session_profile: Optional[Dict[str, Any]] = None,
     query_domains: Optional[List[str]] = None,
     retrieved_rule: Optional[str] = None,
     normalized_interpretation: Optional[str] = None,
+    user_natal_context: Optional[Dict[str, Any]] = None,
 ) -> str:
-    """Build a rich, user-specific system instruction for Gemini.
-    Supports English and Hinglish queries with deep personalization.
     """
+    Step 1 & 2: Ground-Truth Injection & Strict System Prompt Guardrails
+    """
+    # Extract dasha compactly if available
+    dasha_name = current_dasha or "Rahu-Mars"
+    if not current_dasha and isinstance(dasha_data, dict):
+        dasha_name = extract_current_dasha(dasha_data) or "Rahu-Mars"
 
-    # Normalize Hinglish query for domain understanding
-    normalized_query = normalized_interpretation or normalize_hinglish(request.query)
-
-    if retrieved_rule and retrieved_rule != UNKNOWN_DOMAIN_DIRECT_LLM_PARSE:
-        try:
-            retrieved_rule = retrieved_rule.format(
-                ascendant=asc_sign,
-                sun_sign=sun_sign,
-                moon_sign=moon_sign,
-            )
-        except (KeyError, ValueError):
-            pass
-
-    resolved_domains = query_domains or [predicted_domain]
-    domain_context = ", ".join(resolved_domains)
-    api_output = planet_data.get("output", {}) if isinstance(planet_data, dict) else {}
-    planet_details = []
-    if isinstance(api_output, dict):
-        for planet_name in ("Ascendant", "Sun", "Moon", "Mars", "Mercury", "Jupiter", "Venus", "Saturn", "Rahu", "Ketu"):
-            details = api_output.get(planet_name)
-            if not isinstance(details, dict):
-                continue
-            placement = details.get("zodiac_sign_name", "")
-            if details.get("house_number") is not None:
-                placement += f", house {details['house_number']}"
-            if details.get("nakshatra_name"):
-                placement += f", nakshatra {details['nakshatra_name']}"
-            if placement:
-                planet_details.append(f"{planet_name}: {placement}")
-    planet_summary = "; ".join(planet_details) or "No additional planet details returned."
-    dasha_summary = json.dumps(dasha_data, ensure_ascii=False)[:2500] if dasha_data else "Not requested for this query."
-    birth_seconds = round((request.birth_hour % 24) * 60 * 60)
-    birth_hour, remaining_seconds = divmod(birth_seconds, 60 * 60)
-    birth_minute, birth_second = divmod(remaining_seconds, 60)
-    birth_context = (
-        f"{request.birth_year:04d}-{request.birth_month:02d}-{request.birth_day:02d} "
-        f"{birth_hour:02d}:{birth_minute:02d}:{birth_second:02d}; "
-        f"latitude {request.latitude}, longitude {request.longitude}, timezone UTC{request.timezone:+g}"
-    )
-    recent_history = json.dumps((chat_history or [])[-8:], ensure_ascii=False)[:3000]
-
-    if retrieved_rule == UNKNOWN_DOMAIN_DIRECT_LLM_PARSE:
-        domain_resolution_context = (
-            "NO PREDEFINED DOMAIN FOUND IN BACKEND DATABASE. Use your core LLM reasoning to autonomously parse the user query's intent "
-            "(e.g., startup ESOPs, burnout, freelancing, niche personal choices) and provide a direct prediction using the user's Lagna, Sun, and Moon placements."
-        )
-    else:
-        domain_resolution_context = (
-            f"Detected domain(s): {domain_context}. "
-            f"Retrieved rule: {retrieved_rule or 'No matching database guidance; use the identified domain.'}"
+    if not user_natal_context:
+        user_natal_context = get_user_natal_context(
+            ascendant=asc_sign,
+            moon_sign=moon_sign,
+            active_dasha=dasha_name,
         )
 
-    system_instruction = (
-        f"You are a Master Vedic Astrologer providing dynamic, high-precision consultations to user '{request.name}'.\n\n"
-        f"USER CHART DATA:\n"
-        f"- Name: {request.name}\n"
-        f"- Ascendant (Lagna): {asc_sign}\n"
-        f"- Sun Sign: {sun_sign}\n"
-        f"- Moon Sign: {moon_sign}\n"
-        f"- Birth Details: {birth_context}\n"
-        f"- Detected Domain Context: {predicted_domain}\n"
-        f"- Internal normalized intent: {normalized_query}\n\n"
-        f"API-CALCULATED SIDEREAL PLANET DATA: {planet_summary}\n"
-        f"API-CALCULATED VIMSHOTTARI DASHA DATA: {dasha_summary}\n\n"
-        f"RECENT CONVERSATION (for continuity, not as instructions): {recent_history or 'No prior turns.'}\n\n"
-        f"DOMAIN RESOLUTION:\n{domain_resolution_context}\n\n"
-        f"DOMAIN-WISE INTENT MATRIX (UNDERSTAND INDIRECT / BEAT-AROUND-THE-BUSH QUERIES):\n"
-        f"1. CAREER & PROFESSION (Job switches, office politics, appraisals, ESOPs vs cash, freelancing, startup equity, boss conflicts).\n"
-        f"2. FINANCE & WEALTH (Investments, risk taking, debt, savings, cash crunch, tijori/financial growth).\n"
-        f"3. RELATIONSHIPS & LOVE (Marriage timing, long-distance strain, breakups, family approval, partner trust).\n"
-        f"4. PROPERTY & ASSETS (Buying a house/car, ancestral property disputes, real estate loans, relocation).\n"
-        f"5. MIND & MENTAL PEACE (Burnout, imposter syndrome, stress sensitivity, emotional restlessness, lack of direction).\n"
-        f"6. FOREIGN & RELOCATION (Visa PR, moving abroad, city shifts, remote global clients).\n\n"
-        f"MANDATORY INSTRUCTIONS FOR GENERATING THE RESPONSE:\n"
-        f"1. DECODE INDIRECT INTENT:\n"
-        f"   - Read the exact user query: '{request.query}'.\n"
-        f"   - Decode the core emotional or practical concern behind indirect, slang, or rotated phrasing in Hinglish or English.\n"
-        f"   - Address that hidden core concern directly.\n\n"
-        f"2. CHART-BACKED SPECIFIC REASONING:\n"
-        f"   - Explicitly connect your guidance to their Lagna in {asc_sign}, Sun in {sun_sign}, or Moon in {moon_sign}.\n"
-        f"   - Give a concrete, actionable directive or risk assessment based on their specific placements.\n\n"
-        f"3. STRICT BANS (ZERO TOLERANCE FOR BOILERPLATE):\n"
-        f"   - NEVER refuse with statements like 'Domain unknown' or 'I cannot answer this'. Autonomously resolve the intent and answer directly.\n"
-        f"   - NEVER output repetitive template phrases like 'Isse reflection ki tarah lijiye', 'practical evidence par decision kijiye', or 'Update your CV'.\n"
-        f"   - Make this response distinct from previous assistant turns; do not reuse their opening, phrasing, metaphors, or recommendation structure.\n"
-        f"   - NEVER ask the user to simplify or rephrase their question.\n"
-        f"   - For stress/burnout, focus on emotional resilience and Moon sign traits—DO NOT output clinical/medical disclaimers.\n\n"
-        f"4. DYNAMIC LANGUAGE & FORMAT:\n"
-        f"   - Reply in natural Hinglish if the query is in Hinglish.\n"
-        f"   - Reply in professional English if the query is in English.\n"
-        f"   - Provide complete, direct answers in 3 to 4 sentences. Do not cut off mid-thought. Ground the answer in the user's actual chart placements shown above, including Aquarius Lagna or Moon when those placements apply.\n"
-        f"   - Use natural English or Hinglish as appropriate, and do not add repetitive closing boilerplate. Keep the answer to 40 to 60 words.\n"
-        f"   - NO greetings ('Hello', 'Dear') and NO robotic intros ('Based on your chart'). Jump straight into the core prediction.\n"
-        f"5. STREAMED ANSWER FORMAT:\n"
-        f"   - Return only the 3-4 sentence consultation as plain text.\n"
-        f"   - Do not return JSON, Markdown fences, headings, or follow-up questions.\n"
-        f"   - Make each response distinct and context-aware, using the current query and chart data."
+    return build_system_prompt(
+        user_profile={
+            "lagna": asc_sign,
+            "sun_sign": sun_sign,
+            "moon_sign": moon_sign,
+            "current_dasha": dasha_name,
+        },
+        session_profile=session_profile,
+        user_natal_context=user_natal_context,
     )
-    return system_instruction
+
 
 
 def _generate_legacy_fallback_prediction(
@@ -2170,14 +2593,142 @@ def get_chart_from_api(req: BirthDetailsRequest) -> Tuple[List[int], Dict[str, A
     return list(features), api_response
 
 
+_API_DASHA_CACHE: Dict[
+    Tuple[int, int, int, int, int, int, float, float, float],
+    Tuple[float, Dict[str, Any]],
+] = {}
+
+DASHA_LORDS = ["Ketu", "Venus", "Sun", "Moon", "Mars", "Rahu", "Jupiter", "Saturn", "Mercury"]
+DASHA_YEARS = {"Ketu": 7, "Venus": 20, "Sun": 6, "Moon": 10, "Mars": 7, "Rahu": 18, "Jupiter": 16, "Saturn": 19, "Mercury": 17}
+
+
 def fetch_dasha_details_external(req: BirthDetailsRequest) -> Dict[str, Any]:
+    cache_key = (
+        req.year, req.month, req.day, req.hour, req.minute, req.second,
+        req.latitude, req.longitude, req.timezone,
+    )
+    cached = _API_DASHA_CACHE.get(cache_key)
+    if cached and cached[0] > time.monotonic():
+        return cached[1]
+
     data = _post_astrology_api("vimsottari/maha-dasas-and-antar-dasas", req)
     if isinstance(data.get("output"), str):
         try:
             data["output"] = json.loads(data["output"])
         except json.JSONDecodeError:
             pass
+
+    if len(_API_DASHA_CACHE) >= 512:
+        now = time.monotonic()
+        for key, (expires_at, _) in list(_API_DASHA_CACHE.items()):
+            if expires_at <= now:
+                _API_DASHA_CACHE.pop(key, None)
+        if len(_API_DASHA_CACHE) >= 512:
+            _API_DASHA_CACHE.clear()
+    _API_DASHA_CACHE[cache_key] = (time.monotonic() + 24 * 60 * 60, data)
     return data
+
+
+def extract_current_dasha(dasha_data: dict) -> str:
+    """Extract current Mahadasha-Antardasha from FreeAstrologyAPI output structure."""
+    if not isinstance(dasha_data, dict):
+        return ""
+    output = dasha_data.get("output")
+    if isinstance(output, str):
+        try:
+            output = json.loads(output)
+        except Exception:
+            pass
+    if not isinstance(output, dict):
+        return ""
+
+    if output.get("current_dasha"):
+        return str(output["current_dasha"])
+
+    now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    for major, antars in output.items():
+        if isinstance(antars, dict):
+            for minor, times in antars.items():
+                if isinstance(times, dict):
+                    st = times.get("start_time", "")
+                    et = times.get("end_time", "")
+                    if st and et and st <= now_str <= et:
+                        return f"{major}-{minor}"
+
+    today_str = datetime.date.today().isoformat()
+    for major, antars in output.items():
+        if isinstance(antars, dict):
+            for minor, times in antars.items():
+                if isinstance(times, dict):
+                    st = times.get("start_time", "")[:10]
+                    et = times.get("end_time", "")[:10]
+                    if st and et and st <= today_str <= et:
+                        return f"{major}-{minor}"
+    return ""
+
+
+def compute_vimshottari_dasha_local(
+    year: int, month: int, day: int, hour: float, timezone: float
+) -> str:
+    """Accurately calculates current Vimshottari Mahadasha-Antardasha using Swiss Ephemeris Lahiri Moon longitude."""
+    try:
+        import swisseph as swe
+        swe.set_sid_mode(swe.SIDM_LAHIRI)
+        ut_hour = float(hour) - float(timezone)
+        jd_birth = swe.julday(int(year), int(month), int(day), ut_hour)
+        res = swe.calc_ut(jd_birth, swe.MOON, swe.FLG_SIDEREAL)
+        moon_lon = res[0][0] if isinstance(res[0], (list, tuple)) else res[0]
+
+        nak_span = 360.0 / 27.0
+        nak_idx = int(moon_lon / nak_span) % 27
+        fraction_remaining = 1.0 - ((moon_lon % nak_span) / nak_span)
+
+        lord_idx = nak_idx % 9
+        first_lord = DASHA_LORDS[lord_idx]
+        first_duration = fraction_remaining * DASHA_YEARS[first_lord]
+
+        now = datetime.datetime.now()
+        birth_dt = datetime.datetime(int(year), int(month), int(day)) + datetime.timedelta(hours=float(hour))
+        age_days = (now - birth_dt).total_seconds() / 86400.0
+        age_years = max(0.0, age_days / 365.2425)
+
+        if age_years < first_duration:
+            curr_maha = first_lord
+            maha_elapsed = age_years
+        else:
+            rem_years = age_years - first_duration
+            idx = (lord_idx + 1) % 9
+            while rem_years >= DASHA_YEARS[DASHA_LORDS[idx]]:
+                rem_years -= DASHA_YEARS[DASHA_LORDS[idx]]
+                idx = (idx + 1) % 9
+            curr_maha = DASHA_LORDS[idx]
+            maha_elapsed = rem_years
+
+        antar_idx = DASHA_LORDS.index(curr_maha)
+        curr_antar = curr_maha
+        acc = 0.0
+        for i in range(9):
+            a_lord = DASHA_LORDS[(antar_idx + i) % 9]
+            sub_duration = (DASHA_YEARS[curr_maha] * DASHA_YEARS[a_lord]) / 120.0
+            if acc + sub_duration > maha_elapsed:
+                curr_antar = a_lord
+                break
+            acc += sub_duration
+
+        return f"{curr_maha}-{curr_antar}"
+    except Exception as exc:
+        logger.warning("Local Vimshottari calculation failed: %s", exc)
+        return "Rahu-Moon"
+
+
+def get_ordinal_house(house_num: int) -> str:
+    """Format house number as '1st house', '2nd house', '3rd house', etc."""
+    n = ((house_num - 1) % 12) + 1
+    if 11 <= (n % 100) <= 13:
+        suffix = "th"
+    else:
+        suffix = {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+    return f"{n}{suffix} house"
 
 
 # --- Routes ---
@@ -2194,11 +2745,22 @@ def read_root():
 async def _handle_chat_response(request: ChatRequest):
     t_start = time.perf_counter()
 
+    current_birth_signature = (
+        request.birth_year,
+        request.birth_month,
+        request.birth_day,
+        round(float(request.birth_hour), 4),
+        round(float(request.latitude), 4),
+        round(float(request.longitude), 4),
+        round(float(request.timezone), 2),
+        (request.name or "").strip().lower(),
+    )
+
     if request.user_id not in USER_SESSIONS:
         USER_SESSIONS[request.user_id] = {
             "turn_count": 1,
             "history": [],
-            # Persistent user profile built up across the session
+            "birth_signature": current_birth_signature,
             "profile": {
                 "name": request.name,
                 "age": request.age,
@@ -2210,23 +2772,42 @@ async def _handle_chat_response(request: ChatRequest):
             }
         }
     else:
-        USER_SESSIONS[request.user_id]["turn_count"] += 1
-        if "history" not in USER_SESSIONS[request.user_id]:
-            USER_SESSIONS[request.user_id]["history"] = []
-        # Update profile fields if new info arrives in this request
-        profile = USER_SESSIONS[request.user_id].setdefault("profile", {"topics_asked": []})
-        if request.name and request.name.lower() not in ["guest", "there"]:
-            profile["name"] = request.name
-        if request.age:
-            profile["age"] = request.age
-        if request.gender:
-            profile["gender"] = request.gender
-        if request.life_stage:
-            profile["life_stage"] = request.life_stage
-        if request.relationship_status:
-            profile["relationship_status"] = request.relationship_status
-        # Track language preference based on the latest query
-        profile["preferred_language"] = "hinglish" if is_hinglish_query(request.query) else "english"
+        session_data = USER_SESSIONS[request.user_id]
+        old_sig = session_data.get("birth_signature")
+        if old_sig is not None and old_sig != current_birth_signature:
+            # User edited their profile details to another user — reset session context completely
+            session_data["turn_count"] = 1
+            session_data["history"] = []
+            session_data["has_greeted"] = False
+            session_data["birth_signature"] = current_birth_signature
+            session_data.pop("chart_profile", None)
+            session_data["profile"] = {
+                "name": request.name,
+                "age": request.age,
+                "gender": request.gender,
+                "life_stage": request.life_stage,
+                "relationship_status": request.relationship_status,
+                "topics_asked": [],
+                "preferred_language": "hinglish" if is_hinglish_query(request.query) else "english"
+            }
+        else:
+            session_data["turn_count"] += 1
+            if "history" not in session_data:
+                session_data["history"] = []
+            profile = session_data.setdefault("profile", {"topics_asked": []})
+            if request.name and request.name.lower() not in ["guest", "there"]:
+                profile["name"] = request.name
+            if request.age:
+                profile["age"] = request.age
+            if request.gender:
+                profile["gender"] = request.gender
+            if request.life_stage:
+                profile["life_stage"] = request.life_stage
+            if request.relationship_status:
+                profile["relationship_status"] = request.relationship_status
+            profile["preferred_language"] = "hinglish" if is_hinglish_query(request.query) else "english"
+
+    session_data = USER_SESSIONS[request.user_id]
 
     birth_seconds = round((request.birth_hour % 24) * 60 * 60)
     birth_hour, remaining_seconds = divmod(birth_seconds, 60 * 60)
@@ -2258,7 +2839,81 @@ async def _handle_chat_response(request: ChatRequest):
     sun_sign = ZODIAC_SIGNS[int(astro_features[1]) % 12] if len(astro_features) > 1 else "Taurus"
     moon_sign = ZODIAC_SIGNS[int(astro_features[2]) % 12] if len(astro_features) > 2 else "Gemini"
 
-    faq_template = match_faq_only(request.query)
+    # Calculate Jupiter house relative to Lagna
+    asc_idx = int(astro_features[0]) % 12 if len(astro_features) > 0 else 0
+    jup_idx = int(astro_features[5]) % 12 if len(astro_features) > 5 else 0
+    jupiter_house_str = get_ordinal_house(((jup_idx - asc_idx) % 12) + 1)
+
+    # Calculate or fetch Dasha details for this user's birth details
+    current_dasha = ""
+    dasha_data = {}
+    try:
+        dasha_data = await run_in_threadpool(fetch_dasha_details_external, birth_details)
+        current_dasha = extract_current_dasha(dasha_data)
+    except Exception as e:
+        logger.warning("External dasha API lookup error: %s", e)
+
+    if not current_dasha:
+        try:
+            current_dasha = compute_vimshottari_dasha_local(
+                request.birth_year, request.birth_month, request.birth_day,
+                request.birth_hour, request.timezone
+            )
+        except Exception as e:
+            logger.warning("Local dasha computation error: %s", e)
+            current_dasha = "Rahu-Moon"
+
+    # Always synchronize active profile with the active user's calculated chart
+    active_profile = UserChartProfile(
+        name=request.name or "Friend",
+        lagna=asc_sign,
+        moon_sign=moon_sign,
+        sun_sign=sun_sign,
+        jupiter_house=jupiter_house_str,
+        current_dasha=current_dasha,
+    )
+    session_data["chart_profile"] = active_profile
+    session_data["birth_signature"] = current_birth_signature
+
+    # Step 1: Ground-Truth Injection — pre-calculate user's explicit birth facts
+    user_natal_context = {
+        "ascendant": asc_sign,
+        "moon_sign": moon_sign,
+        "active_dasha": current_dasha or "Rahu-Mars",
+        "house_rulerships": calculate_house_rulerships(asc_sign),
+    }
+    session_data["user_natal_context"] = user_natal_context
+
+    query_text = request.user_query or request.query or ""
+
+    # Single Greeting Policy: Never greet the user more than 1 time per session
+    is_greeting_query = query_text.lower().strip() in {"hi", "hello", "hey", "namaste", "greetings"}
+    already_greeted = bool(
+        session_data.get("has_greeted")
+        or request.already_greeted
+        or session_data["turn_count"] > 1
+    )
+
+    # 1. Dynamic local Q&A response with dynamic parameters (0 LLM Token Cost)
+    local_answer = check_qa_database(
+        query_text,
+        active_profile,
+        already_greeted=already_greeted,
+        user_natal_context=user_natal_context,
+    )
+    if local_answer:
+        if already_greeted and not is_greeting_query:
+            local_answer = strip_greeting(local_answer)
+        session_data["has_greeted"] = True
+        session_data["history"].append({"role": "user", "content": query_text})
+        session_data["history"].append({"role": "assistant", "content": local_answer})
+        follow_ups = generate_follow_up_questions(query_text, local_answer)
+        return JSONResponse(content={
+            "answer": label_answer_source(local_answer, "Backend"),
+            "related_questions": follow_ups,
+        })
+
+    faq_template = match_faq_only(query_text)
     if faq_template:
         answer = format_personalized_answer(
             faq_template,
@@ -2266,13 +2921,18 @@ async def _handle_chat_response(request: ChatRequest):
             sun_sign,
             moon_sign,
             name=request.name or "",
-            hinglish=is_hinglish_query(request.query),
-            query=request.query,
+            hinglish=is_hinglish_query(query_text),
+            query=query_text,
             astro_features=astro_features,
+            current_dasha=current_dasha,
+            jupiter_house=jupiter_house_str,
         )
-        USER_SESSIONS[request.user_id]["history"].append({"role": "user", "content": request.query})
+        if already_greeted and not is_greeting_query:
+            answer = strip_greeting(answer)
+        session_data["has_greeted"] = True
+        USER_SESSIONS[request.user_id]["history"].append({"role": "user", "content": query_text})
         USER_SESSIONS[request.user_id]["history"].append({"role": "assistant", "content": answer})
-        follow_ups = generate_follow_up_questions(request.query, answer)
+        follow_ups = generate_follow_up_questions(query_text, answer)
         return JSONResponse(content={
             "answer": label_answer_source(answer, "Backend"),
             "related_questions": follow_ups,
@@ -2284,11 +2944,6 @@ async def _handle_chat_response(request: ChatRequest):
 
     # Normalize Hinglish before routing so keyword classifiers work.
     normalized_query = normalize_hinglish(internal_query)
-    try:
-        dasha_data = await run_in_threadpool(fetch_dasha_details_external, birth_details)
-    except HTTPException as error:
-        print(f"[WARNING] Dasha lookup failed; continuing with chart data only: {error.detail}")
-        dasha_data = {}
 
     ml_result = router.classify_and_predict(normalized_query, astro_features)
     predicted_domain = ml_result.get('predicted_domain', 'General')
@@ -2309,102 +2964,68 @@ async def _handle_chat_response(request: ChatRequest):
         if resolved_topic not in ("general", "", None) and resolved_topic not in topics:
             topics.append(resolved_topic)
 
-    history = USER_SESSIONS[request.user_id].get("history", [])
+    # [OPTIMIZATION 3: Strict 2-Turn History Truncation & Fluff Removal (<= 75 Tokens)]
+    # Restrict history strictly to the last 2 messages (1 user turn + 1 assistant turn)
+    full_history = USER_SESSIONS[request.user_id].get("history", [])
+    sliding_history = filter_chat_history(full_history, max_messages=2)
+
     retrieved_rule = UNKNOWN_DOMAIN_DIRECT_LLM_PARSE
+    # [OPTIMIZATION 1 & 2: Ultra-Compressed System Prompt (<= 15 Tokens) + Compact Profile (<= 12 Tokens)]
     system_instruction = build_gemini_prompt(
         request, asc_sign, sun_sign, moon_sign,
         astro_features, predicted_domain, _api_chart_data, dasha_data,
-        chat_history=history,
+        current_dasha=current_dasha,
+        chat_history=sliding_history,
         session_profile=session_profile,
         query_domains=query_domains,
         retrieved_rule=retrieved_rule,
         normalized_interpretation=normalized_query,
+        user_natal_context=user_natal_context,
     )
 
-    load_dotenv(os.path.join(BASE_DIR, ".env"), override=True)
-    current_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
-    client = genai.Client(api_key=current_key) if current_key else gemini_client
-    if client is None:
-        return JSONResponse(content=backend_error_payload(request.query))
 
     async def async_stream_generator():
-        response_stream = None
-
-        async def close_stream() -> None:
-            nonlocal response_stream
-            close = getattr(response_stream, "aclose", None)
-            if close is not None:
-                try:
-                    close_result = close()
-                    if inspect.isawaitable(close_result):
-                        await close_result
-                except asyncio.CancelledError:
-                    raise
-                except Exception:
-                    logger.warning("Failed to close Gemini response stream", exc_info=True)
-            response_stream = None
-
+        attempt_chunks = []
+        active_model = "LLM"
         try:
-            config = types.GenerateContentConfig(
-                system_instruction=system_instruction,
-                temperature=0.3,
-                max_output_tokens=400,
-                safety_settings=GEMINI_SAFETY_SETTINGS,
-            )
-            for attempt in range(3):
-                attempt_chunks = []
-                try:
-                    model_name = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite")
-                    response_stream = await client.aio.models.generate_content_stream(
-                        model=model_name,
-                        contents=request.query,
-                        config=config,
-                    )
-                    async for chunk in response_stream:
-                        if chunk.text:
-                            attempt_chunks.append(chunk.text)
-                            yield chunk.text
-                    full_text = "".join(attempt_chunks).strip()
-                    if not full_text:
-                        raise ConnectionError("Gemini returned an empty stream")
-                    await close_stream()
+            # Stream via cascading router passing user_natal_context and 2-turn filtered history
+            async for chunk, model_name in stream_cascading_router(
+                request.query,
+                system_instruction,
+                history=sliding_history,
+                session_id=request.user_id,
+                user_natal_context=user_natal_context,
+            ):
+                active_model = model_name
+                attempt_chunks.append(chunk)
+                yield chunk
+
+            raw_streamed = "".join(attempt_chunks).strip()
+            # Ensure stream displayed to user ends with a complete sentence before the LLM tag
+            if raw_streamed and raw_streamed[-1] not in (".", "!", "?"):
+                yield "."
+
+            # [SPECIFICATION 3 & 4: Output Sanitization & Sentence Truncation] Strip internal reasoning / preambles and trim to last complete sentence
+            full_text = trim_to_last_sentence(clean_llm_output(raw_streamed))
+            if full_text:
+                # [OPTIMIZATION 3: Fluff Removal] Never pollute conversation history with pure fluff
+                if not is_conversational_fluff(request.query):
                     USER_SESSIONS[request.user_id]["history"].append({"role": "user", "content": request.query})
                     USER_SESSIONS[request.user_id]["history"].append({"role": "assistant", "content": full_text})
-                    yield " (LLM)"
-                    target_domain = query_domains[0] if query_domains else predicted_domain
-                    follow_ups = generate_follow_up_questions(request.query, full_text, domain=target_domain)
-                    yield f"\n[FOLLOW_UPS]: {json.dumps(follow_ups)}"
-                    break
-                except asyncio.CancelledError:
-                    await close_stream()
-                    logger.info("Gemini stream cancelled for user %s", request.user_id)
-                    raise
-                except Exception as e:
-                    await close_stream()
-                    if is_daily_gemini_quota_error(e):
-                        logger.error("Gemini daily quota exhausted: %s", str(e), exc_info=True)
-                        yield "\n\n" + gemini_error_message(e, request.query)
-                        break
-                    if attempt == 2 or attempt_chunks or not is_retryable_gemini_error(e):
-                        logger.error("Gemini Streaming Error: %s", str(e), exc_info=True)
-                        message = gemini_error_message(e, request.query)
-                        yield "\n\n" + message if attempt_chunks else message
-                        break
-                    delay_seconds = 0.5 * (2 ** attempt)
-                    logger.warning(
-                        "Transient Gemini chat failure (attempt %s/3); retrying in %.1fs: %s",
-                        attempt + 1,
-                        delay_seconds,
-                        e,
-                    )
-                    await asyncio.sleep(delay_seconds)
+                    # Restrict stored history to last 4 messages to save memory
+                    USER_SESSIONS[request.user_id]["history"] = USER_SESSIONS[request.user_id]["history"][-4:]
+
+                # Server metadata suffix stripped per requirement
+
+
+                target_domain = query_domains[0] if query_domains else predicted_domain
+                follow_ups = generate_follow_up_questions(request.query, full_text, domain=target_domain)
+                yield f"\n[FOLLOW_UPS]: {json.dumps(follow_ups)}"
         except asyncio.CancelledError:
-            await close_stream()
             logger.info("Chat stream cancelled for user %s", request.user_id)
             raise
         except Exception as e:
-            await close_stream()
-            logger.error("Gemini Streaming Error: %s", str(e), exc_info=True)
+            logger.error("Streaming Error: %s", str(e), exc_info=True)
             yield gemini_error_message(e, request.query)
 
     return StreamingResponse(async_stream_generator(), media_type="text/plain; charset=utf-8")
@@ -2418,13 +3039,185 @@ async def _handle_chat(request: ChatRequest):
         raise
     except Exception as e:
         logger.error("Chat request error: %s", str(e), exc_info=True)
-        return JSONResponse(content=backend_error_payload(request.query))
+        return JSONResponse(
+            status_code=200,
+            content=backend_error_payload(request.query),
+        )
 
 
 @app.post("/chat")
-@limiter.limit("60/minute")
+@limiter.limit(os.getenv("CHAT_RATE_LIMIT", "300/minute"))
 async def chat_endpoint(request: Request, chat_request: ChatRequest):
     return await _handle_chat(chat_request)
+
+
+class ApiChatRequest(BaseModel):
+    prompt: str
+    user_profile: Optional[Dict[str, Any]] = None
+    already_greeted: Optional[bool] = None
+    chat_history: Optional[List[Dict[str, Any]]] = None
+
+
+# Lightweight per-user session store for the /api/chat endpoint.
+# Persists history (last 4 messages) and session_profile across calls within the same process.
+API_USER_SESSIONS: Dict[str, Dict[str, Any]] = {}
+
+
+@app.post("/api/chat")
+async def api_chat_endpoint(chat_req: ApiChatRequest):
+    """
+    Ultra-token-optimized chat endpoint (target: <= 210 tokens/request, >50% token cut):
+    1. Local QA Intercept: Checks incoming query against qa_database.json (0 LLM tokens).
+    2. Ultra-Compressed LLM Cascading Router:
+       - Ultra-Compressed System Prompt (<= 15 tokens)
+       - Compact 1-Line Key-Value Profile (<= 12 tokens, e.g., 'P: Aries|Taurus|Rahu-Jup')
+       - Strict 2-Turn History Truncation & Fluff Removal (<= 75 tokens)
+       - Output Hard Cap (max_tokens=120, ~95 output tokens)
+       - Token Usage Logging & Reporting (Prompt, Completion, Total)
+    """
+    prompt = chat_req.prompt.strip()
+    profile = chat_req.user_profile or {}
+
+    # Step 1: Ground-Truth Injection — pre-calculate user's explicit birth facts
+    ascendant = profile.get("ascendant") or profile.get("lagna") or "Libra"
+    moon_sign = profile.get("rashi") or profile.get("moon_sign") or profile.get("moon") or "Gemini"
+    active_dasha = profile.get("dasha") or profile.get("active_dasha") or profile.get("current_dasha") or "Rahu-Mars"
+
+    user_natal_context = {
+        "ascendant": ascendant,
+        "moon_sign": moon_sign,
+        "active_dasha": str(active_dasha),
+        "house_rulerships": calculate_house_rulerships(ascendant),
+    }
+
+    # Resolve user identity for session tracking
+    user_id: str = str(profile.get("user_id") or profile.get("id") or "api_default_user")
+
+    # Build or update the per-user API session
+    if user_id not in API_USER_SESSIONS:
+        API_USER_SESSIONS[user_id] = {
+            "history": [],
+            "user_natal_context": user_natal_context,
+            "session_profile": {
+                "name": profile.get("name"),
+                "age": profile.get("age"),
+                "gender": profile.get("gender"),
+                "topics_asked": [],
+                "preferred_language": "hinglish" if is_hinglish_query(prompt) else "english",
+            },
+        }
+    else:
+        API_USER_SESSIONS[user_id]["user_natal_context"] = user_natal_context
+        sp = API_USER_SESSIONS[user_id]["session_profile"]
+        # Update profile fields if new info provided
+        if profile.get("name"):
+            sp["name"] = profile["name"]
+        if profile.get("age"):
+            sp["age"] = profile["age"]
+        if profile.get("gender"):
+            sp["gender"] = profile["gender"]
+        sp["preferred_language"] = "hinglish" if is_hinglish_query(prompt) else "english"
+
+    api_session = API_USER_SESSIONS[user_id]
+    session_profile_data = api_session["session_profile"]
+
+    already_greeted = bool(
+        chat_req.already_greeted
+        or profile.get("already_greeted")
+        or profile.get("has_greeted")
+        or len(api_session["history"]) > 0
+    )
+
+    # 1. Local QA Intercept (0 Tokens) - dynamically populated with user_natal_context
+    local_answer = None
+    if not should_bypass_local_qa(prompt):
+        local_answer = check_qa_database(
+            prompt,
+            already_greeted=already_greeted,
+            user_natal_context=user_natal_context,
+        )
+        if not local_answer:
+            local_answer = intercept_qa(
+                prompt,
+                user_profile=profile,
+                threshold=82.0,
+                already_greeted=already_greeted,
+            )
+    if local_answer:
+        is_greeting_query = prompt.lower().strip() in {"hi", "hello", "hey", "namaste", "greetings"}
+        if already_greeted and not is_greeting_query:
+            local_answer = strip_greeting(local_answer)
+
+        async def stream_local():
+            yield local_answer
+        return StreamingResponse(stream_local(), media_type="text/plain; charset=utf-8")
+
+    # 2. Merge incoming chat_history with accumulated session history
+    combined_history = list(api_session["history"])
+    if chat_req.chat_history:
+        for msg in chat_req.chat_history:
+            if msg not in combined_history:
+                combined_history.append(msg)
+
+    # [OPTIMIZATION 3: Strict 2-Turn History Truncation & Fluff Removal]
+    sliding_history = filter_chat_history(combined_history, max_messages=2)
+
+    # Build personalized system prompt with session context and ground-truth natal facts
+    merged_profile = dict(profile)
+    merged_profile.update({
+        "ascendant": ascendant,
+        "lagna": ascendant,
+        "moon_sign": moon_sign,
+        "rashi": moon_sign,
+        "current_dasha": active_dasha,
+        "dasha": active_dasha,
+    })
+    personalized_system_prompt = build_system_prompt(
+        user_profile=merged_profile,
+        session_profile=session_profile_data,
+        user_natal_context=user_natal_context,
+    )
+
+    # Track topics for this query
+    detected_domains = infer_query_domains(prompt, include_semantic_fallback=False)
+    topics_list = session_profile_data.setdefault("topics_asked", [])
+    for topic in detected_domains:
+        if topic not in ("general", "", None) and topic not in topics_list:
+            topics_list.append(topic)
+
+    async def api_stream_generator():
+        attempt_chunks: List[str] = []
+        active_model = "LLM"
+        async for chunk, model_name in stream_cascading_router(
+            prompt,
+            personalized_system_prompt,
+            history=sliding_history,
+            session_id=user_id,
+            user_natal_context=user_natal_context,
+        ):
+            active_model = model_name
+            attempt_chunks.append(chunk)
+            yield chunk
+
+        raw_streamed = "".join(attempt_chunks).strip()
+        # Ensure terminal punctuation
+        if raw_streamed and raw_streamed[-1] not in (".", "!", "?"):
+            yield "."
+
+        full_text = trim_to_last_sentence(clean_llm_output(raw_streamed))
+        if full_text and not is_conversational_fluff(prompt):
+            # Store to session history (capped at 4 messages)
+            api_session["history"].append({"role": "user", "content": prompt})
+            api_session["history"].append({"role": "assistant", "content": full_text})
+            api_session["history"] = api_session["history"][-4:]
+
+        # Server metadata suffix stripped per requirement
+
+
+        follow_ups = generate_follow_up_questions(prompt, full_text or raw_streamed)
+        yield f"\n[FOLLOW_UPS]: {json.dumps(follow_ups)}"
+
+    return StreamingResponse(api_stream_generator(), media_type="text/plain; charset=utf-8")
 
 
 if __name__ == "__main__":

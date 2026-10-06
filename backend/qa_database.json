@@ -1,87 +1,220 @@
 {
-  "moon sign": "Your calculated Moon Sign (Rashi) is in {moon_sign}. The Moon governs your emotional processing, mental peace, subconscious habits, and intuition.",
-  "rashi": "Your calculated Moon Sign (Rashi) is in {moon_sign}. The Moon governs your emotional processing, mental peace, subconscious habits, and intuition.",
-  "lagna": "Aapka Lagna (Ascendant) {ascendant} hai. Lagna aapki physical vitality, basic personality, aur approach to life ko represent karta hai.",
-  "ascendant": "Your Ascendant (Lagna) is {ascendant}. It defines your physical constitution, outer persona, and the foundational lens through which you navigate the world.",
-  "sun sign": "Your calculated Sun Sign is in {sun_sign}. In Vedic Astrology, the Sun represents the soul (Atma), willpower, self-respect, authority, and vitality.",
-  "nakshatra": "Your Janm Nakshatra is calculated from the Moon's exact planetary longitude. It reveals your inner temperament, subconscious motivation, and psychological patterns.",
-  "kundali": "A Vedic Kundali (Birth Chart) is a cosmic snapshot of the 12 zodiac signs and 9 planets across 12 houses (Bhavas) at your exact moment and coordinates of birth.",
-  "navamsha": "The Navamsha (D9 chart) is the 9th divisional harmonic chart in Vedic astrology. It is essential for analyzing marriage, marital partner traits, inner destiny, and the real strength of natal planets in the second half of life.",
-  "dasha": "Vimshottari Dasha is the 120-year planetary cycle system in Vedic astrology. It reveals the exact planetary ruler currently activating karmic events, opportunities, and lessons in your life.",
-  "sade sati": "Sade Sati is the 7.5-year transit of Saturn (Shani) over your natal Moon sign (12th, 1st, and 2nd houses from the Moon). It is a disciplined purification period designed to instill maturity, focus, and resilience.",
-  "dhayya": "Shani ki Dhayya is Saturn's 2.5-year transit through the 4th or 8th house from your natal Moon sign. It encourages grounded decision-making, inner patience, and regular spiritual discipline.",
-  "rahu ketu": "Rahu and Ketu are the lunar nodes of destiny. Rahu represents worldly ambition, technological innovation, and future growth, while Ketu signifies spiritual detachment, past-life mastery, and inner wisdom.",
-  "retrograde": "A retrograde planet (Vakri Graha) appears to move backward from Earth's viewpoint. In Vedic astrology, retrograde planets gain high Chesta Bala (motivational strength), prompting deep internal reflection and non-traditional solutions.",
-  "1st house": "The 1st House (Lagna / Tanu Bhava) represents the physical body, general vitality, mental disposition, appearance, and your personal approach to life's journeys.",
-  "2nd house": "The 2nd House (Dhan Bhava) governs accumulated wealth, bank balance, family heritage, speech, liquid assets, and eating habits.",
-  "3rd house": "The 3rd House (Sahaja Bhava) represents younger siblings, courage, self-effort (Parakrama), short travels, writing, and communication skills.",
-  "4th house": "The 4th House (Sukha Bhava) governs maternal happiness, inner emotional peace, vehicles, landed property, real estate, and foundational education.",
-  "5th house": "The 5th House (Putra Bhava) governs children, creative intelligence, higher education, past-life merits (Purva Punya), romance, and speculation.",
-  "6th house": "The 6th House (Ari / Roga Bhava) represents daily work routines, physical immunity, healing, resolving debts, overcoming rivals, and competitive examinations.",
-  "7th house": "The 7th House (Yuvati Bhava) governs marriage, long-term romantic commitment, spouse's personality, business partnerships, and public dealings.",
-  "8th house": "The 8th House (Randhra Bhava) governs longevity, deep transformation, sudden financial changes, research, occult sciences, and joint finances with your partner.",
-  "9th house": "The 9th House (Bhagya Bhava) represents good fortune, higher wisdom, spiritual dharma, father, guru, and long-distance international travel.",
-  "10th house": "The 10th House (Karma Bhava) governs career, profession, public status, authority, leadership, and your highest social contribution.",
-  "11th house": "The 11th House (Labha Bhava) represents incoming financial gains, cash flow, fulfillment of aspirations, elder siblings, and high-impact social networks.",
-  "12th house": "The 12th House (Vyaya Bhava) represents foreign residence, overseas travels, spiritual liberation (Moksha), meditation, expenditure, and restful sleep.",
-  "career house": "In Vedic Astrology, career is primarily analyzed through the 10th house (Karma Bhava), supported by the 2nd house (earned wealth), 6th house (daily service), and 11th house (cash flow).",
-  "business vs job": "A strong 10th and 6th house with Saturn/Sun influence favors a structured, salaried corporate job, while a powerful 7th, 3rd, and 11th house with Mercury/Mars supports independent entrepreneurship and business.",
-  "government job yoga": "Government employment yogas form when the Sun, Mars, and Saturn are strongly positioned in the 10th, 1st, or 9th house, in aspect with the Lagna or 10th lord.",
-  "gemstones for career": "Career gemstones must be chosen according to your auspicious functional benefic lords (especially 1st, 5th, 9th, or 10th house lords) in consultation with your birth chart placements.",
-  "marriage house": "Marriage and committed partnerships are analyzed from the 7th house, the 7th lord, the Navamsha (D9) chart, and the natural Karakas Venus (for all) and Jupiter (especially for women).",
-  "mangal dosha": "Mangal Dosha (Manglik) occurs when Mars is situated in the 1st, 2nd, 4th, 7th, 8th, or 12th house from the Lagna or Moon. It indicates high passion and assertiveness in relationships, which softens with mature communication and often neutralizes after age 28.",
-  "kundali milan": "Kundali Milan evaluates the 8 Ashtakoota parameters (36 Gunas) including Varna, Vashya, Tara, Yoni, Graha Maitri, Gana, Bhakoot, and Nadi to assess mental, emotional, and biological alignment between partners.",
-  "remedies for marriage delay": "Classic astrological remedies for marriage delay include offering yellow flowers and chana dal to Lord Vishnu on Thursdays, honoring Goddess Parvati, and strengthening the benefic 7th lord.",
-  "dhan yoga": "A Dhan Yoga forms when the wealth houses (2nd and 11th) connect auspiciously with the Kendra (1st, 4th, 7th, 10th) or Trikona (1st, 5th, 9th) houses, indicating steady prosperity and financial expansion.",
-  "gajakesari yoga": "Gajakesari Yoga occurs when Jupiter is in a Kendra (1st, 4th, 7th, or 10th house) from the natal Moon. It bestows enduring wisdom, respect, virtuous speech, and high reputation.",
-  "lakshmi yoga": "Lakshmi Yoga forms when the 9th lord is strong in a Kendra or Trikona and the Lagna lord is exalted, indicating abundant wealth, noble character, and financial ease.",
-  "remedies for debt": "Remedies for resolving debt include reciting the Rinmochan Mangal Stotra on Tuesdays, maintaining financial discipline, and offering water to the rising Sun each morning.",
-  "health house": "Health and physical constitution are analyzed via the 1st house (vitality), 6th house (immunity and recovery), 8th house (longevity), and the placement of the Sun and Moon.",
-  "remedies for mental peace": "To calm an overactive Moon and reduce stress, practice 10-15 minutes of Pranayama each morning, drink water from a silver vessel, and honor Lord Shiva with water offering on Mondays.",
-  "foreign settlement": "Foreign relocation and settlement are indicated by harmonious connections between the 9th house (long journeys), 12th house (overseas lands), and the 4th house of residence, often activated by Rahu or Moon periods.",
-  "rahu foreign travel": "Rahu is the natural significator of cross-cultural connections and distant lands. When Rahu activates the 9th or 12th house during its Mahadasha or Antardasha, foreign travel and global opportunities accelerate.",
-  "education house": "Primary education is governed by the 4th house (Sukha Bhava), creative intelligence and competitive exams by the 5th house (Putra Bhava), and higher specialized learning by the 9th house (Bhagya Bhava).",
-  "mercury for education": "Mercury (Budh) is the Karaka for analytical intelligence, mathematics, memory, and speech. Keeping a green plant in your study space and chanting the Budh Beej Mantra supports sharp focus.",
-  "kaal sarp dosha": "Kaal Sarp Dosha occurs when all seven visible planets are hemmed between Rahu and Ketu. While it brings intense early struggles, it often acts as an engine for extraordinary ambition and exceptional success in later life.",
-  "pitra dosha": "Pitra Dosha signifies unresolved ancestral debts reflected in the 9th house or Sun. Traditional remedies include performing Tarpanam, honoring elders, and planting a Banyan or Peepal tree.",
-  "gemstone wearing rules": "Gemstones should be natural, untreated, energized on the planet's auspicious weekday during Shukla Paksha (waxing moon), and worn on the designated finger in silver or gold.",
-  "gayatri mantra": "The Gayatri Mantra (Om Bhur Bhuva Svaha...) is a Vedic prayer for mental illumination, inner clarity, and soul purification. Chanting it 108 times at sunrise strengthens the Sun and sharpens the intellect.",
-  "maha mrityunjaya mantra": "The Maha Mrityunjaya Mantra (Om Tryambakam Yajamahe...) invokes Lord Shiva for health protection, overcoming fear, restoring vital energy, and calming psychological distress.",
-  "hello": "Namaste! 🙏 Welcome to Astro AI. I am your Vedic Astrologer. You can ask me anything about your career, marriage, finances, health, or birth chart!",
-  "hi": "Namaste! 🙏 How can I assist you with your astrological journey today?",
-  "disclaimer": "Vedic Astrology offers reflective guidance and timing insights based on planetary patterns. It empowers conscious choices and does not replace medical, legal, or licensed financial advice.",
-  "foreign travel": "Foreign travel in Vedic Astrology is governed by the 9th house (long journeys and higher pursuit), the 12th house (foreign lands and overseas settlement), and the 3rd house (short travel). Rahu, Moon, and Venus are primary indicators of overseas journeys.",
-  "travel abroad": "Foreign travel in Vedic Astrology is governed by the 9th house (long journeys), 12th house (foreign settlement), and Rahu. Strong connections between the 1st, 9th, and 12th houses favor moving overseas.",
-  "can astrology predict foreign travel": "Yes, Vedic Astrology indicates foreign travel through active dashas of the 9th or 12th lord, transits of Jupiter or Rahu over watery signs, and connections to the 3rd, 9th, and 12th houses.",
-  "will i travel abroad": "Foreign journeys are triggered during the Mahadasha or Antardasha of the 9th lord, 12th lord, or Rahu. Benefic connections between the 1st, 9th, and 12th houses strongly support traveling or working abroad.",
-  "career prediction": "Career trajectory is determined primarily by the 10th House (Karma Bhava), its lord, planets aspecting it, and the Navamsha (D9) and Dashamsha (D10) divisional charts.",
-  "job change": "Job transitions usually take place during sub-periods of the 6th lord (daily work), 10th lord (career), or during major transits of Saturn and Jupiter across your natal Moon or Lagna.",
-  "promotion": "Promotions and appraisals occur when favorable dashas of the 10th lord or 11th lord (gains) activate, especially when Jupiter transits over your 10th or 11th house.",
-  "government job": "Government job yogas (Sarkari Naukri) form when the Sun and Mars are strongly placed in the 10th or 1st house with supportive aspects from Jupiter and a strong 6th house of competitive success.",
-  "love marriage": "Love marriage is indicated by strong connections between the 5th house (romance) and the 7th house (marriage), along with auspicious placement of Venus and Mars.",
-  "arranged marriage": "Arranged marriages are indicated when the 7th house and 2nd house (family) are strongly influenced by traditional benefic planets like Jupiter or the Sun with family blessings.",
-  "marriage timing": "Marriage timing is typically activated during the Mahadasha or Antardasha of the 7th lord, Venus (for men), Jupiter (for women), or during Jupiter transit aspecting the 7th house.",
-  "divorce or separation": "Marital friction is assessed through afflictions to the 7th house, Venus, and Mars by Rahu, Ketu, or Saturn. Compatibility matching (Kundali Milan) and timely remedies help mitigate conflict.",
-  "financial stability": "Financial prosperity is anchored in the 2nd House (accumulated savings), 11th House (gains and cash flow), 5th House (speculative intellect), and 9th House (fortune/Bhagya).",
-  "share market": "Speculative gains in the stock market are governed by the 5th House (purva punya and intellect), Mercury (analytical calculations), and Rahu (sudden windfall). Strong placements indicate trading talent.",
-  "lottery or windfall": "Sudden unexpected financial gains are governed by the 8th house (unearned wealth) and 11th house (cash gains), energized by Rahu or Jupiter in favorable dignity.",
-  "debt remedies": "To overcome recurring debt (Rina), propitiate Mars through the Rin-Mochan Mangal Stotra and perform archana for Lord Ganesha on Tuesdays.",
-  "health remedies": "General vitality is strengthened by offering Arghya (water) to the rising Sun daily, reciting the Aditya Hridaya Stotra, and chanting the Maha Mrityunjaya Mantra.",
-  "mental stress": "Mental peace is governed by the Moon. To alleviate anxiety and stress, drink water from a silver vessel, practice Chandra Pranayama, and chant 'Om Namah Shivaya'.",
-  "chronic illness": "Chronic conditions are analyzed through the 6th House (ailments) and 8th House (longevity/chronic patterns). Propitiating Saturn through sesame oil lamps and Hanuman Chalisa brings healing.",
-  "higher education": "Higher education is governed by the 9th House (higher wisdom, philosophy) and 5th House (intellect). Jupiter and Mercury are the key significators for academic honors.",
-  "competitive exams": "Success in competitive exams is ruled by the 6th House (competition, overcoming rivals) and Mars/Mercury. Favorable dashas during exam periods lead to high ranks.",
-  "study abroad": "Studying abroad occurs when the 4th house (primary education) or 5th house links with the 9th and 12th houses of foreign travels and overseas institutions.",
-  "sun in astrology": "The Sun (Surya) represents the soul (Atma), father, authority, government, self-esteem, willpower, and vitality. It rules Leo (Simha).",
-  "moon in astrology": "The Moon (Chandra) governs the mind (Manas), emotions, subconscious patterns, mother, nurturing, and mental peace. It rules Cancer (Karka).",
-  "mars in astrology": "Mars (Mangal) represents courage, energy, physical strength, ambition, real estate, and leadership. It rules Aries (Mesha) and Scorpio (Vrishchika).",
-  "mercury in astrology": "Mercury (Budha) rules intellect, communication, logic, mathematics, trade, and nervous system. It rules Gemini (Mithuna) and Virgo (Kanya).",
-  "jupiter in astrology": "Jupiter (Guru/Brihaspati) represents wisdom, spirituality, dharma, wealth, guru, children, and divine grace. It rules Sagittarius (Dhanu) and Pisces (Meena).",
-  "venus in astrology": "Venus (Shukra) represents love, beauty, art, luxury, vehicles, romance, and marriage. It rules Taurus (Vrishabha) and Libra (Tula).",
-  "saturn in astrology": "Saturn (Shani) represents karma, discipline, hard work, longevity, delays, detachment, and justice. It rules Capricorn (Makara) and Aquarius (Kumbha).",
-  "rahu in astrology": "Rahu (North Lunar Node) represents illusion (Maya), worldly ambition, foreign elements, technology, innovation, and sudden events.",
-  "ketu in astrology": "Ketu (South Lunar Node) represents spiritual liberation (Moksha), detachment, occult knowledge, introspection, and past-life karma.",
-  "pitra dosha remedies": "Pitra Dosha remedies include performing Tarpan and Pind Daan during Pitru Paksha, feeding cows, birds, and fish, and reciting the Pitru Gayatri Mantra.",
-  "shani shanti": "To appease Saturn (Shani), light a mustard oil diya under a Peepal tree on Saturdays, feed black dogs, chant 'Om Sham Shanaishcharaya Namah', and donate black sesame or blankets.",
-  "surya arghya": "Surya Arghya involves offering clean water from a copper vessel to the rising Sun while reciting 'Om Suryaya Namah' to boost health, confidence, and vitality."
+  "business_vs_job": {
+    "keywords": ["business or job", "job vs business", "career path"],
+    "analogy": "A job is like renting a house with predictable monthly maintenance, whereas a business is like building your own house where you manage both the foundation and storm repairs.",
+    "core_analysis": "Your 10th house of career (Cancer) is Moon-ruled and your 6th house of service (Pisces) is Jupiter-ruled, supporting structured corporate roles and consultancy.",
+    "dasha_influence": "Your current Rahu-Mars dasha boosts competitive ambition, but Rahu can bring market volatility.",
+    "recommendation": "Anchor yourself in a primary structured job first. Test business ideas as side projects or partnerships before making a full transition."
+  },
+  "career_guidance": {
+    "keywords": ["career", "career prediction", "career guidance", "profession", "job change", "promotion"],
+    "analogy": "Think of your career as climbing a mountain where your Lagna is your boots and your 10th house is the summit trail.",
+    "core_analysis": "Your vocational authority is governed by your 10th house ({10th_house}) ruled by {10th_house_lord}, indicating steady rise through competence.",
+    "dasha_influence": "During your current {active_dasha} period, focus on building tangible portfolio proof and executive leadership skills.",
+    "recommendation": "Deliver consistent quality, lead workplace initiatives proactively, and document your milestones for upcoming appraisals."
+  },
+  "marriage_and_relationships": {
+    "keywords": ["marriage", "relationship", "marriage timing", "life partner", "spouse", "love marriage"],
+    "analogy": "Think of marriage as a two-person tandem bicycle requiring synchronous pedaling and shared balance.",
+    "core_meaning": "Your 7th house of committed partnerships ({7th_house}) is {7th_house_lord}-ruled, reflecting a partner who balances your personality.",
+    "core_analysis": "Your 7th house of committed partnerships ({7th_house}) is {7th_house_lord}-ruled, reflecting a partner who balances your temperament.",
+    "dasha_influence": "Under your {active_dasha} period, relationship progress unfolds when mutual transparency and emotional patience are prioritized.",
+    "recommendation": "Cultivate active listening, establish clear shared values, and avoid impulsive arguments during high-stress transits."
+  },
+  "wealth_and_finance": {
+    "keywords": ["wealth", "money", "financial growth", "savings", "finances", "dhan yoga"],
+    "analogy": "Think of wealth as an orchard: your 2nd house is the root cellar and your 11th house is the harvest basket.",
+    "core_analysis": "Accumulated wealth is anchored in your 2nd house ({2nd_house}) ruled by {2nd_house_lord}, while cash inflow flows through your 11th house ({11th_house}).",
+    "dasha_influence": "Your active {active_dasha} cycle favors disciplined compounding rather than hyper-speculative gambles.",
+    "recommendation": "Maintain a strict 20% savings habit, diversify into tangible assets, and avoid unverified speculative schemes."
+  },
+  "sade_sati": {
+    "keywords": ["sade sati", "shani sade sati", "saturn transit"],
+    "analogy": "Think of Sade Sati as a rigorous character boot camp and architectural stress test for your life.",
+    "core_analysis": "Saturn transits the 12th, 1st, and 2nd houses from your natal {moon_sign} Moon, purifying outgrown habits and relationships.",
+    "dasha_influence": "When paired with your {active_dasha} dasha, it emphasizes structural discipline, patience, and humility.",
+    "recommendation": "Establish steady daily routines, avoid taking unearned shortcuts, and serve working-class communities with sincere kindness."
+  },
+  "mahadasha_antardasha": {
+    "keywords": ["dasha", "mahadasha", "antardasha", "vimshottari dasha", "current dasha"],
+    "analogy": "Think of Mahadasha as the season's weather, and Antardasha as today's forecast determining what jacket you should wear.",
+    "core_analysis": "You are navigating the {active_dasha} period, which activates specific karmic lessons and developmental opportunities across your chart.",
+    "dasha_influence": "This timing cycle emphasizes targeted learning, personal sovereignty, and adapting to shifting priorities.",
+    "recommendation": "Align major life initiatives with your active ruling planets rather than forcing misaligned external goals."
+  },
+  "lagna": {
+    "keywords": ["lagna", "ascendant", "rising sign", "1st house"],
+    "analogy": "Think of your Lagna as the lens of a telescope through which your entire worldview is framed.",
+    "core_analysis": "Your Ascendant is {ascendant}, with its 1st house ruled by {1st_house_lord}, governing your physical constitution, vitality, and natural approach to life.",
+    "dasha_influence": "Synchronized with your {active_dasha} dasha, honoring your Lagna's temperament prevents burnout and accelerates momentum.",
+    "recommendation": "Prioritize physical fitness, maintain circadian rhythm consistency, and lead with authentic self-confidence."
+  },
+  "rashi": {
+    "keywords": ["rashi", "moon sign", "janma rashi", "moon"],
+    "analogy": "Think of your Rashi as the motherboard of your emotional mind and subconscious comfort zone.",
+    "core_analysis": "Your natal Moon sign is {moon_sign}, governing emotional processing, intuitive reactions, and mental peace.",
+    "dasha_influence": "Your {active_dasha} period impacts your emotional equilibrium, calling for conscious stress management.",
+    "recommendation": "Practice 10 minutes of daily breathwork, observe triggers without self-criticism, and honor deep evening sleep."
+  },
+  "1st_house": {
+    "keywords": ["1st house", "first house", "tanu bhava"],
+    "analogy": "Think of the 1st House as your personal storefront window and core operating system.",
+    "core_analysis": "For your {ascendant} Lagna, the 1st house is {1st_house} ({1st_house_lord}), governing physical vitality and primary life perspective.",
+    "dasha_influence": "Activated during your {active_dasha} phase, it highlights personal identity and physical well-being.",
+    "recommendation": "Focus on daily wellness habits, project authentic confidence, and maintain healthy personal boundaries."
+  },
+  "2nd_house": {
+    "keywords": ["2nd house", "second house", "dhana bhava", "dhan bhava"],
+    "analogy": "Think of the 2nd House as your personal savings bank vault and family dinner table.",
+    "core_analysis": "For your {ascendant} Lagna, the 2nd house is {2nd_house} ({2nd_house_lord}), governing liquid finances, speech, and family heritage.",
+    "dasha_influence": "Interacts with your {active_dasha} dasha to influence cash retention and family communication.",
+    "recommendation": "Practice mindful budgeting, speak with calm honesty, and build emergency savings consistently."
+  },
+  "3rd_house": {
+    "keywords": ["3rd house", "third house", "sahaja bhava"],
+    "analogy": "Think of the 3rd House as your mental gym, communication hub, and courage toolkit.",
+    "core_analysis": "For your {ascendant} Lagna, the 3rd house is {3rd_house} ({3rd_house_lord}), ruling self-effort, courage, writing, and siblings.",
+    "dasha_influence": "During your {active_dasha} period, it rewards proactive initiative and creative problem-solving.",
+    "recommendation": "Sharpen practical skills, communicate proactively, and take calculated creative initiatives."
+  },
+  "4th_house": {
+    "keywords": ["4th house", "fourth house", "sukha bhava"],
+    "analogy": "Think of the 4th House as your home living room and emotional shock absorber.",
+    "core_analysis": "For your {ascendant} Lagna, the 4th house is {4th_house} ({4th_house_lord}), governing domestic peace, mother, property, and inner contentment.",
+    "dasha_influence": "Under your {active_dasha} timing, it anchors your psychological resilience and sense of security.",
+    "recommendation": "Keep a clean and peaceful living space, nurture maternal bonds, and protect your evening rest."
+  },
+  "5th_house": {
+    "keywords": ["5th house", "fifth house", "putra bhava"],
+    "analogy": "Think of the 5th House as your creative studio and past-life karma investment account.",
+    "core_analysis": "For your {ascendant} Lagna, the 5th house is {5th_house} ({5th_house_lord}), ruling creative intellect, romance, children, and higher learning.",
+    "dasha_influence": "Energized by your {active_dasha} phase, it sparks innovative ideas and intellectual curiosity.",
+    "recommendation": "Cultivate a creative passion, study subjects you enjoy, and avoid uncalculated financial gambles."
+  },
+  "6th_house": {
+    "keywords": ["6th house", "sixth house", "ari bhava", "roga bhava"],
+    "analogy": "Think of the 6th House as your daily triage clinic and problem-solving engine.",
+    "core_analysis": "For your {ascendant} Lagna, the 6th house is {6th_house} ({6th_house_lord}), governing daily work, immune defense, debts, and overcoming rivals.",
+    "dasha_influence": "Tied to your {active_dasha} cycle, it determines resilience in competitive and high-pressure settings.",
+    "recommendation": "Follow clean nutrition, resolve conflicts through diplomacy, and clear outstanding debts promptly."
+  },
+  "7th_house": {
+    "keywords": ["7th house", "seventh house", "yuvati bhava"],
+    "analogy": "Think of the 7th House as a partnership agreement and interpersonal mirror.",
+    "core_analysis": "For your {ascendant} Lagna, the 7th house is {7th_house} ({7th_house_lord}), governing committed marriage, spouse traits, and public dealings.",
+    "dasha_influence": "Under your {active_dasha} period, it highlights mutual compromise and long-term collaborative commitments.",
+    "recommendation": "Practice active listening, maintain mutual transparency, and choose partners with aligned life goals."
+  },
+  "8th_house": {
+    "keywords": ["8th house", "eighth house", "randhra bhava"],
+    "analogy": "Think of the 8th House as a transformative forge that tempers raw metal into steel.",
+    "core_analysis": "For your {ascendant} Lagna, the 8th house is {8th_house} ({8th_house_lord}), governing deep transformation, joint assets, sudden events, and longevity.",
+    "dasha_influence": "When triggered in your {active_dasha} cycle, it facilitates shedding old habits and unlocking inner power.",
+    "recommendation": "Embrace life transitions with composure, manage joint finances prudently, and cultivate mindfulness."
+  },
+  "9th_house": {
+    "keywords": ["9th house", "ninth house", "bhagya bhava"],
+    "analogy": "Think of the 9th House as your spiritual compass and higher education passport.",
+    "core_analysis": "For your {ascendant} Lagna, the 9th house is {9th_house} ({9th_house_lord}), ruling good fortune (Bhagya), ethics, mentors, and international journeys.",
+    "dasha_influence": "Illuminated during your {active_dasha} phase, it brings fortunate timing through higher learning and guidance.",
+    "recommendation": "Seek counsel from wise mentors, study universal wisdom, and base decisions on ethical principles."
+  },
+  "10th_house": {
+    "keywords": ["10th house", "tenth house", "karma bhava"],
+    "analogy": "Think of the 10th House as your public resume, professional summit, and leadership stage.",
+    "core_analysis": "For your {ascendant} Lagna, the 10th house is {10th_house} ({10th_house_lord}), ruling vocational career, leadership, and public authority.",
+    "dasha_influence": "Crucial in your {active_dasha} dasha, it dictates career advancement and how society views your achievements.",
+    "recommendation": "Deliver consistent quality, lead with transparent accountability, and document professional achievements."
+  },
+  "11th_house": {
+    "keywords": ["11th house", "eleventh house", "labha bhava"],
+    "analogy": "Think of the 11th House as your financial harvest basket and community network router.",
+    "core_analysis": "For your {ascendant} Lagna, the 11th house is {11th_house} ({11th_house_lord}), governing cash flow gains, networks, and fulfillment of desires.",
+    "dasha_influence": "Active in your {active_dasha} phase, it connects you with influential alliances that amplify success.",
+    "recommendation": "Nurture authentic professional networks, define clear financial goals, and collaborate generously."
+  },
+  "12th_house": {
+    "keywords": ["12th house", "twelfth house", "vyaya bhava"],
+    "analogy": "Think of the 12th House as a quiet retreat sanctuary, passport gate, and recharge battery.",
+    "core_analysis": "For your {ascendant} Lagna, the 12th house is {12th_house} ({12th_house_lord}), governing spiritual liberation (Moksha), overseas lands, and meditation.",
+    "dasha_influence": "In your {active_dasha} cycle, it signals the need for restorative solitude and foreign opportunities.",
+    "recommendation": "Practice evening digital detoxes, meditate regularly, and explore cross-cultural opportunities."
+  },
+  "sun": {
+    "keywords": ["sun", "surya", "sun in astrology"],
+    "analogy": "Think of the Sun as your internal CEO and soul power generator.",
+    "core_analysis": "The Sun signifies the soul (Atma), willpower, self-respect, father, executive authority, and constitutional vitality.",
+    "dasha_influence": "Interacts with your {ascendant} Lagna and {active_dasha} period to govern confidence and clarity of purpose.",
+    "recommendation": "Offer water to the rising sun, honor your commitments, and lead with quiet dignity."
+  },
+  "moon": {
+    "keywords": ["moon", "chandra", "moon in astrology"],
+    "analogy": "Think of the Moon as your emotional thermostat and internal mental mirror.",
+    "core_analysis": "The Moon governs the conscious mind (Manas), emotional rhythm, subconscious memory, mother, and mental serenity.",
+    "dasha_influence": "Anchored in your natal {moon_sign} Moon and {active_dasha} dasha, it governs daily moods and resilience against stress.",
+    "recommendation": "Hydrate adequately, practice 10 minutes of daily breathwork, and honor restorative evening sleep."
+  },
+  "mars": {
+    "keywords": ["mars", "mangal", "mars in astrology"],
+    "analogy": "Think of Mars as your internal athlete, ignition switch, and defensive shield.",
+    "core_analysis": "Mars represents physical courage, ambition, decisive action, stamina, engineering logic, and real estate.",
+    "dasha_influence": "Under your {active_dasha} cycle, it provides the fuel to defeat procrastination and conquer difficult challenges.",
+    "recommendation": "Channel energy into physical exercise, speak with patience, and avoid reckless impulsive arguments."
+  },
+  "mercury": {
+    "keywords": ["mercury", "budh", "budha", "mercury in astrology"],
+    "analogy": "Think of Mercury as your internal computer processor, editor, and negotiation app.",
+    "core_analysis": "Mercury governs analytical intellect, commercial trade, memory retention, articulate speech, and nervous coordination.",
+    "dasha_influence": "Influencing your {ascendant} Lagna and {active_dasha} timing, it enables rapid learning and tactical business acumen.",
+    "recommendation": "Read educational material daily, write down your thoughts, and communicate with clarity."
+  },
+  "jupiter": {
+    "keywords": ["jupiter", "guru", "brihaspati", "jupiter in astrology"],
+    "analogy": "Think of Jupiter as your inner mentor, philosophical library, and cosmic GPS.",
+    "core_analysis": "Jupiter signifies higher wisdom, ethical dharma, spiritual expansion, abundance, optimism, and protective grace.",
+    "dasha_influence": "Active alongside your {active_dasha} dasha, it attracts wise advisors, sound judgment, and resilient recovery.",
+    "recommendation": "Support educational charity, seek wisdom from experienced mentors, and base decisions on fairness."
+  },
+  "venus": {
+    "keywords": ["venus", "shukra", "venus in astrology"],
+    "analogy": "Think of Venus as your personal artist, diplomat, and harmony designer.",
+    "core_analysis": "Venus governs love, romantic attraction, aesthetics, luxury, vehicular comfort, and diplomatic charm.",
+    "dasha_influence": "Tied to your {active_dasha} phase, it dictates how you cultivate romantic rapport and design comfort.",
+    "recommendation": "Cultivate creative arts, show sincere appreciation in relationships, and maintain graceful self-care."
+  },
+  "saturn": {
+    "keywords": ["saturn", "shani", "saturn in astrology"],
+    "analogy": "Think of Saturn as a strict fitness trainer, building inspector, and master clock.",
+    "core_analysis": "Saturn represents karmic discipline, patience, hard labor, realistic boundaries, long-term mastery, and justice.",
+    "dasha_influence": "In your {active_dasha} timing, it delays instant gratification to build unbreakable structural resilience.",
+    "recommendation": "Embrace steady daily routines, honor working-class contributors, and avoid unearned shortcuts."
+  },
+  "rahu": {
+    "keywords": ["rahu", "north node", "rahu in astrology"],
+    "analogy": "Think of Rahu as a high-powered turbocharger and curiosity drone.",
+    "core_analysis": "Rahu signifies worldly ambition, unconventional growth, technological innovation, and foreign cultures.",
+    "dasha_influence": "During your {active_dasha} period, it pushes you toward modern trends and out-of-the-box career pivots.",
+    "recommendation": "Harness cutting-edge tools, stay anchored in core ethics, and verify facts before trusting hype."
+  },
+  "ketu": {
+    "keywords": ["ketu", "south node", "ketu in astrology"],
+    "analogy": "Think of Ketu as a digital cloud backup, minimalist filter, and spiritual antenna.",
+    "core_analysis": "Ketu represents spiritual detachment, past-life instincts, intuitive discernment, research depth, and liberation.",
+    "dasha_influence": "Active in your {active_dasha} cycle, it dissolves superficial distractions and promotes inner clarity.",
+    "recommendation": "Practice mindful meditation, declutter personal possessions, and trust your quiet intuition."
+  },
+  "nakshatra": {
+    "keywords": ["nakshatra", "lunar mansion", "birth star"],
+    "analogy": "Think of a Nakshatra as your soul's high-definition psychological fingerprint.",
+    "core_analysis": "One of 27 lunar sectors revealing refined temperament, intuitive instincts, and subconscious motivations.",
+    "dasha_influence": "Determines the opening chapter of your Vimshottari dasha cycle and subtle relationship chemistry.",
+    "recommendation": "Explore your birth star's ruling archetype to unlock unique intellectual and vocational gifts."
+  },
+  "mangal_dosha": {
+    "keywords": ["mangal dosha", "kuja dosha", "manglik"],
+    "analogy": "Think of Mangal Dosha as a high-voltage engine that requires skilled steering.",
+    "core_analysis": "Occurs when Mars sits in houses 1, 2, 4, 7, 8, or 12, infusing relationships with intense assertiveness.",
+    "dasha_influence": "When triggered by your {active_dasha} dasha, conscious communication channels its passion positively.",
+    "recommendation": "Practice calm active listening in relationships and channel excess intensity into fitness or career goals."
+  }
 }

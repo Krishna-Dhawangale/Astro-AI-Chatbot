@@ -1109,6 +1109,10 @@
       };
       localStorage.setItem('astro_user_profile', JSON.stringify(userProfile));
 
+      // Generate a fresh user session ID so new user profile starts with a clean slate
+      USER_ID = 'user_' + Math.random().toString(36).substring(2, 9);
+      localStorage.setItem('astro_user_id', USER_ID);
+
       const profileNameEl = document.getElementById('profileName');
       if (profileNameEl) profileNameEl.textContent = name;
 
@@ -1120,8 +1124,14 @@
       toggleModal('birthModal', false);
       if (landing) landing.style.display = 'none';
       if (chatPage) chatPage.style.display = 'flex';
+
+      // Clear previous chat messages so questions/answers apply to new profile
+      const chatContainer = document.getElementById('chatContainer');
+      if (chatContainer) chatContainer.replaceChildren();
+
       initChatGreeting();
     }
+
 
     function handleKeyPress(e) { if (e.key === 'Enter') sendMessage(); }
     
@@ -1314,7 +1324,8 @@
         birth_hour: parseFloat(document.getElementById('birthHour')?.value) || 12.0,
         latitude: parseFloat(document.getElementById('latitude')?.value) || 20.5937,
         longitude: parseFloat(document.getElementById('longitude')?.value) || 78.9629,
-        timezone: Number.isFinite(rawTimezone) ? rawTimezone : 5.5
+        timezone: Number.isFinite(rawTimezone) ? rawTimezone : 5.5,
+        already_greeted: true
       };
 
       try {
