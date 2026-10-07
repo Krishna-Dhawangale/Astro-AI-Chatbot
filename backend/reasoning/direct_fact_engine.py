@@ -11,11 +11,11 @@ from typing import Dict, Any, Optional, Tuple
 
 
 DIRECT_FACT_PATTERNS = {
-    "moon_sign": ["moon sign", "rashi", "my rashi", "what is my rashi", "what is my moon sign", "chandra rashi"],
+    "moon_sign": ["moon sign", "rashi", "my rashi", "what is my rashi", "what is my moon sign", "chandra rashi", "zodiac sign", "zodiac", "zodaic", "zodiak", "my zodiac"],
     "sun_sign": ["sun sign", "surya rashi", "what is my sun sign"],
     "lagna": ["lagna", "ascendant", "rising sign", "what is my lagna", "what is my ascendant"],
     "nakshatra": ["nakshatra", "birth star", "janma nakshatra", "what is my nakshatra"],
-    "current_dasha": ["current dasha", "mahadasha", "antardasha", "what is my current dasha", "my mahadasha", "current period"],
+    "current_dasha": ["current dasha", "mahadasha", "antardasha", "what is my current dasha", "my mahadasha", "current period", "dasha", "dasa", "dash"],
     "planet_placement": ["where is jupiter", "where is saturn", "where is mars", "where is venus", "where is mercury", "where is sun", "where is moon", "where is rahu", "where is ketu"],
     "house_occupants": ["7th house", "10th house", "1st house", "2nd house", "4th house", "5th house", "6th house", "8th house", "9th house", "11th house", "12th house"]
 }
@@ -29,11 +29,21 @@ def is_direct_fact_query(question: str) -> bool:
         return False
     q_lower = question.lower().strip()
     
-    # Exclude complex interpretative queries containing 'why', 'how', 'affect', 'suit me'
-    if any(kw in q_lower for kw in ["why", "how is", "affect", "suit me", "career", "marriage", "improve", "future", "tired", "health"]):
-        # Check if query is explicitly asking a factual question despite keywords
-        if any(f in q_lower for f in ["what is my moon sign", "what is my sun sign", "what is my lagna", "what is my nakshatra", "what is my current mahadasha"]):
+    # Support direct distinction & comparison lookups
+    if any(kw in q_lower for kw in ["difference", "different", "same as"]):
+        if any(f in q_lower for f in ["lagna", "rashi", "moon sign", "sun sign", "nakshatra"]):
             return True
+
+    # Exclude complex interpretative or timing/prediction queries
+    complex_exclusions = [
+        "when", "timing", "kab", "will i", "predict", "why", "how is", "affect", "suit me",
+        "career", "marriage", "improve", "future", "tired", "health", "should i", "move from",
+        "transition", "switch", "explain", "change", "overall", "situation", "detail"
+    ]
+    if any(kw in q_lower for kw in complex_exclusions):
+        if any(f in q_lower for f in ["what is my moon sign", "what is my sun sign", "what is my lagna", "what is my nakshatra", "what is my current mahadasha", "what is my dasha", "lagna different", "difference between"]):
+            if not any(t in q_lower for t in ["when will", "when is", "when get", "marri", "job", "career", "move", "transition", "should i"]):
+                return True
         return False
 
     for category, patterns in DIRECT_FACT_PATTERNS.items():
@@ -59,12 +69,101 @@ def extract_direct_fact(question: str, chart_data: Dict[str, Any], dasha_hierarc
     moon_data = planets.get("Moon", {})
     sun_data = planets.get("Sun", {})
 
+    # 0. Moon Longitude Lookup
+    if any(k in q_lower for k in ["longitude", "exact longitude"]):
+        moon_long = moon_data.get("longitude") or moon_data.get("degree_in_rashi")
+        moon_rashi = moon_data.get("rashi", "")
+        if moon_long is not None:
+            return {
+                "answer": f"Your Moon's exact planetary longitude is **{moon_long:.2f}°** in **{moon_rashi}**.",
+                "fact_type": "moon_longitude",
+                "answer_mode": "DIRECT",
+                "gemini_calls": 0,
+                "evidence_complete": True,
+                "fact_sources": {"moon_longitude": "FreeAstrologyAPI"}
+            }
+
+    # 0c. Lagna vs Rashi Distinction
+    if "lagna" in q_lower and ("rashi" in q_lower or "moon sign" in q_lower) and ("different" in q_lower or "difference" in q_lower):
+        asc_rashi = ascendant.get("rashi", "Ascendant")
+        asc_deg = ascendant.get("degree_in_rashi")
+        deg_str = f" at {asc_deg:.1f}°" if asc_deg is not None else ""
+        moon_rashi = moon_data.get("rashi", "Moon Sign")
+        return {
+            "answer": (
+                f"Your Lagna (Ascendant) is **{asc_rashi}**{deg_str} and your Rashi (Moon sign) is **{moon_rashi}**.\n\n"
+                "**Key Difference**:\n"
+                "- **Lagna (Ascendant)** is the zodiac sign rising on the eastern horizon at the exact time of your birth. It defines your physical body, life direction, and outer persona.\n"
+                "- **Rashi (Moon Sign)** is the zodiac sign where the Moon was positioned at your birth. It governs your mind, emotions, subconscious patterns, and mental peace."
+            ),
+            "fact_type": "lagna_vs_rashi",
+            "answer_mode": "DIRECT",
+            "gemini_calls": 0,
+            "evidence_complete": True,
+            "fact_sources": {"ascendant": "FreeAstrologyAPI", "moon_rashi": "FreeAstrologyAPI"}
+        }
+
+    # 0d. Sun Sign vs Moon Sign Distinction
+    if "sun" in q_lower and ("moon" in q_lower or "rashi" in q_lower) and ("difference" in q_lower or "different" in q_lower):
+        sun_rashi = sun_data.get("rashi", "Sun Sign")
+        moon_rashi = moon_data.get("rashi", "Moon Sign")
+        return {
+            "answer": (
+                f"Your Sun sign is **{sun_rashi}** and your Moon sign (Rashi) is **{moon_rashi}**.\n\n"
+                "**Key Difference**:\n"
+                "- **Sun Sign**: Represents your outer self, soul (Atma), career drive, ego, and vital energy.\n"
+                "- **Moon Sign (Rashi)**: Represents your inner emotional self, mind (Manas), intuition, and feelings. In Vedic Astrology, the Moon sign is primary for predictions and Dasha timing."
+            ),
+            "fact_type": "sun_vs_moon",
+            "answer_mode": "DIRECT",
+            "gemini_calls": 0,
+            "evidence_complete": True,
+            "fact_sources": {"sun_rashi": "FreeAstrologyAPI", "moon_rashi": "FreeAstrologyAPI"}
+        }
+
+    # 0e. Nakshatra vs Rashi Distinction
+    if "nakshatra" in q_lower and ("rashi" in q_lower or "moon sign" in q_lower) and ("difference" in q_lower or "different" in q_lower):
+        nakshatra = moon_data.get("nakshatra", "Nakshatra")
+        pada = moon_data.get("nakshatra_pada")
+        moon_rashi = moon_data.get("rashi", "Moon Sign")
+        pada_str = f" (Pada {pada})" if pada else ""
+        return {
+            "answer": (
+                f"Your Janma Nakshatra is **{nakshatra}**{pada_str} and your Moon sign (Rashi) is **{moon_rashi}**.\n\n"
+                "**Key Difference**:\n"
+                "- **Rashi**: One of 12 broad 30° zodiac arcs (e.g. Scorpio).\n"
+                "- **Nakshatra**: One of 27 precise 13°20' lunar constellations subdividing the zodiac. Nakshatras provide deeper detail about your subconscious motivations and dictate your exact Dasha timing."
+            ),
+            "fact_type": "nakshatra_vs_rashi",
+            "answer_mode": "DIRECT",
+            "gemini_calls": 0,
+            "evidence_complete": True,
+            "fact_sources": {"nakshatra": "FreeAstrologyAPI", "moon_rashi": "FreeAstrologyAPI"}
+        }
+
+    # 0f. Is Rashi the same as Moon sign?
+    if "is my rashi the same" in q_lower or "rashi same as moon sign" in q_lower or "rashi the same as" in q_lower:
+        moon_rashi = moon_data.get("rashi", "Moon Sign")
+        r_lord = moon_data.get("rashi_lord")
+        lord_str = f" (Lord: {r_lord})" if r_lord else ""
+        return {
+            "answer": (
+                f"**Yes!** In Vedic Astrology (Jyotish), your **Rashi is your Moon sign**.\n\n"
+                f"Calculated from your birth chart, your Moon sign (Rashi) is **{moon_rashi}**{lord_str}. Unlike Western astrology which focuses primarily on the Sun sign, Vedic astrology considers the Moon sign (Rashi) as the most critical pillar for personal traits and timing predictions."
+            ),
+            "fact_type": "rashi_is_moon_sign",
+            "answer_mode": "DIRECT",
+            "gemini_calls": 0,
+            "evidence_complete": True,
+            "fact_sources": {"moon_rashi": "FreeAstrologyAPI"}
+        }
+
     # Check for compound queries requesting multiple facts (e.g. Nakshatra AND Zodiac sign)
     wants_nakshatra = any(k in q_lower for k in ["nakshatra", "birth star", "janma nakshatra"])
-    wants_moon_sign = any(k in q_lower for k in ["moon sign", "rashi", "my rashi", "chandra rashi", "zodiac sign", "zodiac"])
+    wants_moon_sign = any(k in q_lower for k in ["moon sign", "rashi", "my rashi", "chandra rashi", "zodiac sign", "zodiac", "zodaic", "zodiak"])
     wants_sun_sign = any(k in q_lower for k in ["sun sign", "surya rashi"])
     wants_lagna = any(k in q_lower for k in ["lagna", "ascendant", "rising sign"])
-    wants_dasha = any(k in q_lower for k in ["mahadasha", "antardasha", "current dasha", "current period", "what dasha"])
+    wants_dasha = any(k in q_lower for k in ["mahadasha", "antardasha", "current dasha", "current period", "what dasha", "dasha", "dasa", "dash"])
 
     matched_flags = [wants_nakshatra, wants_moon_sign, wants_sun_sign, wants_lagna, wants_dasha]
     if sum(matched_flags) > 1:
@@ -119,7 +218,7 @@ def extract_direct_fact(question: str, chart_data: Dict[str, Any], dasha_hierarc
 
         if parts:
             if len(parts) == 2:
-                formatted_ans = f"Your {parts[0]} and your {parts[1]}.\n\nIn Vedic Astrology, the Moon sign governs your emotional processing and mental peace, while your Janma Nakshatra reveals your inner temperament and subconscious motivation."
+                formatted_ans = f"Your {parts[0]} and your {parts[1]}.\n\nIn Vedic Astrology, the Moon sign governs your emotional disposition and mental clarity, while your active Dasha period highlights the planetary energy shaping your current life phase."
             else:
                 bullet_list = "\n".join(f"- {p}" for p in parts)
                 formatted_ans = f"Here are your requested birth chart facts:\n{bullet_list}\n\nIn Vedic Astrology, these calculated placements govern your emotional disposition, core identity, and active karmic timings."
@@ -162,7 +261,7 @@ def extract_direct_fact(question: str, chart_data: Dict[str, Any], dasha_hierarc
             }
 
     # 2. Moon Sign / Rashi / Zodiac Sign
-    if any(k in q_lower for k in ["moon sign", "rashi", "my rashi", "chandra rashi", "zodiac sign", "zodiac"]):
+    if any(k in q_lower for k in ["moon sign", "rashi", "my rashi", "chandra rashi", "zodiac sign", "zodiac", "zodaic", "zodiak"]):
         moon_rashi = moon_data.get("rashi")
         if moon_rashi and str(moon_rashi).strip() and str(moon_rashi).strip() != "None":
             r_lord = moon_data.get("rashi_lord")
@@ -223,10 +322,20 @@ def extract_direct_fact(question: str, chart_data: Dict[str, Any], dasha_hierarc
             }
 
     # 5. Current Mahadasha / Antardasha Path
-    if any(k in q_lower for k in ["mahadasha", "antardasha", "current dasha", "current period", "what dasha"]):
+    if any(k in q_lower for k in ["mahadasha", "antardasha", "current dasha", "current period", "what dasha", "dasha", "dasa", "dash"]):
         if dasha_hierarchy:
             c_maha = dasha_hierarchy.get("current_mahadasha") or dasha_hierarchy.get("mahadasha", {}).get("planet")
             c_antar = dasha_hierarchy.get("current_antardasha") or dasha_hierarchy.get("antardasha", {}).get("planet")
+            if c_maha:
+                antar_str = f" and **{c_antar} Antardasha**" if c_antar else ""
+                return {
+                    "answer": f"Your current period is **{c_maha} Mahadasha**{antar_str}. Vimshottari Dasha is the 120-year planetary cycle system in Vedic astrology, revealing the exact planetary ruler currently activating karmic events, opportunities, and lessons in your life.",
+                    "fact_type": "current_dasha",
+                    "answer_mode": "DIRECT",
+                    "gemini_calls": 0,
+                    "evidence_complete": True,
+                    "fact_sources": {"current_dasha": "FreeAstrologyAPI"}
+                }
             st_date = dasha_hierarchy.get("start_date")
             et_date = dasha_hierarchy.get("end_date")
 
