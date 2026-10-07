@@ -122,3 +122,59 @@ def print_no_llm_call_report(answer_source: str, reason: str) -> Dict[str, Any]:
         "answer_source": answer_source,
         "reason": reason
     }
+
+
+def print_evidence_observability_report(
+    question: str,
+    domain: str,
+    intent: str,
+    answer_source: str,
+    api_calls: int,
+    local_rules: int,
+    gemini_calls: int,
+    input_tokens: int,
+    output_tokens: int,
+    required_evidence: List[str],
+    available_evidence: List[str],
+    missing_evidence: List[str],
+    evidence_status: str,
+    domain_match: bool = True,
+    intent_match: bool = True,
+    exact_rule_match: bool = True,
+    rule_coverage_score: float = 1.0,
+    answer_mode: Optional[str] = None
+):
+    """
+    Prints a terminal cost observability trace for every request as specified in Prompt Section 12.
+    """
+    mode_label = answer_mode or ("DIRECT_API" if answer_source == "DIRECT_API" else ("LOCAL_SYNTHESIS" if answer_source in ["LOCAL", "RULE_BASED"] else ("LLM_ASSISTED" if answer_source in ["EVIDENCE_GROUNDED_LLM", "GEMINI_GROUNDED", "PARTIAL_LOCAL_LLM"] else answer_source)))
+    src_label = "GEMINI_GROUNDED" if answer_source in ["EVIDENCE_GROUNDED_LLM", "PARTIAL_LOCAL_LLM"] else answer_source
+    coverage_label = "COMPLETE" if exact_rule_match else "INSUFFICIENT"
+
+    total_tokens = input_tokens + output_tokens
+
+    report_lines = [
+        "============================================================",
+        f"QUESTION       : {question}",
+        "",
+        f"DOMAIN         : {domain}",
+        f"INTENT         : {intent}",
+        "",
+        f"ANSWER MODE    : {mode_label}",
+        f"ANSWER SOURCE  : {src_label}",
+        "",
+        f"LOCAL RULES    : {local_rules}",
+        f"API CALLS      : {api_calls}",
+        f"GEMINI CALLS   : {gemini_calls}",
+        "",
+        f"LLM INPUT      : {input_tokens} tokens",
+        f"LLM OUTPUT     : {output_tokens} tokens",
+        f"LLM TOTAL      : {total_tokens} tokens",
+        "",
+        f"EVIDENCE       : {evidence_status}",
+        f"LOCAL COVERAGE : {coverage_label}",
+        "============================================================"
+    ]
+    print("\n" + "\n".join(report_lines) + "\n", flush=True)
+
+
