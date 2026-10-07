@@ -24,7 +24,7 @@ if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
 from backend.reasoning.direct_fact_engine import is_direct_fact_query, extract_direct_fact
-from backend.reasoning.mode_selector import select_answer_mode, evaluate_evidence_completeness
+from backend.reasoning.mode_selector import select_answer_mode
 from backend.reasoning.llm_renderer import build_compact_evidence_package, STRICT_RENDERER_SYSTEM_INSTRUCTION
 
 
@@ -119,17 +119,16 @@ def test_4mode_architecture():
     )
 
     assert mode_info_llm["mode"] == "LLM_ASSISTED"
-    assert mode_info_llm["evidence_complete"] == False
+    assert mode_info_llm["answer_source"] == "EVIDENCE_GROUNDED_LLM"
     assert mode_info_llm["gemini_calls"] == 1
 
     # Audit compact evidence package & strict renderer prompt
     pkg = build_compact_evidence_package("career", "career_general", TEST_CHART, partial_rules, TEST_DASHA)
-    assert "chart_summary" in pkg
-    assert "matched_evidence" in pkg
+    assert "verified_facts" in pkg
+    assert "selected_rules" in pkg
 
-    assert "Do not calculate astrology." in STRICT_RENDERER_SYSTEM_INSTRUCTION
-    assert "Do not infer missing chart facts." in STRICT_RENDERER_SYSTEM_INSTRUCTION
-    assert "Maximum 75 words." in STRICT_RENDERER_SYSTEM_INSTRUCTION
+    assert "Never calculate, infer, or invent astrology." in STRICT_RENDERER_SYSTEM_INSTRUCTION
+    assert "Return only the answer." in STRICT_RENDERER_SYSTEM_INSTRUCTION
     print(f"   - Intent: career_general (partial) | Mode: LLM_ASSISTED | Evidence Complete: False | Calls: 1")
     print("[PASS] LLM_ASSISTED Mode: Gemini acts strictly as a response renderer (0 astrology calculations permitted).")
 

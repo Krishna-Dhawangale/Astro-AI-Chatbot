@@ -19,6 +19,7 @@ BASE_DIR = Path(__file__).resolve().parent
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
+from backend.main import infer_query_domains
 from backend.router.model_selector import (
     load_domain_model_pool,
     predict_single_pair,
@@ -100,6 +101,13 @@ class TestDomainSelector(unittest.TestCase):
             self.assertIn("domain", preds[name])
             self.assertIn("confidence", preds[name])
             self.assertIn("probabilities", preds[name])
+
+    def test_08_generic_work_queries_stay_general(self):
+        for q in [
+            "How does astrology work?",
+            "How does this chatbot work?"
+        ]:
+            self.assertEqual(infer_query_domains(q), ["general"])
 
 if __name__ == "__main__":
     unittest.main()
