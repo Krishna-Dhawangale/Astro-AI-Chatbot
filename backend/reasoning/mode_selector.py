@@ -1,18 +1,27 @@
 """
 Mode Selector (backend/reasoning/mode_selector.py)
 ---------------------------------------------------
-Evaluates intent, chart evidence availability, rule completeness, and domain coverage
-to assign one of 4 internal answer statuses:
+Evaluates intent, chart evidence availability, rule coverage, and domain boundaries
+to assign one of 5 standardized answer sources:
 
-1. DIRECT        : Fact calculation/lookup query (0 LLM calls, < 5ms target latency)
-2. RULE_BASED     : Matched evidence is COMPLETE and covered by rules (0 LLM calls, < 50ms target latency)
-3. LLM_ASSISTED   : Partial evidence or conversational query requiring synthesis (1 Tiny LLM call)
-4. UNSUPPORTED    : Zero evidence coverage or out-of-domain query (0 LLM calls, < 5ms target latency)
+1. LOCAL                 : Exact deterministic rule exists and evidence complete (0 LLM calls)
+2. PARTIAL_LOCAL_LLM     : Core facts answered locally + LLM for creative/poetic rendering (1 LLM call)
+3. EVIDENCE_GROUNDED_LLM : Valid domain question, chart evidence complete, but local rule coverage insufficient (1 LLM call)
+4. UNSUPPORTED           : Inherently unsupported deterministic claim / out-of-domain (0 LLM calls)
+5. UNRESOLVED            : Required chart/factual evidence is missing and cannot be obtained (0 LLM calls)
 """
 
 from typing import Dict, Any, List, Optional, Tuple
 from backend.reasoning.direct_fact_engine import is_direct_fact_query
+from backend.reasoning.rule_coverage import evaluate_rule_coverage, is_unsupported_boundary_query
 
+ANSWER_SOURCES = {
+    "LOCAL",
+    "PARTIAL_LOCAL_LLM",
+    "EVIDENCE_GROUNDED_LLM",
+    "UNSUPPORTED",
+    "UNRESOLVED"
+}
 
 UNSUPPORTED_INTENTS = {
     "past_life",
@@ -34,39 +43,6 @@ SUPPORTED_DOMAINS = {
     "health"
 }
 
-
-def evaluate_evidence_completeness(domain: str, intent: str, matched_rules: List[Dict[str, Any]]) -> Tuple[bool, List[str]]:
-    """
-    Mandatory Evidence Completeness Gate:
-    Returns (is_complete: bool, evidence_ids: List[str]).
-    
-    RULE_BASED requires BOTH:
-      1. evidence_complete == True (Foundation lord placement rule + Karaka/Dignity evidence present)
-      2. rule_available == True (Deterministic rule templates present)
-    """
-    if not matched_rules or not isinstance(matched_rules, list):
-        return False, []
-
-    evidence_ids = [r.get("rule_id", "") for r in matched_rules if r.get("matched", True)]
-    
-    # Check if foundation lord placement rule exists for domain
-    has_foundation = any(
-        r.get("category") == "foundation" or "LORD_PLACEMENT" in r.get("rule_id", "")
-        for r in matched_rules if r.get("matched", True)
-    )
-
-    # Check if dignity or karaka evidence exists
-    has_karaka_or_dignity = any(
-        r.get("category") in ["dignity", "karaka", "house_evidence"] or "KARAKA" in r.get("rule_id", "")
-        for r in matched_rules if r.get("matched", True)
-    )
-
-    # Both foundation and karaka/dignity rules must be active for full rule-based completeness
-    is_complete = bool(has_foundation and has_karaka_or_dignity)
-
-    return is_complete, evidence_ids
-
-
 LLM_FALLBACK_KEYWORDS = [
     "philosophical",
     "psychological",
@@ -74,19 +50,11 @@ LLM_FALLBACK_KEYWORDS = [
     "storytelling",
     "creative interpretation",
     "life story",
-    "psychological theories",
-    "holistic lifestyle",
-    "lifestyle",
-    "holistic",
-    "inspirational",
+    "poem",
+    "write a poem",
     "short story",
     "creative story",
-    "inspirational message",
-    "life journey",
-    "will things get better",
-    "when will my situation change",
-    "situation change",
-    "things get better"
+    "inspirational message"
 ]
 
 
@@ -95,28 +63,42 @@ def select_answer_mode(
     intent: str,
     question: str,
     matched_rules: List[Dict[str, Any]] = None,
-    is_faq: bool = False
+    is_faq: bool = False,
+    structured_evidence: Any = None,
+    evidence_status: str = "COMPLETE"
 ) -> Dict[str, Any]:
     """
-    Master Mode Selector evaluating 4 explicit answer_source statuses:
-    1. LOCAL              (FAQ, Direct API, Complete Rules Engine - gemini_calls = 0)
-    2. PARTIAL_LOCAL_LLM  (Partial Local Answer + Minimal LLM for missing part - gemini_calls = 1)
-    3. LLM_FALLBACK       (Philosophical/Creative query beyond local rules - gemini_calls = 1)
-    4. UNSUPPORTED        (Out of domain or boundary queries - gemini_calls = 0)
+    Master Mode Selector implementing Section 3 Routing Decision Hierarchy:
+
+    if boundary_detected:
+        answer_source = "UNSUPPORTED"
+    elif evidence_status == "UNRESOLVED":
+        answer_source = "UNRESOLVED"
+    elif exact_rule_match and required_evidence_complete:
+        answer_source = "LOCAL"
+    elif valid_domain_question and required_evidence_complete:
+        answer_source = "EVIDENCE_GROUNDED_LLM"
+    else:
+        answer_source = "UNRESOLVED"
     """
     q_lower = (question or "").lower().strip()
+    target_dom = (domain or "general").lower()
+    target_intent = (intent or "general").lower()
 
-    # 1. Check for Unsupported Out-of-Domain / Invalid Queries
-    unsupported_kws = [
-        "past life", "previous life", "lottery numbers", "win lottery", "gambling numbers",
-        "sports prediction", "stock picking", "stock that will rise", "team will win",
-        "win tonight", "date when i will die", "date of death", "guaranteed numbers"
-    ]
-    if intent in UNSUPPORTED_INTENTS or any(k in q_lower for k in unsupported_kws):
+    # 1. Tier 1 — UNSUPPORTED BOUNDARY
+    boundary_detected = (
+        target_intent in UNSUPPORTED_INTENTS
+        or is_unsupported_boundary_query(question)
+    )
+    if boundary_detected:
         return {
             "mode": "UNSUPPORTED",
             "answer_source": "UNSUPPORTED",
             "reason": "unsupported_or_out_of_domain_intent",
+            "domain_match": False,
+            "intent_match": False,
+            "exact_rule_match": False,
+            "rule_coverage_score": 0.0,
             "evidence_complete": False,
             "gemini_calls": 0,
             "llm_tokens": 0,
@@ -126,44 +108,42 @@ def select_answer_mode(
             "fallback_reason": "Query requests insights outside Vedic astrology chart boundaries."
         }
 
-    # 2. Check for LLM Synthesis (Partial Local vs Full Fallback)
-    has_creative_req = any(k in q_lower for k in LLM_FALLBACK_KEYWORDS)
-    active_rules = [r for r in (matched_rules or []) if r.get("matched", True)]
+    # 2. Tier 4 — MISSING EVIDENCE (UNRESOLVED)
+    is_sufficient_ev = True
+    if structured_evidence is not None:
+        if hasattr(structured_evidence, "is_sufficient"):
+            is_sufficient_ev = structured_evidence.is_sufficient()
+        elif isinstance(structured_evidence, dict):
+            is_sufficient_ev = structured_evidence.get("is_sufficient", True)
 
-    if has_creative_req:
-        if active_rules or domain in ["career", "marriage", "finance", "health", "multi_domain"]:
-            return {
-                "mode": "LLM_ASSISTED",
-                "answer_source": "PARTIAL_LOCAL_LLM",
-                "reason": "local_core_matched_with_creative_llm_rendering",
-                "evidence_complete": False,
-                "gemini_calls": 1,
-                "llm_tokens": 95,
-                "local_answered": True,
-                "llm_answered": True,
-                "evidence_ids": [r.get("rule_id", "") for r in active_rules],
-                "fallback_reason": "Local rules answered core facts; Gemini invoked only for creative/poetic rendering."
-            }
-        else:
-            return {
-                "mode": "LLM_ASSISTED",
-                "answer_source": "LLM_FALLBACK",
-                "reason": "philosophical_or_holistic_query_requires_llm_rendering",
-                "evidence_complete": False,
-                "gemini_calls": 1,
-                "llm_tokens": 120,
-                "local_answered": False,
-                "llm_answered": True,
-                "evidence_ids": [],
-                "fallback_reason": "Query requests creative/philosophical synthesis beyond deterministic rule scope."
-            }
+    if evidence_status == "UNRESOLVED" or (structured_evidence and not is_sufficient_ev and not matched_rules):
+        return {
+            "mode": "UNRESOLVED",
+            "answer_source": "UNRESOLVED",
+            "reason": "required_evidence_missing",
+            "domain_match": True,
+            "intent_match": True,
+            "exact_rule_match": False,
+            "rule_coverage_score": 0.0,
+            "evidence_complete": False,
+            "gemini_calls": 0,
+            "llm_tokens": 0,
+            "local_answered": False,
+            "llm_answered": False,
+            "evidence_ids": [],
+            "fallback_reason": "Required natal chart evidence is missing."
+        }
 
-    # 3. Check for Direct Fact Queries (HIGHEST PRIORITY FACT PATH)
+    # 3. Direct Fact Path (HIGHEST PRIORITY FACT PATH)
     if is_faq or is_direct_fact_query(question):
         return {
             "mode": "DIRECT",
             "answer_source": "LOCAL",
             "reason": "direct_factual_lookup",
+            "domain_match": True,
+            "intent_match": True,
+            "exact_rule_match": True,
+            "rule_coverage_score": 1.0,
             "evidence_complete": True,
             "gemini_calls": 0,
             "llm_tokens": 0,
@@ -173,62 +153,91 @@ def select_answer_mode(
             "fallback_reason": None
         }
 
-    # 4. Check Domain Support
-    target_dom = (domain or "general").lower()
-    if target_dom not in SUPPORTED_DOMAINS and target_dom != "multi_domain" and target_dom != "other":
+    # 4. Creative Request (Partial Local + Gemini)
+    has_creative_req = any(k in q_lower for k in LLM_FALLBACK_KEYWORDS)
+    if has_creative_req:
         return {
-            "mode": "UNSUPPORTED",
-            "answer_source": "UNSUPPORTED",
-            "reason": "unsupported_domain",
-            "evidence_complete": False,
-            "gemini_calls": 0,
-            "llm_tokens": 0,
-            "local_answered": False,
-            "llm_answered": False,
-            "evidence_ids": [],
-            "fallback_reason": f"Domain '{domain}' is not currently covered by deterministic rules."
+            "mode": "LLM_ASSISTED",
+            "answer_source": "PARTIAL_LOCAL_LLM",
+            "reason": "local_core_matched_with_creative_llm_rendering",
+            "domain_match": True,
+            "intent_match": True,
+            "exact_rule_match": False,
+            "rule_coverage_score": 0.5,
+            "evidence_complete": True,
+            "gemini_calls": 1,
+            "llm_tokens": 95,
+            "local_answered": True,
+            "llm_answered": True,
+            "evidence_ids": [r.get("rule_id", "") for r in (matched_rules or []) if r.get("matched", True)],
+            "fallback_reason": "Local rules answered core facts; Gemini invoked for creative/poetic rendering."
         }
 
-    # 5. Mandatory Evidence Completeness Gate
-    is_complete, evidence_ids = evaluate_evidence_completeness(target_dom, intent, matched_rules or [])
+    # 5. Evaluate Rule Coverage (Tier 2 vs Tier 3)
+    cov_eval = evaluate_rule_coverage(
+        question=question,
+        domain=domain,
+        intent=intent,
+        structured_evidence=structured_evidence,
+        matched_rules=matched_rules
+    )
 
-    if is_complete or target_dom in ["other", "multi_domain"]:
+    exact_rule_match = cov_eval.get("exact_rule_match", False)
+    req_ev_complete = cov_eval.get("required_evidence_complete", True)
+    domain_match = cov_eval.get("domain_match", True)
+
+    # Tier 2 — LOCAL DETERMINISTIC ANSWER
+    if exact_rule_match and req_ev_complete:
         return {
             "mode": "RULE_BASED",
             "answer_source": "LOCAL",
-            "reason": "complete_evidence_and_rules_matched",
+            "reason": "exact_deterministic_rule_coverage_available",
+            "domain_match": True,
+            "intent_match": True,
+            "exact_rule_match": True,
+            "rule_coverage_score": 1.0,
             "evidence_complete": True,
             "gemini_calls": 0,
             "llm_tokens": 0,
             "local_answered": True,
             "llm_answered": False,
-            "evidence_ids": evidence_ids or ["RULE_ENGINE"],
+            "evidence_ids": cov_eval.get("matching_rules", ["EXACT_LOCAL_RULE"]),
             "fallback_reason": None
         }
-    elif evidence_ids:
-        # Partial evidence: Local synthesizer handles core, missing sub-part rendered by LLM
+
+    # Tier 3 — EVIDENCE-GROUNDED LLM
+    if domain_match and req_ev_complete:
         return {
             "mode": "LLM_ASSISTED",
-            "answer_source": "PARTIAL_LOCAL_LLM",
-            "reason": "partial_evidence_requires_minimal_llm_synthesis",
-            "evidence_complete": False,
+            "answer_source": "EVIDENCE_GROUNDED_LLM",
+            "reason": "valid_domain_question_insufficient_local_rule_coverage",
+            "domain_match": True,
+            "intent_match": cov_eval.get("intent_match", True),
+            "exact_rule_match": False,
+            "rule_coverage_score": 0.0,
+            "evidence_complete": True,
             "gemini_calls": 1,
-            "llm_tokens": 85,
-            "local_answered": True,
-            "llm_answered": True,
-            "evidence_ids": evidence_ids,
-            "fallback_reason": "Partial evidence matched; rendering missing sub-part with strict LLM renderer boundary."
-        }
-    else:
-        return {
-            "mode": "UNSUPPORTED",
-            "answer_source": "UNSUPPORTED",
-            "reason": "zero_evidence_matched",
-            "evidence_complete": False,
-            "gemini_calls": 0,
-            "llm_tokens": 0,
+            "llm_tokens": 140,
             "local_answered": False,
-            "llm_answered": False,
-            "evidence_ids": [],
-            "fallback_reason": "Insufficient natal chart evidence matched in backend rules."
+            "llm_answered": True,
+            "evidence_ids": cov_eval.get("matching_rules", []),
+            "fallback_reason": cov_eval.get("reason", "Valid domain question requiring evidence-grounded LLM synthesis.")
         }
+
+    # Default Tier 4 — UNRESOLVED
+    return {
+        "mode": "UNRESOLVED",
+        "answer_source": "UNRESOLVED",
+        "reason": "unresolved_or_unmatched_query",
+        "domain_match": False,
+        "intent_match": False,
+        "exact_rule_match": False,
+        "rule_coverage_score": 0.0,
+        "evidence_complete": False,
+        "gemini_calls": 0,
+        "llm_tokens": 0,
+        "local_answered": False,
+        "llm_answered": False,
+        "evidence_ids": [],
+        "fallback_reason": "Query cannot be safely resolved from available evidence or rules."
+    }
