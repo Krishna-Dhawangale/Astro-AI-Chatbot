@@ -1,0 +1,101 @@
+### Question 1
+**User Question**: `How does my current Mahadasha affect my career?`
+**Answer Mode**: `RULE_BASED` | **Answer Source**: `LOCAL` | **Gemini Calls**: `0`
+**Chatbot Response**:
+Your current period is **Mars Mahadasha** and **Rahu Antardasha**.
+
+Regarding career, your birth chart (Leo Ascendant, Scorpio Moon sign) highlights primary strengths in analytical decision-making, structured management, and strategic execution. Your active Mars Mahadasha period supports developing specialized skills, taking on organizational responsibilities, and positioning yourself for progressive professional growth.
+
+============================================================
+### Question 2
+**User Question**: `How does my current Antardasha influence my life?`
+**Answer Mode**: `LOCAL` | **Answer Source**: `LOCAL` | **Gemini Calls**: `0`
+**Chatbot Response**:
+Your current Mahadasha is Mars and current Antardasha is Rahu.
+
+============================================================
+### Question 3
+**User Question**: `What does my chart indicate about my career growth?`
+**Answer Mode**: `LLM_ASSISTED` | **Answer Source**: `GEMINI_GROUNDED` | **Gemini Calls**: `1`
+**Chatbot Response**:
+Your chart indicates that Mercury, as the 10th lord in the 1st house, suggests career initiative, drive, an analytical focus, and communication. The current Dasha is Mars-Rahu. Please remember that astrological indicators provide tendencies rather than certainties, and outcomes may vary depending on various life factors.
+
+============================================================
+### Question 4
+**User Question**: `What does my chart indicate about marriage timing?`
+**Answer Mode**: `RULE_BASED` | **Answer Source**: `LOCAL` | **Gemini Calls**: `0`
+**Chatbot Response**:
+**Marriage Timing & Dasha:** Your active period (Mars/Rahu) connects constructively with your relationship house factors. Your chart indicates a supportive timing window for marriage around **2027–2028**.
+
+============================================================
+### Question 5
+**User Question**: `What does my chart indicate about financial stability?`
+**Answer Mode**: `LLM_ASSISTED` | **Answer Source**: `GEMINI_GROUNDED` | **Gemini Calls**: `1`
+**Chatbot Response**:
+Your chart indicates potential for wealth expansion and financial gains. The second house is in Libra, with Jupiter placed in the first house. The current Mars-Rahu Dasha activates the eleventh lord, supporting financial stability. However, astrological influences vary, and outcomes cannot be guaranteed.
+
+============================================================
+### Question 6
+**User Question**: `What does my chart indicate about higher education?`
+**Answer Mode**: `LLM_ASSISTED` | **Answer Source**: `GEMINI_GROUNDED` | **Gemini Calls**: `1`
+**Chatbot Response**:
+Your chart indicates that Mercury, the tenth lord, is placed in the first house. This placement suggests career initiative, drive, and an analytical or communication focus related to your professional path. Your current dasha is Mars-Rahu. Please note that astrological indications do not guarantee specific outcomes.
+
+============================================================
+### Question 7
+**User Question**: `What does my chart indicate about property matters?`
+**Answer Mode**: `LLM_ASSISTED` | **Answer Source**: `GEMINI_GROUNDED` | **Gemini Calls**: `1`
+**Chatbot Response**:
+Your chart indicates that the 10th house is Gemini and the 10th lord Mercury is placed in the 1st house, pointing toward career initiative, drive, an analytical focus, and communication. The current dasha is Mars-Rahu. This combination may influence property matters, though outcomes remain uncertain and require cautious interpretation without guarantees.
+
+============================================================
+### Question 8
+**User Question**: `What does my chart indicate about relationships?`
+**Answer Mode**: `LLM_ASSISTED` | **Answer Source**: `GEMINI_GROUNDED` | **Gemini Calls**: `1`
+**Chatbot Response**:
+Your chart indicates that Venus in the 1st house places the marriage karaka in a strong position. With the 7th house in Pisces and the current Mars-Rahu dasha, you may experience transformative relationship dynamics. Please note that astrological indications suggest possibilities rather than guarantees.
+
+============================================================
+### Question 9
+**User Question**: `What are the strongest career indicators in my chart?`
+**Answer Mode**: `LLM_ASSISTED` | **Answer Source**: `GEMINI_GROUNDED` | **Gemini Calls**: `1`
+**Chatbot Response**:
+Your chart indicates career initiative and drive through Mercury as 10L in the 1H. There is also an analytical and communication focus from Mercury as 10L. The 10H is Gemini, and your current dasha is Mars-Rahu. These factors suggest potential pathways, though precise outcomes are not guaranteed.
+
+============================================================
+### Question 10
+**User Question**: `What are the strongest marriage indicators in my chart?`
+**Answer Mode**: `RULE_BASED` | **Answer Source**: `LOCAL` | **Gemini Calls**: `0`
+**Chatbot Response**:
+Based on your birth chart (Leo Ascendant, Scorpio Moon sign):
+
+- Your 7th-house lord is in a supportive placement, emphasizing mutual trust, clear communication, and emotional harmony.
+- Relationship karaka planets favor building a supportive, enduring partnership foundation built on shared values.
+- Long-term emotional stability is strengthened through patient communication and mutual understanding.
+
+============================================================
+### Question 11
+**User Question**: `Which planets are most important for my career?`
+**Answer Mode**: `LLM_ASSISTED` | **Answer Source**: `GEMINI_GROUNDED` | **Gemini Calls**: `1`
+**Chatbot Response**:
+Mercury is most important for your career as the tenth lord placed in the first house, indicating career initiative, drive, analytical focus, and communication. Your current Dasha is Mars-Rahu. Please remember astrological influences are tendencies, not guarantees.
+
+============================================================
+### Question 12
+**User Question**: `Which planets influence my 7th house?`
+**Answer Mode**: `DIRECT` | **Answer Source**: `LOCAL` | **Gemini Calls**: `0`
+**Chatbot Response**:
+There are no natal planets positioned in your **7th house**.
+
+============================================================
+### Question 13
+**User Question**: `How does my 10th lord influence my career?`
+**Answer Mode**: `RULE_BASED` | **Answer Source**: `LOCAL` | **Gemini Calls**: `0`
+**Chatbot Response**:
+Based on your birth chart (Leo Ascendant, Scorpio Moon sign):
+
+- Your 10th-house lord shows a balanced placement, indicating steady career progress through analytical decision-making, consistent skill consolidation, and adaptability.
+- Career karaka planets favor steady professional advancement, skill-based growth, and organizational leadership.
+- Current transit influences suggest progress develops best through consistent effort, disciplined organization, and patience rather than sudden opportunities.
+
+============================================================

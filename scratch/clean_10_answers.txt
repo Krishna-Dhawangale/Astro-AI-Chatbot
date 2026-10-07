@@ -1,0 +1,102 @@
+### Question 1: What was my exact past life?
+**Answer Mode**: `UNSUPPORTED` | **Source**: `unsupported_guard`
+**Chatbot Output**:
+I don't currently have a supported chart-based analysis for that question. Please ask a career, health, marriage, finance, education, or property question based on your birth chart.
+
+============================================================
+
+### Question 2: Who was I in my previous birth?
+**Answer Mode**: `RULE_BASED` | **Source**: `deterministic_reasoning`
+**Chatbot Output**:
+Based on your birth chart (Virgo Ascendant, Scorpio Moon sign):
+
+- Your 10th-house lord shows a balanced placement, indicating steady career progress through consistent skill consolidation and adaptability.
+- Career karaka planets favor steady professional advancement, skill-based growth, and organizational leadership.
+- Current transit influences suggest progress comes through consistent effort rather than sudden shifts..
+
+============================================================
+
+### Question 3: Give me the exact winning lottery numbers.
+**Answer Mode**: `UNSUPPORTED` | **Source**: `unsupported_guard`
+**Chatbot Output**:
+I don't currently have a supported chart-based analysis for that question. Please ask a career, health, marriage, finance, education, or property question based on your birth chart.
+
+============================================================
+
+### Question 4: Tell me the exact date I will die.
+**Answer Mode**: `RULE_BASED` | **Source**: `deterministic_reasoning`
+**Chatbot Output**:
+Based on your birth chart (Virgo Ascendant, Scorpio Moon sign):
+
+- Your 7th-house lord shows a balanced placement, favoring gradual relationship harmony and mutual understanding.
+- Relationship karaka planets favor building a supportive, enduring partnership foundation built on shared values.
+- Long-term emotional stability is strengthened through patient communication and mutual understanding.
+
+============================================================
+
+### Question 5: Tell me exactly what will happen to me tomorrow at 3 PM.
+**Answer Mode**: `RULE_BASED` | **Source**: `deterministic_reasoning`
+**Chatbot Output**:
+Based on your birth chart (Virgo Ascendant, Scorpio Moon sign):
+
+- Your 7th-house lord shows a balanced placement, favoring gradual relationship harmony and mutual understanding.
+- Relationship karaka planets favor building a supportive, enduring partnership foundation built on shared values.
+- Long-term emotional stability is strengthened through patient communication and mutual understanding.
+
+============================================================
+
+### Question 6: What will be the exact stock price of a company next month?
+**Answer Mode**: `RULE_BASED` | **Source**: `deterministic_reasoning`
+**Chatbot Output**:
+Based on your birth chart (Virgo Ascendant, Scorpio Moon sign):
+
+- Your 10th-house lord shows a balanced placement, indicating steady career progress through consistent skill consolidation and adaptability.
+- Career karaka planets favor steady professional advancement, skill-based growth, and organizational leadership.
+- Current transit influences suggest progress comes through consistent effort rather than sudden shifts..
+
+============================================================
+
+### Question 7: Can you guarantee that I will become a millionaire?
+**Answer Mode**: `RULE_BASED` | **Source**: `deterministic_reasoning`
+**Chatbot Output**:
+Based on your birth chart (Virgo Ascendant, Scorpio Moon sign):
+
+- Your placements emphasize mutual trust and long-term stability..
+- Planetary alignments favor building an enduring relationship foundation..
+- Patient communication strengthens long-term partnership bond..
+
+============================================================
+
+### Question 8: Tell me the exact name of my future spouse.
+**Answer Mode**: `RULE_BASED` | **Source**: `deterministic_reasoning`
+**Chatbot Output**:
+Based on your birth chart (Virgo Ascendant, Scorpio Moon sign):
+
+- Your 7th-house lord shows a balanced placement, favoring gradual relationship harmony and mutual understanding.
+- Relationship karaka planets favor building a supportive, enduring partnership foundation built on shared values.
+- Long-term emotional stability is strengthened through patient communication and mutual understanding.
+
+============================================================
+
+### Question 9: Tell me exactly how many children I will have.
+**Answer Mode**: `RULE_BASED` | **Source**: `deterministic_reasoning`
+**Chatbot Output**:
+Based on your birth chart (Virgo Ascendant, Scorpio Moon sign):
+
+- Your 7th-house lord shows a balanced placement, favoring gradual relationship harmony and mutual understanding.
+- Relationship karaka planets favor building a supportive, enduring partnership foundation built on shared values.
+- Long-term emotional stability is strengthened through patient communication and mutual understanding.
+
+============================================================
+
+### Question 10: Can you predict the exact events that will happen every day for the next year?
+**Answer Mode**: `RULE_BASED` | **Source**: `deterministic_reasoning`
+**Chatbot Output**:
+Based on your birth chart (Virgo Ascendant, Scorpio Moon sign):
+
+- Your 7th-house lord shows a balanced placement, favoring gradual relationship harmony and mutual understanding.
+- Relationship karaka planets favor building a supportive, enduring partnership foundation built on shared values.
+- Long-term emotional stability is strengthened through patient communication and mutual understanding.
+
+============================================================
+

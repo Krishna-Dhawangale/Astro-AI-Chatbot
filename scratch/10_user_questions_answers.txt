@@ -1,0 +1,86 @@
+### Question 1
+**User Question**: `Can you explain my overall career situation from my chart?`
+**Answer Mode**: `LLM_ASSISTED` | **Answer Source**: `GEMINI_GROUNDED` | **Gemini Calls**: `1`
+**Chatbot Response**:
+Your career path is strongly connected to your personal initiative and identity, as the 10th lord Mercury is placed directly in the 1st house in Gemini. This placement brings strong intellectual engagement, adaptability, and communication skills to your professional life. 
+
+Currently, you are running the Mars Mahadasha with Rahu Antardasha, an active period that infuses your career with high drive, ambition, and a desire for breakthrough achievements. Together, these influences suggest a dynamic professional journey where your individual effort and sharp focus play a primary role in shaping your success.
+
+============================================================
+### Question 2
+**User Question**: `What are the major themes of my life right now?`
+**Answer Mode**: `LLM_ASSISTED` | **Answer Source**: `GEMINI_GROUNDED` | **Gemini Calls**: `1`
+**Chatbot Response**:
+With Leo as your Ascendant and Scorpio as your Moon sign, your life right now is heavily influenced by themes of transformation, personal drive, and ambition. You are currently running the Mars Mahadasha with Rahu Antardasha, a dynamic period that naturally brings strong energy, focus on goals, and a desire to break new ground or pursue unconventional paths. This combination encourages you to channel your inner courage and intensity into managing changes and tackling major projects with determination.
+
+============================================================
+### Question 3
+**User Question**: `Can you give me a short interpretation of my current astrological period?`
+**Answer Mode**: `LLM_ASSISTED` | **Answer Source**: `GEMINI_GROUNDED` | **Gemini Calls**: `1`
+**Chatbot Response**:
+You are currently running through the Mars Mahadasha with a Rahu Antardasha. As a Leo ascendant with your Moon in Scorpio and Sun in Aries, Mars holds a powerful energy in your chart as a key yogakaraka and ruler. This period naturally brings active drive, focus on goals, and dynamic changes. However, the influence of Rahu during this Antardasha can introduce unexpected turns, heightened ambition, or a desire to break routine. It is a phase that encourages decisive action, but keeping a balanced approach will help you navigate any sudden shifts smoothly.
+
+============================================================
+### Question 4
+**User Question**: `How do my different chart placements work together?`
+**Answer Mode**: `LLM_ASSISTED` | **Answer Source**: `GEMINI_GROUNDED` | **Gemini Calls**: `1`
+**Chatbot Response**:
+Your chart placements work together to bring a strong personal drive to your professional life. With the 10th lord Mercury placed in the 1st house, your career is deeply tied to your personal identity, visibility, and direct efforts, making you proactive about your path. 
+
+Currently, running the Mars Mahadasha with Rahu Antardasha provides an active period of ambition and drive for professional shifts. While this dynamic energy supports pursuing new directions, the strong focus on self-driven enterprise suggests that career changes will require deliberate planning to align your personal goals with sustainable opportunities.
+
+============================================================
+### Question 5
+**User Question**: `What are the strongest themes you see in my birth chart?`
+**Answer Mode**: `LOCAL` | **Answer Source**: `LOCAL` | **Gemini Calls**: `0`
+**Chatbot Response**:
+Hello Rahul, A Vedic Kundali (Birth Chart) is a cosmic snapshot of the 12 zodiac signs and 9 planets across 12 houses (Bhavas) at your exact moment and coordinates of birth.
+
+(Your Chart Snapshot: Leo Ascendant | Scorpio Moon | Aries Sun)
+
+============================================================
+### Question 6
+**User Question**: `Can you explain my chart in simple language?`
+**Answer Mode**: `LLM_ASSISTED` | **Answer Source**: `GEMINI_GROUNDED` | **Gemini Calls**: `1`
+**Chatbot Response**:
+Your chart features a Leo Ascendant, which gives you a natural warmth, leadership presence, and creative spirit. With your Moon in Scorpio, your emotional world is deep, intense, and intuitive, while your Sun in Aries adds drive, courage, and a strong sense of initiative. 
+
+You are currently running the Mars Mahadasha with a Rahu Antardasha, a period that naturally amplifies your energy, ambition, and drive for action. This combination shapes a personality that is both bold and fiercely determined, blending steady confidence with deep emotional resilience.
+
+============================================================
+### Question 7
+**User Question**: `What kind of career path appears most aligned with my chart?`
+**Answer Mode**: `LLM_ASSISTED` | **Answer Source**: `GEMINI_GROUNDED` | **Gemini Calls**: `1`
+**Chatbot Response**:
+Your career path strongly favors fields involving intellect, communication, analysis, and active management. 
+
+With Mercury—the ruler of your career house—placed directly in your first house, your professional life is closely tied to your personal identity, visibility, and decision-making. This placement supports roles where communication, writing, commerce, strategy, or analytical skills are central. 
+
+Currently, running through the Mars Mahadasha activated with Rahu brings a dynamic, ambitious, and driven energy to your professional endeavors. This period favors ventures requiring initiative, leadership, or independent execution, suggesting you will thrive in environments that reward adaptability and sharp problem-solving.
+
+============================================================
+### Question 8
+**User Question**: `How do my personality and career indicators connect?`
+**Answer Mode**: `LLM_ASSISTED` | **Answer Source**: `GEMINI_GROUNDED` | **Gemini Calls**: `1`
+**Chatbot Response**:
+Your Leo Ascendant and Aries Sun naturally infuse your personality with strong leadership, confidence, and a drive to take charge. Meanwhile, your Scorpio Moon adds depth, intense focus, and strategic thinking to your inner nature. 
+
+Currently, you are running the Mars Mahadasha with a Rahu Antardasha. Since Mars rules your career sectors in a Leo chart, this active planetary period strongly bridges your bold, ambitious personality traits with your professional pursuits, driving you toward leadership, high-energy projects, and decisive action in your career.
+
+============================================================
+### Question 9
+**User Question**: `What major changes might this period represent according to my chart?`
+**Answer Mode**: `LLM_ASSISTED` | **Answer Source**: `GEMINI_GROUNDED` | **Gemini Calls**: `1`
+**Chatbot Response**:
+This current period under the Mars Mahadasha and Rahu Antardasha indicates a time of significant personal shift and transformation. With your Ascendant in Leo, Mars acts as an active and dynamic energy for you, while Rahu brings unconventional ambitions and sudden developments. 
+
+This combination suggests that you may experience notable changes related to your personal drive, ambitions, and daily direction. Because specific rule matches are limited, it is best to approach this phase with a balanced perspective, staying adaptable to new opportunities and shifts as they unfold.
+
+============================================================
+### Question 10
+**User Question**: `Can you summarize what my current Dasha means for me?`
+**Answer Mode**: `DIRECT` | **Answer Source**: `LOCAL` | **Gemini Calls**: `0`
+**Chatbot Response**:
+Your current period is **Mars Mahadasha** and **Rahu Antardasha**. Vimshottari Dasha is the 120-year planetary cycle system in Vedic astrology, revealing the exact planetary ruler currently activating karmic events, opportunities, and lessons in your life.
+
+============================================================

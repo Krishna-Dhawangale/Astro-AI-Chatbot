@@ -1,0 +1,80 @@
+### Question 1
+**User Prompt**: `1. What was my exact past life?`
+**Answer Mode**: `UNSUPPORTED` | **Answer Source**: `UNSUPPORTED`
+**Chatbot Response**:
+I don't currently have a supported chart-based analysis for that question. Please ask a career, health, marriage, finance, education, or property question based on your birth chart.
+
+============================================================
+
+### Question 2
+**User Prompt**: `2. Who was I in my previous birth?`
+**Answer Mode**: `UNSUPPORTED` | **Answer Source**: `UNSUPPORTED`
+**Chatbot Response**:
+I don't currently have a supported chart-based analysis for that question. Please ask a career, health, marriage, finance, education, or property question based on your birth chart.
+
+============================================================
+
+### Question 3
+**User Prompt**: `3. Give me the exact winning lottery numbers.`
+**Answer Mode**: `UNSUPPORTED` | **Answer Source**: `UNSUPPORTED`
+**Chatbot Response**:
+I don't currently have a supported chart-based analysis for that question. Please ask a career, health, marriage, finance, education, or property question based on your birth chart.
+
+============================================================
+
+### Question 4
+**User Prompt**: `4. Tell me the exact date I will die.`
+**Answer Mode**: `UNSUPPORTED` | **Answer Source**: `UNSUPPORTED`
+**Chatbot Response**:
+I don't currently have a supported chart-based analysis for that question. Please ask a career, health, marriage, finance, education, or property question based on your birth chart.
+
+============================================================
+
+### Question 5
+**User Prompt**: `5. Tell me exactly what will happen to me tomorrow at 3 PM.`
+**Answer Mode**: `UNSUPPORTED` | **Answer Source**: `UNSUPPORTED`
+**Chatbot Response**:
+I don't currently have a supported chart-based analysis for that question. Please ask a career, health, marriage, finance, education, or property question based on your birth chart.
+
+============================================================
+
+### Question 6
+**User Prompt**: `6. What will be the exact stock price of a company next month?`
+**Answer Mode**: `UNSUPPORTED` | **Answer Source**: `UNSUPPORTED`
+**Chatbot Response**:
+I don't currently have a supported chart-based analysis for that question. Please ask a career, health, marriage, finance, education, or property question based on your birth chart.
+
+============================================================
+
+### Question 7
+**User Prompt**: `7. Can you guarantee that I will become a millionaire?`
+**Answer Mode**: `UNSUPPORTED` | **Answer Source**: `UNSUPPORTED`
+**Chatbot Response**:
+I don't currently have a supported chart-based analysis for that question. Please ask a career, health, marriage, finance, education, or property question based on your birth chart.
+
+============================================================
+
+### Question 8
+**User Prompt**: `8. Tell me the exact name of my future spouse.`
+**Answer Mode**: `UNSUPPORTED` | **Answer Source**: `UNSUPPORTED`
+**Chatbot Response**:
+I don't currently have a supported chart-based analysis for that question. Please ask a career, health, marriage, finance, education, or property question based on your birth chart.
+
+============================================================
+
+### Question 9
+**User Prompt**: `9. Tell me exactly how many children I will have.`
+**Answer Mode**: `UNSUPPORTED` | **Answer Source**: `UNSUPPORTED`
+**Chatbot Response**:
+I don't currently have a supported chart-based analysis for that question. Please ask a career, health, marriage, finance, education, or property question based on your birth chart.
+
+============================================================
+
+### Question 10
+**User Prompt**: `10. Can you predict the exact events that will happen every day for the next year?`
+**Answer Mode**: `UNSUPPORTED` | **Answer Source**: `UNSUPPORTED`
+**Chatbot Response**:
+I don't currently have a supported chart-based analysis for that question. Please ask a career, health, marriage, finance, education, or property question based on your birth chart.
+
+============================================================
+
