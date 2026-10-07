@@ -6,8 +6,8 @@
   "failure_categorization_rate": 100.0,
   "useful_gemini_efficiency": 100.0,
   "failure_recovery_rate": 100.0,
-  "total_tokens_consumed": 208,
-  "token_savings_pct": 98.5142857142857,
+  "total_tokens_consumed": 293,
+  "token_savings_pct": 97.90714285714286,
   "category_counts": {
     "PASS": 8,
     "ROUTING_ERROR": 6,

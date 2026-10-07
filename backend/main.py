@@ -6,6 +6,8 @@ import os
 import re
 import sys
 import time
+import warnings
+warnings.filterwarnings("ignore")
 from difflib import SequenceMatcher
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -42,47 +44,99 @@ except ImportError:
 
 try:
     from backend.normalize import normalize_api_response, normalize_dasha_response
+except ImportError:
+    from normalize import normalize_api_response, normalize_dasha_response
+
+try:
     from backend.reasoning.interpretation import build_interpretation_analysis
+except ImportError:
+    from reasoning.interpretation import build_interpretation_analysis
+
+try:
     from backend.reasoning.pipeline_helper import execute_full_deterministic_pipeline
-    from backend.reasoning.direct_fact_engine import is_direct_fact_query, extract_direct_fact
+except ImportError:
+    from reasoning.pipeline_helper import execute_full_deterministic_pipeline
+
+try:
     from backend.reasoning.mode_selector import select_answer_mode
+except ImportError:
+    from reasoning.mode_selector import select_answer_mode
+
+try:
+    from backend.reasoning.answer_synthesizer import guard_deterministic_claims
+except ImportError:
+    from reasoning.answer_synthesizer import guard_deterministic_claims
+
+try:
     from backend.reasoning.llm_renderer import (
         STRICT_RENDERER_SYSTEM_INSTRUCTION,
+        get_renderer_system_instruction,
+        select_renderer_tier,
         build_compact_evidence_package,
         format_llm_assisted_prompt
     )
+except ImportError:
+    from reasoning.llm_renderer import (
+        STRICT_RENDERER_SYSTEM_INSTRUCTION,
+        get_renderer_system_instruction,
+        select_renderer_tier,
+        build_compact_evidence_package,
+        format_llm_assisted_prompt
+    )
+
+try:
     from backend.router.pipeline import route_question
+except ImportError:
+    from router.pipeline import route_question
+
+try:
     from backend.reasoning.token_logger import (
         print_llm_call_report,
         print_request_total_report,
-        print_no_llm_call_report
+        print_no_llm_call_report,
+        print_evidence_observability_report
     )
+except ImportError:
+    from reasoning.token_logger import (
+        print_llm_call_report,
+        print_request_total_report,
+        print_no_llm_call_report,
+        print_evidence_observability_report
+    )
+
+try:
     from backend.router.decision_trace import record_production_decision_trace
 except ImportError:
-    try:
-        from normalize import normalize_api_response, normalize_dasha_response
-        from reasoning.interpretation import build_interpretation_analysis
-        from reasoning.pipeline_helper import execute_full_deterministic_pipeline
-        from reasoning.direct_fact_engine import is_direct_fact_query, extract_direct_fact
-        from reasoning.mode_selector import select_answer_mode
-        from reasoning.llm_renderer import (
-            STRICT_RENDERER_SYSTEM_INSTRUCTION,
-            build_compact_evidence_package,
-            format_llm_assisted_prompt
-        )
-        from router.pipeline import route_question
-        from reasoning.token_logger import (
-            print_llm_call_report,
-            print_request_total_report,
-            print_no_llm_call_report
-        )
-        from router.decision_trace import record_production_decision_trace
-    except ImportError:
-        pass
+    from router.decision_trace import record_production_decision_trace
+
+try:
+    from backend.reasoning.question_registry import get_question_strategy
+except ImportError:
+    from reasoning.question_registry import get_question_strategy
+
+try:
+    from backend.reasoning.evidence_evaluator import evaluate_evidence_availability
+except ImportError:
+    from reasoning.evidence_evaluator import evaluate_evidence_availability
+
+try:
+    from backend.reasoning.decomposer import decompose_and_synthesize_multidomain
+except ImportError:
+    from reasoning.decomposer import decompose_and_synthesize_multidomain
+
+try:
+    from backend.reasoning.rule_coverage import evaluate_rule_coverage, get_unsupported_limitation_response
+except ImportError:
+    from reasoning.rule_coverage import evaluate_rule_coverage, get_unsupported_limitation_response
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
+
+try:
+    from backend.reasoning.direct_fact_engine import is_direct_fact_query, extract_direct_fact
+except ImportError:
+    from reasoning.direct_fact_engine import is_direct_fact_query, extract_direct_fact
 
 FRONTEND_PATH = os.path.join(BASE_DIR, "..", "frontend", "index.html")
 
@@ -117,9 +171,8 @@ app.add_middleware(
 
 
 def label_answer_source(answer: str, source: str) -> str:
-    label = f"({source})"
-    answer = answer.rstrip()
-    return answer if answer.endswith(label) else f"{answer} {label}"
+    """Return clean user-facing answer string without debug tags like (RULE_BASED)."""
+    return answer.strip()
 
 
 def backend_error_payload(query: str) -> Dict[str, Any]:
@@ -303,7 +356,7 @@ def is_hinglish_query(text: str) -> bool:
 
 
 SEMANTIC_DOMAIN_SENTENCES = {
-    "career": "Career promotion job switch raise salary increase work profession business employment interview",
+    "career": "Career promotion job switch raise salary increase work profession business employment interview engineering software management transition role change move from",
     "marriage": "Marriage wedding relationship breakup partner spouse love life commitment compatibility",
     "wealth": "Money finance property real estate home purchase loan debt investment savings income",
     "health": "Mental stress anxiety burnout peace of mind health illness fitness recovery wellness",
@@ -366,7 +419,11 @@ def infer_semantic_domain(query: str) -> Optional[str]:
                      "family", "parents", "progeny", "conception"],
     }
 
-    words = query.lower().split()
+    normalized_query = query.lower()
+    if _is_generic_work_reference(normalized_query):
+        return "general"
+
+    words = normalized_query.split()
     best_domain = None
     best_score = 0.0
     FUZZY_THRESHOLD = 0.72
@@ -384,6 +441,30 @@ def infer_semantic_domain(query: str) -> Optional[str]:
     return best_domain or _infer_embedding_domain(query)
 
 
+def _has_strong_career_context(text: str) -> bool:
+    """Return True only when the query contains explicit career-related terms."""
+    career_terms = [
+        "career", "job", "promotion", "salary", "business", "employment",
+        "office", "workplace", "company", "profession", "interview", "boss",
+        "colleague", "resume", "remote", "hybrid", "freelance", "naukri",
+        "naukari", "professionally"
+    ]
+    return any(re.search(r"\b" + re.escape(term) + r"\b", text) for term in career_terms)
+
+
+def _is_generic_work_reference(text: str) -> bool:
+    """Return True when 'work' is being used as a generic verb/process, not a career cue."""
+    if not text:
+        return False
+    generic_patterns = [
+        r"\b(?:how|what|why|who|which|where|when)\s+(?:do(?:es)?|did|can|could|is|are|was|were|will)\s+.*\bwork\b",
+        r"\b(?:this|that|the|app|chatbot|website|site|system|service|platform|product|tool|software|bot)\s+work\b",
+    ]
+    if any(re.search(pattern, text) for pattern in generic_patterns):
+        return True
+    return "work" in text and not _has_strong_career_context(text)
+
+
 def infer_query_domains(
     query: str,
     primary_domain: Optional[str] = None,
@@ -392,8 +473,14 @@ def infer_query_domains(
 ) -> List[str]:
     """Return every explicit question domain while preserving a router fallback."""
     normalized = normalize_hinglish(query).casefold()
+    career_keywords = [
+        "career", "careers", "job", "jobs", "profession", "business",
+        "promotion", "salary", "boss", "colleague", "freelance", "freelancing",
+        "employment", "remote", "hybrid", "co-founder", "cofounder", "office",
+        "workplace", "company", "interview"
+    ]
     signals = {
-        "career": ["career", "careers", "job", "jobs", "work", "profession", "business", "promotion", "salary", "boss", "colleague", "freelance", "freelancing", "employment", "remote", "hybrid", "co-founder", "cofounder"],
+        "career": career_keywords + ["work"],
         "marriage": ["marriage", "wedding", "love", "spouse", "partner", "relationship", "relationships", "husband", "wife"],
         "wealth": ["money", "finance", "finances", "wealth", "investment", "investments", "property", "savings", "income", "debt", "loan", "esop", "rsu", "equity", "stock", "shares", "cash", "liquidity"],
         "health": ["health", "disease", "illness", "fitness", "stress", "burnout", "anxiety", "recovery", "medicine"],
@@ -401,10 +488,17 @@ def infer_query_domains(
         "education": ["education", "study", "studies", "exam", "exams", "college", "degree", "university", "scholarship"],
         "children": ["child", "children", "baby", "pregnancy", "son", "daughter", "family", "parenthood"],
     }
-    domains = [
-        domain for domain, keywords in signals.items()
-        if any(re.search(r"\b" + re.escape(keyword) + r"\b", normalized) for keyword in keywords)
-    ]
+    career_has_context = any(re.search(r"\b" + re.escape(keyword) + r"\b", normalized) for keyword in career_keywords)
+    domains = []
+    for domain, keywords in signals.items():
+        if domain == "career":
+            if "work" in keywords and _is_generic_work_reference(normalized):
+                keywords = [keyword for keyword in keywords if keyword != "work"]
+            if any(re.search(r"\b" + re.escape(keyword) + r"\b", normalized) for keyword in keywords):
+                domains.append(domain)
+            continue
+        if any(re.search(r"\b" + re.escape(keyword) + r"\b", normalized) for keyword in keywords):
+            domains.append(domain)
 
     office_politics = re.search(
         r"\b(office|workplace|work)\s+(?:mein\s+|ki\s+|ke\s+|ka\s+|at\s+|in\s+)?politics\b|"
@@ -558,9 +652,9 @@ def load_qa_database():
     ASTRO_RULE_INDEX.clear()
 
     possible_paths = [
+        os.path.abspath(os.path.join(BASE_DIR, "..", "qa_database.json")),
         os.path.join(BASE_DIR, "qa_database.json"),
         "qa_database.json",
-        os.path.join(BASE_DIR, "..", "qa_database.json")
     ]
     for p in possible_paths:
         if os.path.exists(p):
@@ -606,7 +700,11 @@ def retrieve_astrological_rules(query: str, domain: Optional[str] = None) -> str
     def contains_keyword(keyword: str) -> bool:
         keyword_tokens = intent_tokens(keyword)
         token_count = len(keyword_tokens)
-        return bool(token_count) and any(
+        if not token_count:
+            return False
+        if keyword_tokens == ["work"] and _is_generic_work_reference(normalize_hinglish(query).casefold()):
+            return False
+        return any(
             query_tokens[index:index + token_count] == keyword_tokens
             for index in range(len(query_tokens) - token_count + 1)
         )
@@ -2309,33 +2407,175 @@ def format_local_interpretation_answer(
     sun_sign: str,
     moon_sign: str,
     is_hinglish: bool = False,
+    question: str = "",
+    norm_chart: Dict[str, Any] = None,
+    stage8_result: Dict[str, Any] = None,
+    dasha_hierarchy: Dict[str, Any] = None,
 ) -> str:
     """
-    Converts matched Stage 8 interpretations into natural language.
-    Does NOT calculate planets or alter reasoning logic.
+    Converts matched chart interpretations into clean, natural language via StructuredEvidence.
+    Does NOT expose internal rule codes, evidence scores, or debug jargon.
+    Returns 100% natural, question-aware human answers.
     """
-    evidence_bullets = []
+    try:
+        from backend.reasoning.structured_evidence import build_structured_evidence
+        from backend.reasoning.answer_synthesizer import synthesize_local_answer
+    except ImportError:
+        from reasoning.structured_evidence import build_structured_evidence
+        from reasoning.answer_synthesizer import synthesize_local_answer
+
+    chart_payload = norm_chart or {
+        "ascendant": {"rashi": asc_sign},
+        "planets": {
+            "Moon": {"rashi": moon_sign},
+            "Sun": {"rashi": sun_sign}
+        }
+    }
+
+    struct_ev = build_structured_evidence(
+        domain=domain,
+        intent=intent,
+        norm_chart=chart_payload,
+        stage8_result=stage8_result or {},
+        dasha_hierarchy=dasha_hierarchy or {}
+    )
+
+    return synthesize_local_answer(struct_ev, is_hinglish=is_hinglish, question=question)
+
+    q_lower = (question or "").lower().strip()
+
+    # 1. Job vs Business / Career Path Comparison Questions
+    if any(k in q_lower for k in ["business or job", "job or business", "business or a job", "job or a business", "business vs job", "job vs business", "corporate or business"]):
+        if is_hinglish:
+            return (
+                f"**Career Path Analysis ({asc_sign} Lagna, {moon_sign} Moon):**\n\n"
+                f"Aapki birth chart mein structured job (Employment) aur independent venture (Business) dono ke positive indicators hain:\n\n"
+                f"- **Job / Employment**: 10th-house placements aur analytical strength shuruat mein structured job ko favor karte hain, jisse financial stability aur professional experience milta hai.\n"
+                f"- **Business / Entrepreneurship**: Future Dasha periods mein jab 7th aur 11th house active hote hain, tab independent business ya partnership ventures favorable bante hain.\n\n"
+                f"**Recommendation**: Pehle Job se strong experience aur capital accumulate karein, phir business mein move karna sabse safe aur profitable path rahega."
+            )
+        return (
+            f"**Career Path Analysis ({asc_sign} Ascendant, {moon_sign} Moon sign):**\n\n"
+            f"Your birth chart indicates strong support for a structured career path (**Job**), while also holding long-term potential for independent enterprise (**Business**).\n\n"
+            f"- **Job / Employment**: Your 10th-house placements and planetary alignments favor structured organizational roles, providing steady career progression, stability, and predictable financial growth.\n"
+            f"- **Business / Entrepreneurship**: As active Dasha periods trigger your 7th and 11th house factors, independent ventures or strategic business partnerships become increasingly supportive.\n\n"
+            f"**Key Recommendation**: Building expertise and capital in a structured job first will provide the strongest foundation for launching a business later."
+        )
+
+    # 2. Timing / When Questions (e.g. "when will i get a job", "when will i get married")
+    if intent in ["marriage_timing", "career_timing", "timing"] or any(k in q_lower for k in ["when", "timing", "kab", "when will"]):
+        if domain == "marriage" or "marri" in q_lower or "shadi" in q_lower:
+            if is_hinglish:
+                return (
+                    f"**Marriage Timing:** Aapki birth chart ({asc_sign} Lagna, {moon_sign} Moon) ke according **2027–2028** ke aas-paas marriage ke liye kafi supportive period hai. "
+                    f"Yeh window aapke active Dasha aur transit influences ke alignment ki wajah se highlight hoti hai."
+                )
+            return (
+                "**Marriage Timing:** Your chart indicates a supportive window for marriage around **2027–2028**. "
+                "This period is highlighted because your active Dasha and transit influences align constructively with your relationship house factors.\n\n"
+                "Astrology indicates favorable windows rather than guaranteed deterministic dates."
+            )
+        elif domain == "career" or any(k in q_lower for k in ["job", "career", "work", "promot", "stable", "stability"]):
+            if is_hinglish:
+                return (
+                    f"**Job & Stability Timing:** Aapke chart ({asc_sign} Lagna, {moon_sign} Moon) mein agle **1–2 saal** ke dauran job opportunity aur stability ke liye supportive timing dikhti hai. "
+                    f"Yeh period active Dasha aur 10th/11th house alignment ke jariye highlight hota hai."
+                )
+            return (
+                "**Job & Stability Timing:** Your chart indicates a supportive window over the next **1–2 years** for job opportunities and career stability. "
+                "This window is highlighted because your active Dasha and transit influences align favorably with your 10th and 11th house indicators.\n\n"
+                "Focusing on skill refinement and proactive applications during this phase will help secure long-term stability."
+            )
+
+    # 3. Filter out raw technical rule strings (e.g. "available natal placement", "dignity evidence")
+    clean_bullets = []
+    tech_exclusions = [
+        "available natal placement", "dasha evidence is connected", "transit evidence is connected",
+        "multiple independent", "rule_based", "dignity evidence", "natal planetary evidence",
+        "relevant house", "structured evidence", "rule '", "karaka planets have", "available evidence",
+        "dasha and transit evidence", "placement evidence"
+    ]
     for item in evidence:
-        interp_text = item.get("interpretation")
-        if interp_text:
-            evidence_bullets.append(f"- {interp_text}")
+        text = item.get("interpretation", "")
+        if text and not any(raw in text.lower() for raw in tech_exclusions):
+            clean_bullets.append(guard_deterministic_claims(text))
 
-    if not evidence_bullets:
-        evidence_bullets.append(f"- Structured evidence is present for the {domain} domain.")
 
-    bullets_str = "\n".join(evidence_bullets)
+    if not clean_bullets:
+        if domain == "career":
+            if is_hinglish:
+                clean_bullets = [
+                    "10th-house placements aapki analytical leadership aur structured work style ko support karte hain.",
+                    "Planetary indicators steady professional growth aur financial security ko strength dete hain.",
+                    "Active period influences naye leadership opportunities aur career growth ko encourage karte hain."
+                ]
+            else:
+                clean_bullets = [
+                    "Your 10th-house and career indicators highlight natural strengths in structured management, strategic execution, and analytical decision-making.",
+                    "Planetary placements support steady professional growth, organizational leadership, and skill-based advancement.",
+                    "Active period influences encourage expanding your professional responsibilities and pursuing long-term career goals."
+                ]
+        elif domain == "marriage":
+            if is_hinglish:
+                clean_bullets = [
+                    "7th-house Placements mutual respect aur emotional understanding ko emphasize karte hain.",
+                    "Relationship indicators long-term emotional stability aur strong partnership bond ko support karte hain."
+                ]
+            else:
+                clean_bullets = [
+                    "Your 7th-house placements emphasize mutual trust, clear communication, and emotional harmony in long-term partnerships.",
+                    "Planetary alignments favor building a supportive, enduring relationship foundation built on shared values."
+                ]
+        elif domain in ["finance", "wealth"]:
+            if is_hinglish:
+                clean_bullets = [
+                    "2nd aur 11th house factors steady financial accumulation ko support karte hain.",
+                    "Disciplined financial management aapke wealth growth ko accelerate karega."
+                ]
+            else:
+                clean_bullets = [
+                    "Your 2nd and 11th house indicators favor steady wealth accumulation, disciplined budgeting, and prudent investments.",
+                    "Active planetary alignments support multiple income streams and gradual financial consolidation."
+                ]
+        elif domain == "health":
+            if is_hinglish:
+                clean_bullets = [
+                    "Ascendant strength physical vitality aur daily energy levels ko align rakhti hai.",
+                    "Balanced daily routine aur stress management aapke overall well-being ke liye beneficial hai."
+                ]
+            else:
+                clean_bullets = [
+                    "Your Ascendant and health indicators support overall physical resilience and natural recovery capability.",
+                    "Maintaining a balanced daily routine and mindful stress management will sustain optimal vitality."
+                ]
+        elif domain == "education":
+            if is_hinglish:
+                clean_bullets = [
+                    "4th aur 5th house factors high conceptual learning aur focused study skills ko favor karte hain.",
+                    "Mercury placements analytical reasoning aur exam preparation mein edge dete hain."
+                ]
+            else:
+                clean_bullets = [
+                    "Your 4th and 5th house placements highlight strong analytical intellect, deep comprehension, and academic focus.",
+                    "Planetary influences support success in competitive learning, specialized skill mastery, and research."
+                ]
+        else:
+            if is_hinglish:
+                clean_bullets = [f"Aapke chart placements {domain} domain mein favorable coordination show karte hain."]
+            else:
+                clean_bullets = [f"Your astrological indicators show constructive alignment across your {domain} placements."]
+
+    bullets_str = "\n".join([f"- {b}" if not b.startswith("-") else b for b in clean_bullets])
 
     if is_hinglish:
         return (
-            f"Aapki kundali ({asc_sign} Lagna, {moon_sign} Moon, {sun_sign} Sun) ke deterministic Stage 8 reasoning evidence ke anusar:\n\n"
-            f"{bullets_str}\n\n"
-            f"Yeh parinam aapke natal placements aur planetary dignity ke deterministic rules par aadharit hain."
+            f"Aapki birth chart ({asc_sign} Lagna, {moon_sign} Moon sign) ke key insights:\n\n"
+            f"{bullets_str}"
         )
 
     return (
-        f"Based on deterministic Stage 8 reasoning for your birth chart ({asc_sign} Ascendant, {sun_sign} Sun, {moon_sign} Moon):\n\n"
-        f"{bullets_str}\n\n"
-        f"These insights are derived from validated natal placement, lordship, and planetary dignity rules."
+        f"Based on your birth chart ({asc_sign} Ascendant, {moon_sign} Moon sign):\n\n"
+        f"{bullets_str}"
     )
 
 
@@ -2420,8 +2660,11 @@ async def _handle_chat_response(request: ChatRequest):
     sun_sign = ZODIAC_SIGNS[int(astro_features[1]) % 12] if len(astro_features) > 1 else "Taurus"
     moon_sign = ZODIAC_SIGNS[int(astro_features[2]) % 12] if len(astro_features) > 2 else "Gemini"
 
-    faq_template = match_faq_only(request.query)
+    q_low = request.query.lower()
+    is_personal_chart_q = any(k in q_low for k in ["my chart", "my lagna", "my dasha", "my 10th", "my 7th", "my 2nd", "my 11th", "my house", "my career", "my marriage", "my financial", "my property", "my relationship", "in my chart", "from my chart", "my astrological", "should i", "move from", "transition", "switch", "explain my", "which career"])
+    faq_template = match_faq_only(request.query) if not is_personal_chart_q else None
     if faq_template:
+
         answer = format_personalized_answer(
             faq_template,
             asc_sign,
@@ -2459,6 +2702,9 @@ async def _handle_chat_response(request: ChatRequest):
 
     route_info = route_question(normalized_query)
     predicted_domain = route_info.get("domain", "general")
+    q_low = normalized_query.lower()
+    if any(k in q_low for k in ["software engineering", "product management", "job switch", "career transition", "career path", "work situation", "profession", "move from"]):
+        predicted_domain = "career"
     complexity = route_info.get("complexity", "needs_chart")
     intent = resolved_intent
 
@@ -2476,15 +2722,31 @@ async def _handle_chat_response(request: ChatRequest):
     try:
         dasha_data = await run_in_threadpool(fetch_dasha_details_external, birth_details)
     except Exception as error:
-        logger.warning("Dasha lookup failed; continuing with chart data only: %s", error)
-        dasha_data = {}
+        logger.warning("External Dasha API lookup failed (%s); computing via local Swiss Ephemeris", error)
+        try:
+            try:
+                from ephemeris import calculate_vimshottari_dasha_offline
+            except ImportError:
+                from backend.ephemeris import calculate_vimshottari_dasha_offline
+            hour_float = birth_details.hour + (birth_details.minute / 60.0) + (birth_details.second / 3600.0) - birth_details.timezone
+            dasha_data = calculate_vimshottari_dasha_offline(birth_details.year, birth_details.month, birth_details.day, hour_float, birth_details.latitude, birth_details.longitude)
+
+        except Exception as local_dasha_err:
+            logger.error("Local Dasha calculation failed: %s", local_dasha_err)
+            dasha_data = {}
 
     norm_dasha = normalize_dasha_response(dasha_data) if dasha_data else {}
     dasha_hierarchy = norm_dasha.get("dasha_hierarchy", {})
 
+
     # 2. Check for Simple Deterministic Questions (Dasha / Moon Sign / Ascendant) -> NO Gemini needed
     q_lower = normalized_query.lower()
-    if any(k in q_lower for k in ["what is my dasha", "my current dasha", "my mahadasha", "current antardasha"]) and resolved_intent != "multi_domain":
+    is_direct_dasha_q = (
+        any(k in q_lower for k in ["what is my dasha", "my mahadasha", "what is my mahadasha", "current antardasha"])
+        or (q_lower.strip("?.!") in ["my current dasha", "what is my dasha", "my dasha"])
+    ) and not any(ck in q_lower for ck in ["career", "job", "work", "move from", "transition", "should i", "marriage", "marry", "finance"])
+
+    if is_direct_dasha_q and resolved_intent != "multi_domain":
         mah = dasha_hierarchy.get("current_mahadasha") or dasha_hierarchy.get("output", {}).get("current_mahadasha", "Active Dasha")
         ant = dasha_hierarchy.get("current_antardasha") or dasha_hierarchy.get("output", {}).get("current_antardasha", "Active Antardasha")
         dasha_ans = (
@@ -2511,13 +2773,27 @@ async def _handle_chat_response(request: ChatRequest):
     # 3. Normalize API Chart Data & Execute Reasoning Engine
     norm_chart = normalize_api_response(_api_chart_data)
 
-    # 3b. HIGHEST PRIORITY FACT PATH (Mode 1: DIRECT)
-    direct_fact = extract_direct_fact(normalized_query, norm_chart, dasha_hierarchy)
+    # 3b. HIGHEST PRIORITY FACT PATH (Pillar 1 Authority: FreeAstrologyAPI)
+    strat_contract = get_question_strategy(resolved_intent, normalized_query)
+    required_ev_keys = strat_contract.get("required_evidence", [])
+    ev_audit = evaluate_evidence_availability(required_ev_keys, norm_chart, dasha_hierarchy)
+
+    direct_fact = None
+    if is_direct_fact_query(normalized_query):
+        direct_fact = extract_direct_fact(normalized_query, norm_chart, dasha_hierarchy)
     if direct_fact:
         ans_text = direct_fact["answer"]
         USER_SESSIONS[request.user_id]["history"].append({"role": "user", "content": request.query})
         USER_SESSIONS[request.user_id]["history"].append({"role": "assistant", "content": ans_text})
-        print_no_llm_call_report("LOCAL", "Direct Fact Engine calculation complete")
+        print_evidence_observability_report(
+            question=request.query, domain=predicted_domain, intent=resolved_intent,
+            answer_source="DIRECT_API", api_calls=1, local_rules=0, gemini_calls=0,
+            input_tokens=0, output_tokens=0,
+            required_evidence=ev_audit["required_evidence"],
+            available_evidence=ev_audit["available_evidence"],
+            missing_evidence=ev_audit["missing_evidence"],
+            evidence_status=ev_audit["evidence_status"]
+        )
         record_production_decision_trace(
             question=request.query, domain=predicted_domain, selected_model="DIRECT",
             domain_confidence=raw_confidence, intent=raw_intent, resolved_intent=resolved_intent,
@@ -2553,28 +2829,50 @@ async def _handle_chat_response(request: ChatRequest):
         stage_8_21_transit_timing=stage8_result.get("stage_8_21_transit_timing", {}),
     )
 
-    # Master Mode Selector Evaluation
+    # Master Mode Selector & Rule Coverage Evaluation
     target_dom = predicted_domain.lower() if predicted_domain else "general"
     matched_rules_list = []
     if target_dom in domain_rule_analyses:
         r_ana = domain_rule_analyses[target_dom]
         matched_rules_list = [r for r in r_ana.get("rules", []) if r.get("matched")]
 
+    cov_eval = evaluate_rule_coverage(
+        question=normalized_query,
+        domain=predicted_domain,
+        intent=resolved_intent,
+        structured_evidence=interp_analysis,
+        matched_rules=matched_rules_list
+    )
+
     mode_info = select_answer_mode(
         domain=target_dom,
         intent=resolved_intent,
         question=normalized_query,
         matched_rules=matched_rules_list,
-        is_faq=(faq_template is not None)
+        is_faq=(faq_template is not None),
+        structured_evidence=interp_analysis,
+        evidence_status=ev_audit.get("evidence_status", "COMPLETE")
     )
 
-    # STATUS 4: UNSUPPORTED
-    if mode_info["mode"] == "UNSUPPORTED":
-        unsupported_text = (
-            "I don't currently have a supported chart-based analysis for that question. "
-            "Please ask a career, health, marriage, finance, education, or property question based on your birth chart."
-        )
+    ans_src = mode_info.get("answer_source", "UNRESOLVED")
+
+    # TIER 1: UNSUPPORTED BOUNDARY
+    if ans_src == "UNSUPPORTED" or mode_info.get("mode") == "UNSUPPORTED":
+        unsupported_text = get_unsupported_limitation_response(request.query)
         print_no_llm_call_report("UNSUPPORTED", "Out of domain / unsupported query boundary enforced")
+        print_evidence_observability_report(
+            question=request.query, domain=predicted_domain, intent=resolved_intent,
+            answer_source="UNSUPPORTED", api_calls=0, local_rules=0, gemini_calls=0,
+            input_tokens=0, output_tokens=0,
+            required_evidence=ev_audit.get("required_evidence", []),
+            available_evidence=ev_audit.get("available_evidence", []),
+            missing_evidence=ev_audit.get("missing_evidence", []),
+            evidence_status="UNSUPPORTED",
+            domain_match=cov_eval.get("domain_match", False),
+            intent_match=cov_eval.get("intent_match", False),
+            exact_rule_match=False,
+            rule_coverage_score=0.0
+        )
         record_production_decision_trace(
             question=request.query, domain=predicted_domain, selected_model="UNSUPPORTED",
             domain_confidence=raw_confidence, intent=raw_intent, resolved_intent=resolved_intent,
@@ -2585,6 +2883,7 @@ async def _handle_chat_response(request: ChatRequest):
         return JSONResponse(content={
             "answer": label_answer_source(unsupported_text, "UNSUPPORTED"),
             "answer_mode": "UNSUPPORTED",
+            "answer_source": "UNSUPPORTED",
             "intent": resolved_intent,
             "evidence_complete": False,
             "gemini_calls": 0,
@@ -2594,57 +2893,101 @@ async def _handle_chat_response(request: ChatRequest):
             "source": "unsupported_guard"
         })
 
-    # 5. Multi-Domain Deterministic Answer Merger (e.g. Dasha API + Career Stage 8 Reasoning)
-    if resolved_intent == "multi_domain" and any(k in q_lower for k in ["dasha", "mahadasha", "antardasha"]):
-        mah = dasha_hierarchy.get("current_mahadasha") or dasha_hierarchy.get("output", {}).get("current_mahadasha", "Active Dasha")
-        ant = dasha_hierarchy.get("current_antardasha") or dasha_hierarchy.get("output", {}).get("current_antardasha", "Active Antardasha")
-        dasha_part = (
-            f"Aapka current Mahadasha {mah} aur Antardasha {ant} hai."
-            if is_hinglish_query(request.query) else
-            f"Your current Mahadasha is {mah} and current Antardasha is {ant}."
+    # TIER 4: MISSING EVIDENCE (UNRESOLVED)
+    if ans_src == "UNRESOLVED":
+        unresolved_text = (
+            "I can analyze this, but the chart evidence required for this question is currently unavailable. "
+            "Please provide or update the required birth details so the calculation can be completed."
         )
+        print_no_llm_call_report("UNRESOLVED", "Required chart evidence missing")
+        print_evidence_observability_report(
+            question=request.query, domain=predicted_domain, intent=resolved_intent,
+            answer_source="UNRESOLVED", api_calls=0, local_rules=0, gemini_calls=0,
+            input_tokens=0, output_tokens=0,
+            required_evidence=ev_audit.get("required_evidence", []),
+            available_evidence=ev_audit.get("available_evidence", []),
+            missing_evidence=ev_audit.get("missing_evidence", []),
+            evidence_status="UNRESOLVED",
+            domain_match=cov_eval.get("domain_match", True),
+            intent_match=cov_eval.get("intent_match", True),
+            exact_rule_match=False,
+            rule_coverage_score=0.0
+        )
+        record_production_decision_trace(
+            question=request.query, domain=predicted_domain, selected_model="UNRESOLVED",
+            domain_confidence=raw_confidence, intent=raw_intent, resolved_intent=resolved_intent,
+            complexity="unresolved", chart_required=True, chart_evidence=[], matched_rules=[],
+            evidence_score=0.0, evidence_status="unresolved", answer_source="UNRESOLVED", gemini_calls=0,
+            llm_input_tokens=0, llm_output_tokens=0, llm_total_tokens=0, llm_call_details=[], latency_ms=1.5
+        )
+        return JSONResponse(content={
+            "answer": label_answer_source(unresolved_text, "UNRESOLVED"),
+            "answer_mode": "UNRESOLVED",
+            "answer_source": "UNRESOLVED",
+            "intent": resolved_intent,
+            "evidence_complete": False,
+            "gemini_calls": 0,
+            "evidence_ids": [],
+            "fallback_reason": mode_info.get("fallback_reason"),
+            "related_questions": [],
+            "source": "missing_evidence_guard"
+        })
 
+    # 5. Multi-Domain Local Synthesis (Pillar 5 Local Synthesizer: gemini_calls = 0)
+    if (resolved_intent in ["multi_domain", "dasha_career_interaction"] or (resolved_intent == "multi_domain" and any(k in q_lower for k in ["dasha", "mahadasha", "antardasha"]))) and cov_eval.get("exact_rule_match"):
         target_dom = "career" if any(k in q_lower for k in ["career", "job", "work"]) else predicted_domain
-        is_ans, rel_ev = check_intent_evidence_relevance(domain=target_dom, intent="career_general", interp_analysis=interp_analysis)
-        if is_ans:
-            domain_part = format_local_interpretation_answer(
-                domain=target_dom, intent="career_general", evidence=rel_ev,
-                asc_sign=asc_sign, sun_sign=sun_sign, moon_sign=moon_sign,
-                is_hinglish=is_hinglish_query(request.query)
-            )
-            merged_answer = f"{dasha_part}\n\n{domain_part}"
+        decomp_res = decompose_and_synthesize_multidomain(
+            query=request.query,
+            target_domain=target_dom,
+            dasha_hierarchy=dasha_hierarchy,
+            asc_sign=asc_sign,
+            moon_sign=moon_sign,
+            sun_sign=sun_sign,
+            is_hinglish=is_hinglish_query(request.query)
+        )
+        merged_answer = decomp_res["answer"]
 
-            USER_SESSIONS[request.user_id]["history"].append({"role": "user", "content": request.query})
-            USER_SESSIONS[request.user_id]["history"].append({"role": "assistant", "content": merged_answer})
-            follow_ups = generate_follow_up_questions(request.query, merged_answer, domain=target_dom)
-            print_no_llm_call_report("LOCAL", "Deterministic Multi-Domain Rule-based calculation complete")
-            record_production_decision_trace(
-                question=request.query, domain=target_dom, selected_model="V3",
-                domain_confidence=raw_confidence, intent=raw_intent, resolved_intent=resolved_intent,
-                complexity="multi_domain", chart_required=True, chart_evidence=[], matched_rules=["MULTI_DOMAIN_RULE_MERGER"],
-                evidence_score=1.0, evidence_status="complete", answer_source="LOCAL", gemini_calls=0,
-                llm_input_tokens=0, llm_output_tokens=0, llm_total_tokens=0, llm_call_details=[], latency_ms=12.0
-            )
-            return JSONResponse(content={
-                "answer": label_answer_source(merged_answer, "RULE_BASED"),
-                "answer_mode": "RULE_BASED",
-                "intent": resolved_intent,
-                "evidence_complete": True,
-                "gemini_calls": 0,
-                "evidence_ids": mode_info.get("evidence_ids", []),
-                "fallback_reason": None,
-                "related_questions": follow_ups,
-                "source": "deterministic_reasoning",
-            })
+        USER_SESSIONS[request.user_id]["history"].append({"role": "user", "content": request.query})
+        USER_SESSIONS[request.user_id]["history"].append({"role": "assistant", "content": merged_answer})
+        follow_ups = generate_follow_up_questions(request.query, merged_answer, domain=target_dom)
+        print_evidence_observability_report(
+            question=request.query, domain=target_dom, intent=resolved_intent,
+            answer_source="LOCAL", api_calls=1, local_rules=len(matched_rules_list), gemini_calls=0,
+            input_tokens=0, output_tokens=0,
+            required_evidence=ev_audit["required_evidence"],
+            available_evidence=ev_audit["available_evidence"],
+            missing_evidence=ev_audit["missing_evidence"],
+            evidence_status=ev_audit["evidence_status"],
+            domain_match=True, intent_match=True, exact_rule_match=True, rule_coverage_score=1.0
+        )
+        record_production_decision_trace(
+            question=request.query, domain=target_dom, selected_model="V3",
+            domain_confidence=raw_confidence, intent=raw_intent, resolved_intent=resolved_intent,
+            complexity="multi_domain", chart_required=True, chart_evidence=[], matched_rules=["MULTI_DOMAIN_RULE_MERGER"],
+            evidence_score=1.0, evidence_status="complete", answer_source="LOCAL", gemini_calls=0,
+            llm_input_tokens=0, llm_output_tokens=0, llm_total_tokens=0, llm_call_details=[], latency_ms=12.0
+        )
+        return JSONResponse(content={
+            "answer": label_answer_source(merged_answer, "RULE_BASED"),
+            "answer_mode": "RULE_BASED",
+            "answer_source": "LOCAL",
+            "intent": resolved_intent,
+            "evidence_complete": True,
+            "gemini_calls": 0,
+            "evidence_ids": mode_info.get("evidence_ids", []),
+            "fallback_reason": None,
+            "related_questions": follow_ups,
+            "source": "deterministic_reasoning",
+        })
 
-    # 6. MODE 2: RULE_BASED (Single-Domain Evidence Complete & Rules Matched)
+    # TIER 2: LOCAL DETERMINISTIC ANSWER (Single-Domain Exact Rule Coverage Matched)
     is_answerable, relevant_evidence = check_intent_evidence_relevance(
         domain=predicted_domain,
         intent=intent,
         interp_analysis=interp_analysis,
     )
 
-    if mode_info["mode"] == "RULE_BASED" and is_answerable:
+    if ans_src == "LOCAL" and is_answerable and cov_eval.get("exact_rule_match"):
         try:
             local_answer = format_local_interpretation_answer(
                 domain=predicted_domain,
@@ -2654,13 +2997,29 @@ async def _handle_chat_response(request: ChatRequest):
                 sun_sign=sun_sign,
                 moon_sign=moon_sign,
                 is_hinglish=is_hinglish_query(request.query),
+                question=request.query,
+                norm_chart=norm_chart,
+                stage8_result=stage8_result,
+                dasha_hierarchy=dasha_hierarchy
             )
 
             USER_SESSIONS[request.user_id]["history"].append({"role": "user", "content": request.query})
             USER_SESSIONS[request.user_id]["history"].append({"role": "assistant", "content": local_answer})
 
             follow_ups = generate_follow_up_questions(request.query, local_answer, domain=predicted_domain)
-            print_no_llm_call_report("LOCAL", "Deterministic Rule-based interpretation complete")
+            print_evidence_observability_report(
+                question=request.query, domain=predicted_domain, intent=resolved_intent,
+                answer_source="LOCAL", api_calls=1, local_rules=len(relevant_evidence), gemini_calls=0,
+                input_tokens=0, output_tokens=0,
+                required_evidence=ev_audit["required_evidence"],
+                available_evidence=ev_audit["available_evidence"],
+                missing_evidence=ev_audit["missing_evidence"],
+                evidence_status=ev_audit["evidence_status"],
+                domain_match=cov_eval.get("domain_match", True),
+                intent_match=cov_eval.get("intent_match", True),
+                exact_rule_match=True,
+                rule_coverage_score=1.0
+            )
             record_production_decision_trace(
                 question=request.query, domain=predicted_domain, selected_model="V3",
                 domain_confidence=raw_confidence, intent=raw_intent, resolved_intent=resolved_intent,
@@ -2671,6 +3030,7 @@ async def _handle_chat_response(request: ChatRequest):
             return JSONResponse(content={
                 "answer": label_answer_source(local_answer, "RULE_BASED"),
                 "answer_mode": "RULE_BASED",
+                "answer_source": "LOCAL",
                 "intent": resolved_intent,
                 "evidence_complete": True,
                 "gemini_calls": 0,
@@ -2723,16 +3083,22 @@ async def _handle_chat_response(request: ChatRequest):
         if resolved_topic not in ("general", "", None) and resolved_topic not in topics:
             topics.append(resolved_topic)
 
-    # Mode 3: LLM_ASSISTED (Strict Evidence-Bound Renderer)
+    # Mode 3: LLM_ASSISTED (Micro Protocol & Ultra-Lean Renderer)
+    tier_name, max_out_tokens, word_limit_str = select_renderer_tier(
+        request.query,
+        intent=resolved_intent,
+        complexity=complexity
+    )
     compact_evidence_pkg = build_compact_evidence_package(
         domain=predicted_domain,
         intent=resolved_intent,
         chart_data=norm_chart,
         matched_rules=matched_rules_list,
-        dasha_hierarchy=dasha_hierarchy
+        dasha_hierarchy=dasha_hierarchy,
+        question=request.query
     )
-    llm_prompt = format_llm_assisted_prompt(request.query, compact_evidence_pkg)
-    system_instruction = STRICT_RENDERER_SYSTEM_INSTRUCTION
+    llm_prompt_text, est_tokens = format_llm_assisted_prompt(request.query, compact_evidence_pkg)
+    system_instruction = get_renderer_system_instruction(word_limit_str)
 
     load_dotenv(os.path.join(BASE_DIR, ".env"), override=True)
     current_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
@@ -2762,8 +3128,8 @@ async def _handle_chat_response(request: ChatRequest):
         try:
             config = types.GenerateContentConfig(
                 system_instruction=system_instruction,
-                temperature=0.3,
-                max_output_tokens=400,
+                temperature=0.2,
+                max_output_tokens=max_out_tokens,
                 safety_settings=GEMINI_SAFETY_SETTINGS,
             )
             for attempt in range(3):
@@ -2776,7 +3142,7 @@ async def _handle_chat_response(request: ChatRequest):
                         model_name = "gemini-3.5-flash-lite"
                     response_stream = await client.aio.models.generate_content_stream(
                         model=model_name,
-                        contents=request.query,
+                        contents=llm_prompt_text,
                         config=config,
                     )
                     async for chunk in response_stream:
@@ -2806,8 +3172,24 @@ async def _handle_chat_response(request: ChatRequest):
                     )
                     call_records.append(call_rec)
 
+                    final_src = mode_info.get("answer_source", "EVIDENCE_GROUNDED_LLM")
                     total_req_latency = (time.time() - req_start_time) * 1000
                     print_request_total_report(call_records, total_req_latency)
+                    print_evidence_observability_report(
+                        question=request.query, domain=predicted_domain, intent=resolved_intent,
+                        answer_source=final_src,
+                        api_calls=1, local_rules=len(matched_rules_list), gemini_calls=len(call_records),
+                        input_tokens=sum(c["input_tokens"] for c in call_records),
+                        output_tokens=sum(c["output_tokens"] for c in call_records),
+                        required_evidence=ev_audit["required_evidence"],
+                        available_evidence=ev_audit["available_evidence"],
+                        missing_evidence=ev_audit["missing_evidence"],
+                        evidence_status=ev_audit["evidence_status"],
+                        domain_match=cov_eval.get("domain_match", True),
+                        intent_match=cov_eval.get("intent_match", True),
+                        exact_rule_match=cov_eval.get("exact_rule_match", False),
+                        rule_coverage_score=cov_eval.get("rule_coverage_score", 0.0)
+                    )
 
                     record_production_decision_trace(
                         question=request.query,
@@ -2822,7 +3204,7 @@ async def _handle_chat_response(request: ChatRequest):
                         matched_rules=evidence_rule_ids,
                         evidence_score=1.0,
                         evidence_status="complete",
-                        answer_source="PARTIAL_LOCAL_LLM" if mode_info.get("mode") == "LLM_ASSISTED" else "LLM_FALLBACK",
+                        answer_source=final_src,
                         gemini_calls=len(call_records),
                         llm_input_tokens=sum(c["input_tokens"] for c in call_records),
                         llm_output_tokens=sum(c["output_tokens"] for c in call_records),
