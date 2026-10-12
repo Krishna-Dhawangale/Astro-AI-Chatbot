@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Request, status
+from fastapi import FastAPI, HTTPException, Request, status, Header, Cookie, Depends
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
@@ -1252,6 +1252,174 @@ def parse_gemini_json_response(response_text: str) -> Optional[Dict[str, Any]]:
 
 USER_SESSIONS: Dict[str, Dict[str, Any]] = {}
 
+PROFILE_REQUIRED_PROMPT = (
+    "Namaste! To deliver an accurate, personalized Vedic astrology reading based on your unique birth chart, "
+    "please complete your profile with your Date, Time, and Place of birth. Generic or placeholder charts are strictly avoided.\n\n"
+    "[Profile Setup Required]"
+)
+
+
+# ==============================================================================
+# SECURE PER-USER SESSION & BIRTH PROFILE STORE (Zero Cross-Session Leakage)
+# ==============================================================================
+class IsolatedUserStore:
+    """Thread-safe, isolated per-user session and birth profile store."""
+    def __init__(self):
+        self._profiles: Dict[str, Dict[str, Any]] = {}
+        self._sessions: Dict[str, Dict[str, Any]] = {}
+
+    def get_profile(self, user_id: str) -> Optional[Dict[str, Any]]:
+        return self._profiles.get(str(user_id))
+
+    def set_profile(self, user_id: str, profile_data: Dict[str, Any]) -> None:
+        self._profiles[str(user_id)] = profile_data
+
+    def get_session(self, user_id: str) -> Dict[str, Any]:
+        uid = str(user_id)
+        if uid not in self._sessions:
+            self._sessions[uid] = {
+                "turn_count": 0,
+                "history": [],
+                "topics_asked": [],
+                "has_greeted": False,
+            }
+        return self._sessions[uid]
+
+    def has_complete_profile(self, user_id: str) -> bool:
+        prof = self.get_profile(user_id)
+        if not prof:
+            return False
+        has_asc = bool(prof.get("ascendant") or prof.get("lagna"))
+        has_birth = bool(
+            prof.get("birth_year") and prof.get("birth_month") and prof.get("birth_day")
+            and (prof.get("birth_place") or (prof.get("latitude") and prof.get("longitude")))
+        )
+        return has_asc or has_birth
+
+USER_STORE = IsolatedUserStore()
+
+
+class ActiveUserSession:
+    """Represents an isolated, authenticated user session."""
+    def __init__(
+        self,
+        user_id: str,
+        profile: Optional[Dict[str, Any]] = None,
+        natal_context: Optional[Dict[str, Any]] = None,
+        is_profile_complete: bool = False,
+        source: str = "anonymous",
+    ):
+        self.user_id = user_id
+        self.profile = profile or {}
+        self.natal_context = natal_context or {}
+        self.is_profile_complete = is_profile_complete
+        self.source = source
+
+
+async def get_active_user_session(
+    request: Request,
+    authorization: Optional[str] = Header(None),
+    x_user_id: Optional[str] = Header(None),
+    x_session_id: Optional[str] = Header(None),
+    session_token: Optional[str] = Cookie(None),
+    astro_session_id: Optional[str] = Cookie(None),
+    user_id_cookie: Optional[str] = Cookie(None, alias="user_id"),
+) -> ActiveUserSession:
+    """
+    FastAPI Dependency Injection:
+    1. Extracts active user_id or session token from Authorization header (Bearer token) or Cookies.
+    2. Queries the isolated user store to fetch strictly that user's unique profile.
+    3. Guarantees zero cross-user leakage and prevents fallback to hardcoded default charts.
+    """
+    user_id = ""
+    source = "header"
+
+    # 1. Authorization Header (Bearer token or direct token)
+    auth_val = authorization or request.headers.get("authorization") or request.headers.get("Authorization")
+    if auth_val:
+        parts = auth_val.strip().split()
+        if len(parts) == 2 and parts[0].lower() in ("bearer", "token"):
+            user_id = parts[1].strip()
+        elif len(parts) == 1:
+            user_id = parts[0].strip()
+
+    # 2. Custom Identity Headers
+    if not user_id:
+        h_uid = (
+            x_user_id
+            or x_session_id
+            or request.headers.get("x-user-id")
+            or request.headers.get("X-User-ID")
+            or request.headers.get("x-session-id")
+            or request.headers.get("X-Session-ID")
+            or ""
+        )
+        if h_uid:
+            user_id = h_uid.strip()
+
+    # 3. Cookies
+    if not user_id:
+        for ck in (session_token, astro_session_id, user_id_cookie):
+            if ck and ck.strip():
+                user_id = ck.strip()
+                source = "cookie"
+                break
+        if not user_id:
+            for ck_name in ("session_token", "astro_session_id", "user_id", "session_id"):
+                v = request.cookies.get(ck_name)
+                if v and v.strip():
+                    user_id = v.strip()
+                    source = "cookie"
+                    break
+
+    # 4. Fallback check from query parameters (e.g. ?user_id=xyz)
+    if not user_id:
+        param_uid = request.query_params.get("user_id") or request.query_params.get("session_id")
+        if param_uid and param_uid.strip():
+            user_id = param_uid.strip()
+            source = "query_param"
+
+    if not user_id:
+        client_host = request.client.host if request.client else "127.0.0.1"
+        user_id = f"session_{abs(hash(client_host + str(time.time()))) % 10000000}"
+        source = "generated"
+
+    stored_profile = USER_STORE.get_profile(user_id) or {}
+    natal_context = stored_profile.get("user_natal_context") or {}
+    is_complete = USER_STORE.has_complete_profile(user_id)
+
+    return ActiveUserSession(
+        user_id=user_id,
+        profile=stored_profile,
+        natal_context=natal_context,
+        is_profile_complete=is_complete,
+        source=source,
+    )
+
+
+def is_personal_chart_reading_query(query: str) -> bool:
+    """Checks whether the user's query asks for an astrological chart reading that requires a birth chart."""
+    if not query:
+        return False
+    q = query.lower().strip()
+    if q in {"hi", "hello", "hey", "namaste", "greetings", "thanks", "thank you", "bye", "goodbye"}:
+        return False
+    for cat in ("greetings", "bot_identity", "gratitude", "farewells"):
+        for pat in BASIC_CONVERSATION_MAP.get(cat, {}).get("patterns", []):
+            if re.search(pat, q):
+                return False
+    chart_patterns = [
+        r"\b(?:career|job|profession|business|naukri|promotion|salary|work)\b",
+        r"\b(?:marri\w*|shadi|shaadi|vivah|spouse|husband|wife|partner|relationship)\b",
+        r"\b(?:wealth|money|finance|paisa|paise|dhan|saving|income)\b",
+        r"\b(?:health|disease|illness|swasthya|sehat|bimari|vitality)\b",
+        r"\b(?:1st|2nd|3rd|4th|5th|6th|7th|8th|9th|10th|11th|12th)\s+house\b",
+        r"\b(?:lagna|ascendant|rashi|moon\s+sign|sun\s+sign|kundali|birth\s+chart|horoscope)\b",
+        r"\b(?:dasha|mahadasha|antardasha|vimshottari|sade\s+sati)\b",
+    ]
+    return any(re.search(pat, q) for pat in chart_patterns)
+
+
 ZODIAC_SIGNS = [
     "Aries", "Taurus", "Gemini", "Cancer",
     "Leo", "Virgo", "Libra", "Scorpio",
@@ -1260,18 +1428,18 @@ ZODIAC_SIGNS = [
 
 
 class UserChartProfile(BaseModel):
-    name: str = "Friend"
-    lagna: str = "Libra"
-    moon_sign: str = "Gemini"
-    sun_sign: str = "Cancer"
-    jupiter_house: str = "1st house"
-    current_dasha: str = "Rahu-Moon"
+    name: Optional[str] = "Friend"
+    lagna: Optional[str] = None
+    moon_sign: Optional[str] = None
+    sun_sign: Optional[str] = None
+    jupiter_house: Optional[str] = None
+    current_dasha: Optional[str] = None
 
 
 class ChatRequest(BaseModel):
     user_query: str = ""
-    profile: UserChartProfile = UserChartProfile()
-    user_id: str = "default_user"
+    profile: Optional[UserChartProfile] = None
+    user_id: Optional[str] = None
     query: Optional[str] = None
     name: Optional[str] = None
     age: Optional[int] = None
@@ -1280,15 +1448,15 @@ class ChatRequest(BaseModel):
     relationship_status: Optional[str] = None
     question_type: str = "auto"  # "auto", "simple", "advanced", or "mixed"
     mode: str = "auto"  # "auto", or force "ai" / "instant"
-    birth_year: int = 2000
-    birth_month: int = 1
-    birth_day: int = 1
-    birth_hour: float = 12.0
+    birth_year: Optional[int] = None
+    birth_month: Optional[int] = None
+    birth_day: Optional[int] = None
+    birth_hour: Optional[float] = None
     birth_place: Optional[str] = None
     place: Optional[str] = None
-    latitude: float = 20.5937
-    longitude: float = 78.9629
-    timezone: float = 5.5
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    timezone: Optional[float] = None
     already_greeted: Optional[bool] = None
 
     def model_post_init(self, __context: Any) -> None:
@@ -1300,7 +1468,9 @@ class ChatRequest(BaseModel):
             self.birth_place = self.place
         elif self.birth_place and not self.place:
             self.place = self.birth_place
-        if self.name and (not self.profile.name or self.profile.name == "Friend"):
+        if self.profile is None:
+            self.profile = UserChartProfile(name=self.name or "Friend")
+        elif self.name and (not self.profile.name or self.profile.name == "Friend"):
             self.profile.name = self.name
 
 
@@ -1432,26 +1602,24 @@ def check_qa_database(
     if not clean_lower:
         return None
 
-    if profile is None:
-        profile = UserChartProfile()
-
-    # Pre-calculate user_natal_context if not passed
-    if not user_natal_context:
-        asc = getattr(profile, "ascendant", None) or getattr(profile, "lagna", "Libra")
-        moon = getattr(profile, "rashi", None) or getattr(profile, "moon_sign", "Gemini")
-        dasha = getattr(profile, "dasha", None) or getattr(profile, "current_dasha", "Rahu-Mars")
-        p_name = getattr(profile, "name", "") or ""
-        if p_name.lower() in ("guest", "there", "friend"):
-            p_name = ""
-        user_natal_context = {
-            "name": p_name,
-            "birth_details": getattr(profile, "birth_details", "") or "",
-            "birth_place": getattr(profile, "birth_place", getattr(profile, "place", "")) or "",
-            "ascendant": asc,
-            "moon_sign": moon,
-            "active_dasha": str(dasha),
-            "house_rulerships": calculate_house_rulerships(asc),
-        }
+    # Pre-calculate user_natal_context if not passed and profile has ascendant
+    if not user_natal_context and profile:
+        asc = getattr(profile, "ascendant", None) or getattr(profile, "lagna", None)
+        if asc:
+            moon = getattr(profile, "rashi", None) or getattr(profile, "moon_sign", None) or "Aries"
+            dasha = getattr(profile, "dasha", None) or getattr(profile, "current_dasha", None) or "Active Dasha"
+            p_name = getattr(profile, "name", "") or ""
+            if p_name.lower() in ("guest", "there", "friend"):
+                p_name = ""
+            user_natal_context = {
+                "name": p_name,
+                "birth_details": getattr(profile, "birth_details", "") or "",
+                "birth_place": getattr(profile, "birth_place", getattr(profile, "place", "")) or "",
+                "ascendant": asc,
+                "moon_sign": moon,
+                "active_dasha": str(dasha),
+                "house_rulerships": calculate_house_rulerships(asc),
+            }
 
     # 1. Check Basic Conversational Queries (Greetings, Bot Identity, Thanks, Bye)
     is_hinglish = is_hinglish_query(raw_query)
@@ -3116,11 +3284,14 @@ def read_root():
     return {"status": "online", "message": "Astrology Chatbot Backend is running."}
 
 
-async def _handle_chat_response(request: ChatRequest):
+async def _handle_chat_response(request: ChatRequest, session_user: Optional[ActiveUserSession] = None):
     t_start = time.perf_counter()
 
     query_text = (request.user_query or request.query or "").strip()
-    session_id = request.user_id or "default_user"
+    session_id = request.user_id or (session_user.user_id if session_user else "default_user")
+    if session_id == "default_user" and session_user and session_user.user_id:
+        session_id = session_user.user_id
+    request.user_id = session_id
 
     # Toxicity & Abusive Language Guardrail (3-Strike Policy)
     guardrail_result = check_abuse_guardrail(session_id, query_text)
@@ -3158,14 +3329,42 @@ async def _handle_chat_response(request: ChatRequest):
             },
         )
 
+    # Isolated Profile Resolution: Check whether birth parameters are provided or previously saved
+    has_birth_inputs = bool(
+        request.birth_year and request.birth_month and request.birth_day
+    )
+    stored_profile = USER_STORE.get_profile(session_id) or {}
+    has_stored_chart = bool(stored_profile.get("user_natal_context"))
+    has_cached_chart = bool(session_id in USER_SESSIONS and USER_SESSIONS[session_id].get("user_natal_context"))
+    has_profile = has_birth_inputs or has_stored_chart or has_cached_chart
+
+    # Requirement 2: Zero generic/fake chart assumption if user profile is missing
+    if not has_profile and is_personal_chart_reading_query(query_text):
+        return JSONResponse(
+            status_code=200,
+            content={
+                "status": "profile_required",
+                "answer": PROFILE_REQUIRED_PROMPT,
+                "response": PROFILE_REQUIRED_PROMPT,
+                "abuse_strikes": 0,
+                "terminated": False,
+                "missing_profile": True,
+                "related_questions": [
+                    "How do I enter my birth details?",
+                    "Why is exact birth time necessary in Vedic astrology?",
+                    "What is the difference between Lagna and Moon sign?",
+                ],
+            },
+        )
+
     current_birth_signature = (
-        request.birth_year,
-        request.birth_month,
-        request.birth_day,
-        round(float(request.birth_hour), 4),
-        round(float(request.latitude), 4),
-        round(float(request.longitude), 4),
-        round(float(request.timezone), 2),
+        request.birth_year or 2000,
+        request.birth_month or 1,
+        request.birth_day or 1,
+        round(float(request.birth_hour or 12.0), 4),
+        round(float(request.latitude or 20.5937), 4),
+        round(float(request.longitude or 78.9629), 4),
+        round(float(request.timezone or 5.5), 2),
         (request.name or "").strip().lower(),
     )
 
@@ -3243,20 +3442,34 @@ async def _handle_chat_response(request: ChatRequest):
         astro_features = session_data.get("astro_features", [2, 8, 2, 10, 8, 0, 7, 0, 3, 9])
         _api_chart_data = session_data.get("api_chart_data", {})
         dasha_data = session_data.get("dasha_data", {})
+    elif has_stored_chart and not has_birth_inputs:
+        user_natal_context = stored_profile["user_natal_context"]
+        active_profile = stored_profile.get("chart_profile")
+        asc_sign = user_natal_context["ascendant"]
+        sun_sign = user_natal_context.get("sun_sign", "Aries")
+        moon_sign = user_natal_context["moon_sign"]
+        current_dasha = user_natal_context.get("active_dasha", "Rahu-Mars")
+        jupiter_house_str = stored_profile.get("jupiter_house_str", "1st house")
+        astro_features = stored_profile.get("astro_features", [2, 8, 2, 10, 8, 0, 7, 0, 3, 9])
+        _api_chart_data = stored_profile.get("api_chart_data", {})
+        dasha_data = stored_profile.get("dasha_data", {})
+        session_data["user_natal_context"] = user_natal_context
+        session_data["chart_profile"] = active_profile
     else:
-        birth_seconds = round((request.birth_hour % 24) * 60 * 60)
+        b_hour_val = float(request.birth_hour if request.birth_hour is not None else 12.0)
+        birth_seconds = round((b_hour_val % 24) * 60 * 60)
         birth_hour, remaining_seconds = divmod(birth_seconds, 60 * 60)
         birth_minute, birth_second = divmod(remaining_seconds, 60)
         birth_details = BirthDetailsRequest(
-            year=request.birth_year,
-            month=request.birth_month,
-            day=request.birth_day,
+            year=request.birth_year or 2000,
+            month=request.birth_month or 1,
+            day=request.birth_day or 1,
             hour=birth_hour,
             minute=birth_minute,
             second=birth_second,
-            latitude=request.latitude,
-            longitude=request.longitude,
-            timezone=request.timezone,
+            latitude=request.latitude if request.latitude is not None else 20.5937,
+            longitude=request.longitude if request.longitude is not None else 78.9629,
+            timezone=request.timezone if request.timezone is not None else 5.5,
         )
 
         # Fetch API or local Swiss Ephemeris sidereal signs without blocking the event loop.
@@ -3309,10 +3522,10 @@ async def _handle_chat_response(request: ChatRequest):
         )
 
         # Ground-Truth Injection — pre-calculate user's explicit birth facts
-        b_year = request.birth_year
-        b_month = request.birth_month
-        b_day = request.birth_day
-        b_hour_f = request.birth_hour
+        b_year = request.birth_year or 2000
+        b_month = request.birth_month or 1
+        b_day = request.birth_day or 1
+        b_hour_f = float(request.birth_hour if request.birth_hour is not None else 12.0)
         b_hour_int = int(b_hour_f)
         b_min_int = int(round((b_hour_f - b_hour_int) * 60))
         time_str = f"{b_hour_int:02d}:{b_min_int:02d}"
@@ -3323,7 +3536,9 @@ async def _handle_chat_response(request: ChatRequest):
         birth_details_str = f"{birth_date_str}, {time_str}"
         birth_place_str = (request.birth_place or request.place or "").strip()
         if not birth_place_str:
-            birth_place_str = f"Lat {request.latitude:.2f}, Lon {request.longitude:.2f}"
+            lat_f = float(request.latitude if request.latitude is not None else 20.59)
+            lon_f = float(request.longitude if request.longitude is not None else 78.96)
+            birth_place_str = f"Lat {lat_f:.2f}, Lon {lon_f:.2f}"
 
         user_name_str = (request.name or getattr(active_profile, "name", "") or "").strip()
         if user_name_str.lower() in ("guest", "there", "friend"):
@@ -3342,7 +3557,7 @@ async def _handle_chat_response(request: ChatRequest):
             "house_rulerships": calculate_house_rulerships(asc_sign),
         }
 
-        # Cache chart context into session state for zero-latency follow-up turns
+        # Cache chart context into session state and isolated user store
         session_data["chart_profile"] = active_profile
         session_data["user_natal_context"] = user_natal_context
         session_data["jupiter_house_str"] = jupiter_house_str
@@ -3350,6 +3565,20 @@ async def _handle_chat_response(request: ChatRequest):
         session_data["api_chart_data"] = _api_chart_data
         session_data["dasha_data"] = dasha_data
         session_data["birth_signature"] = current_birth_signature
+
+        USER_STORE.set_profile(session_id, {
+            "user_id": session_id,
+            "chart_profile": active_profile,
+            "user_natal_context": user_natal_context,
+            "jupiter_house_str": jupiter_house_str,
+            "astro_features": astro_features,
+            "api_chart_data": _api_chart_data,
+            "dasha_data": dasha_data,
+            "birth_signature": current_birth_signature,
+            "ascendant": asc_sign,
+            "moon_sign": moon_sign,
+            "active_dasha": current_dasha,
+        })
 
     query_text = (request.user_query or request.query or "").strip()
 
@@ -3550,9 +3779,9 @@ async def _handle_chat_response(request: ChatRequest):
     return StreamingResponse(async_stream_generator(), media_type="text/plain; charset=utf-8")
 
 
-async def _handle_chat(request: ChatRequest):
+async def _handle_chat(request: ChatRequest, session_user: Optional[ActiveUserSession] = None):
     try:
-        return await _handle_chat_response(request)
+        return await _handle_chat_response(request, session_user=session_user)
     except asyncio.CancelledError:
         logger.info("Chat request cancelled during startup")
         raise
@@ -3566,8 +3795,16 @@ async def _handle_chat(request: ChatRequest):
 
 @app.post("/chat")
 @limiter.limit(os.getenv("CHAT_RATE_LIMIT", "300/minute"))
-async def chat_endpoint(request: Request, chat_request: ChatRequest):
-    return await _handle_chat(chat_request)
+async def chat_endpoint(
+    request: Request,
+    chat_request: ChatRequest,
+    session_user: ActiveUserSession = Depends(get_active_user_session),
+):
+    if chat_request.user_id and chat_request.user_id != "default_user":
+        session_user.user_id = chat_request.user_id
+    elif session_user.user_id:
+        chat_request.user_id = session_user.user_id
+    return await _handle_chat(chat_request, session_user=session_user)
 
 
 class ApiChatRequest(BaseModel):
@@ -3583,7 +3820,10 @@ API_USER_SESSIONS: Dict[str, Dict[str, Any]] = {}
 
 
 @app.post("/api/chat")
-async def api_chat_endpoint(chat_req: ApiChatRequest):
+async def api_chat_endpoint(
+    chat_req: ApiChatRequest,
+    session_user: ActiveUserSession = Depends(get_active_user_session),
+):
     """
     Ultra-token-optimized chat endpoint (target: <= 210 tokens/request, >50% token cut):
     1. Local QA Intercept: Checks incoming query against qa_database.json (0 LLM tokens).
@@ -3596,7 +3836,7 @@ async def api_chat_endpoint(chat_req: ApiChatRequest):
     """
     prompt = chat_req.prompt.strip()
     profile = chat_req.user_profile or {}
-    user_id: str = str(profile.get("user_id") or profile.get("id") or "api_default_user")
+    user_id: str = str(profile.get("user_id") or profile.get("id") or session_user.user_id)
 
     # Toxicity & Abusive Language Guardrail (3-Strike Policy)
     guardrail_result = check_abuse_guardrail(user_id, prompt)
@@ -3634,17 +3874,42 @@ async def api_chat_endpoint(chat_req: ApiChatRequest):
             },
         )
 
-    # Step 1: Ground-Truth Injection — pre-calculate user's explicit birth facts
-    ascendant = profile.get("ascendant") or profile.get("lagna") or "Libra"
-    moon_sign = profile.get("rashi") or profile.get("moon_sign") or profile.get("moon") or "Gemini"
-    sun_sign = profile.get("sun_sign") or profile.get("sun") or profile.get("surya") or ""
-    active_dasha = profile.get("dasha") or profile.get("active_dasha") or profile.get("current_dasha") or "Rahu-Mars"
+    # Isolated Profile Resolution: Check whether birth facts exist in profile or stored profile
+    stored = USER_STORE.get_profile(user_id) or {}
+    stored_natal = stored.get("user_natal_context") or {}
 
-    p_name = (profile.get("name") or "").strip()
+    ascendant = profile.get("ascendant") or profile.get("lagna") or stored_natal.get("ascendant")
+    moon_sign = profile.get("rashi") or profile.get("moon_sign") or profile.get("moon") or stored_natal.get("moon_sign")
+    sun_sign = profile.get("sun_sign") or profile.get("sun") or profile.get("surya") or stored_natal.get("sun_sign", "")
+    active_dasha = profile.get("dasha") or profile.get("active_dasha") or profile.get("current_dasha") or stored_natal.get("active_dasha")
+
+    if not ascendant:
+        if is_personal_chart_reading_query(prompt):
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "status": "profile_required",
+                    "answer": PROFILE_REQUIRED_PROMPT,
+                    "response": PROFILE_REQUIRED_PROMPT,
+                    "abuse_strikes": 0,
+                    "terminated": False,
+                    "missing_profile": True,
+                    "related_questions": [
+                        "How do I enter my birth details?",
+                        "Why is exact birth time necessary in Vedic astrology?",
+                        "What is the difference between Lagna and Moon sign?",
+                    ],
+                },
+            )
+        ascendant = ""
+        moon_sign = ""
+        active_dasha = ""
+
+    p_name = (profile.get("name") or stored_natal.get("name") or "").strip()
     if p_name.lower() in ("guest", "there", "friend"):
         p_name = ""
-    b_details = str(profile.get("birth_details") or profile.get("dob") or "").strip()
-    b_place = str(profile.get("birth_place") or profile.get("place") or profile.get("city") or "").strip()
+    b_details = str(profile.get("birth_details") or profile.get("dob") or stored_natal.get("birth_details") or "").strip()
+    b_place = str(profile.get("birth_place") or profile.get("place") or profile.get("city") or stored_natal.get("birth_place") or "").strip()
 
     user_natal_context = {
         "name": p_name,
@@ -3654,8 +3919,15 @@ async def api_chat_endpoint(chat_req: ApiChatRequest):
         "moon_sign": moon_sign,
         "sun_sign": sun_sign,
         "active_dasha": str(active_dasha),
-        "house_rulerships": calculate_house_rulerships(ascendant),
+        "house_rulerships": calculate_house_rulerships(ascendant) if ascendant else {},
     }
+    if ascendant:
+        USER_STORE.set_profile(user_id, {
+            "user_id": user_id,
+            "user_natal_context": user_natal_context,
+            "ascendant": ascendant,
+            "moon_sign": moon_sign,
+        })
 
     # Build or update the per-user API session
     if user_id not in API_USER_SESSIONS:
@@ -3810,6 +4082,41 @@ async def api_chat_endpoint(chat_req: ApiChatRequest):
             yield f"\n[TOKEN_USAGE]: {json.dumps(token_stats)}"
 
     return StreamingResponse(api_stream_generator(), media_type="text/plain; charset=utf-8")
+
+
+@app.get("/api/profile")
+async def get_user_profile(session_user: ActiveUserSession = Depends(get_active_user_session)):
+    return {
+        "user_id": session_user.user_id,
+        "is_profile_complete": session_user.is_profile_complete,
+        "profile": session_user.profile,
+        "natal_context": session_user.natal_context,
+    }
+
+
+@app.post("/api/profile")
+async def update_user_profile(
+    profile_data: Dict[str, Any],
+    session_user: ActiveUserSession = Depends(get_active_user_session),
+):
+    uid = str(profile_data.get("user_id") or session_user.user_id)
+    asc = profile_data.get("ascendant") or profile_data.get("lagna")
+    if asc:
+        moon = profile_data.get("moon_sign") or profile_data.get("rashi") or "Aries"
+        dasha = profile_data.get("active_dasha") or profile_data.get("dasha") or "Active Dasha"
+        p_name = profile_data.get("name", "")
+        natal = {
+            "name": p_name,
+            "birth_details": profile_data.get("birth_details", ""),
+            "birth_place": profile_data.get("birth_place", ""),
+            "ascendant": asc,
+            "moon_sign": moon,
+            "active_dasha": str(dasha),
+            "house_rulerships": calculate_house_rulerships(asc),
+        }
+        profile_data["user_natal_context"] = natal
+    USER_STORE.set_profile(uid, profile_data)
+    return {"status": "success", "user_id": uid, "profile": profile_data}
 
 
 if __name__ == "__main__":

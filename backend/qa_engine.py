@@ -140,24 +140,25 @@ def build_chart_substitution_context(chart_data: Optional[Any] = None) -> Dict[s
     birth_details = _get(["birth_details", "dob", "birth_date_time", "birth_datetime"])
     birth_place = _get(["birth_place", "place", "city", "location"])
 
-    # Extract primary astrological coordinates
-    lagna = _get(["lagna", "ascendant", "asc_sign"], "Libra")
-    # Normalize Hindi/Sanskrit rashi aliases if used
-    lagna = RASHI_ALIASES.get(lagna.lower(), lagna.capitalize())
+    # Extract primary astrological coordinates without fake defaults
+    lagna = _get(["lagna", "ascendant", "asc_sign"], "")
+    if lagna:
+        lagna = RASHI_ALIASES.get(lagna.lower(), lagna.capitalize())
 
-    moon_sign = _get(["moon_sign", "rashi", "moon"], "Gemini")
-    moon_sign = RASHI_ALIASES.get(moon_sign.lower(), moon_sign.capitalize())
+    moon_sign = _get(["moon_sign", "rashi", "moon"], "")
+    if moon_sign:
+        moon_sign = RASHI_ALIASES.get(moon_sign.lower(), moon_sign.capitalize())
 
     sun_sign = _get(["sun_sign", "sun", "surya"], "")
     if sun_sign:
         sun_sign = RASHI_ALIASES.get(sun_sign.lower(), sun_sign.capitalize())
 
-    dasha = _get(["dasha", "current_dasha", "active_dasha"], "Rahu-Mars")
+    dasha = _get(["dasha", "current_dasha", "active_dasha"], "")
     jupiter_house = _get(["jupiter_house", "jupiter"], "")
 
-    # Calculate deterministic 12-house signs and lords from Lagna
-    rulerships = calculate_house_rulerships(lagna)
-    lagna_lord = SIGN_LORDS.get(lagna, "Venus")
+    # Calculate deterministic 12-house signs and lords from Lagna only if lagna is provided
+    rulerships = calculate_house_rulerships(lagna) if lagna else {}
+    lagna_lord = SIGN_LORDS.get(lagna, "") if lagna else ""
 
     subs: Dict[str, str] = {
         "user_name": user_name or "Seeker",

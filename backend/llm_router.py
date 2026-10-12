@@ -262,12 +262,18 @@ def format_user_intro(user_natal_context: Dict[str, Any], hinglish: bool = False
 # ---------------------------------------------------------------------------
 # Step 2: Strict System Prompt Guardrails & Length Constraints
 # ---------------------------------------------------------------------------
+PROFILE_REQUIRED_PROMPT = (
+    "Namaste! To deliver an accurate, personalized Vedic astrology reading based on your unique birth chart, "
+    "please complete your profile with your Date, Time, and Place of birth. Generic or placeholder charts are strictly avoided.\n\n"
+    "[Profile Setup Required]"
+)
+
 DEFAULT_NATAL_CONTEXT: Dict[str, Any] = {
-    "ascendant": "Libra",
-    "moon_sign": "Gemini",
-    "sun_sign": "Virgo",
-    "active_dasha": "Rahu-Mars",
-    "house_rulerships": calculate_house_rulerships("Libra"),
+    "ascendant": "",
+    "moon_sign": "",
+    "sun_sign": "",
+    "active_dasha": "",
+    "house_rulerships": {},
 }
 
 # ---------------------------------------------------------------------------
@@ -1357,8 +1363,10 @@ def format_career_rule_response(
     if hinglish is None:
         hinglish = is_hinglish_query(query)
 
-    asc = user_natal_context.get("ascendant") or "Libra"
-    dasha = user_natal_context.get("active_dasha") or "Rahu-Mars"
+    asc = user_natal_context.get("ascendant") or user_natal_context.get("lagna")
+    if not asc:
+        return PROFILE_REQUIRED_PROMPT
+    dasha = user_natal_context.get("active_dasha") or "Active Dasha"
     rulerships = user_natal_context.get("house_rulerships") or calculate_house_rulerships(asc)
     h10_info = rulerships.get("10th_house", "Moon (Cancer)")
     intro = format_user_intro(user_natal_context, hinglish=hinglish)
@@ -1543,8 +1551,10 @@ def format_wealth_rule_response(
     if hinglish is None:
         hinglish = is_hinglish_query(query)
 
-    asc = user_natal_context.get("ascendant") or "Libra"
-    dasha = user_natal_context.get("active_dasha") or "Rahu-Mars"
+    asc = user_natal_context.get("ascendant") or user_natal_context.get("lagna")
+    if not asc:
+        return PROFILE_REQUIRED_PROMPT
+    dasha = user_natal_context.get("active_dasha") or "Active Dasha"
     rulerships = user_natal_context.get("house_rulerships") or calculate_house_rulerships(asc)
     intro = format_user_intro(user_natal_context, hinglish=hinglish)
 
@@ -1602,8 +1612,10 @@ def format_health_rule_response(
     if hinglish is None:
         hinglish = is_hinglish_query(query)
 
-    asc = user_natal_context.get("ascendant") or "Libra"
-    dasha = user_natal_context.get("active_dasha") or "Rahu-Mars"
+    asc = user_natal_context.get("ascendant") or user_natal_context.get("lagna")
+    if not asc:
+        return PROFILE_REQUIRED_PROMPT
+    dasha = user_natal_context.get("active_dasha") or "Active Dasha"
     rulerships = user_natal_context.get("house_rulerships") or calculate_house_rulerships(asc)
     intro = format_user_intro(user_natal_context, hinglish=hinglish)
 
@@ -1660,7 +1672,17 @@ def render_domain_reading(
         return format_wealth_rule_response(query, user_natal_context, hinglish=hinglish)
     elif d_clean in ("health", "wellness", "fitness", "immunity"):
         return format_health_rule_response(query, user_natal_context, hinglish=hinglish)
-    return generate_local_rule_fallback(query, user_natal_context, hinglish=hinglish)
+def normalize_hinglish(text: str) -> str:
+    """Normalize common Hinglish words to English equivalents."""
+    replacements = {
+        "shadi": "marriage", "shaadi": "marriage", "vivah": "marriage",
+        "naukri": "job", "vyapar": "business", "dhan": "wealth", "paisa": "money",
+        "sehat": "health", "bimari": "illness", "kab": "when", "kaisa": "how",
+    }
+    res = (text or "").lower()
+    for k, v in replacements.items():
+        res = re.sub(r"\b" + re.escape(k) + r"\b", v, res)
+    return res
 
 
 def resolve_followup_context(
@@ -2048,8 +2070,10 @@ def format_marriage_rule_response(
     if hinglish is None:
         hinglish = is_hinglish_query(query)
 
-    asc = user_natal_context.get("ascendant") or "Libra"
-    dasha = user_natal_context.get("active_dasha") or "Rahu-Mars"
+    asc = user_natal_context.get("ascendant") or user_natal_context.get("lagna")
+    if not asc:
+        return PROFILE_REQUIRED_PROMPT
+    dasha = user_natal_context.get("active_dasha") or "Active Dasha"
     rulerships = user_natal_context.get("house_rulerships") or calculate_house_rulerships(asc)
     h7_info = rulerships.get("7th_house", "Mars (Aries)")
     intro = format_user_intro(user_natal_context, hinglish=hinglish)
@@ -2167,6 +2191,11 @@ def generate_local_rule_fallback(
         return format_health_rule_response(clean_q, ctx, hinglish=hinglish)
 
     # 4. General / Life path fallback
+    asc = ctx.get("ascendant") or "Aries"
+    moon = ctx.get("moon_sign") or "Taurus"
+    dasha = ctx.get("active_dasha") or "Active Dasha"
+    intro = format_user_intro(ctx, hinglish=hinglish)
+
     if hinglish:
         p1 = (
             f"**Astrological Insight:** {intro} {asc} Lagna aur {moon} Moon sign ke anusaar abhi aap {dasha} planetary timing cycle ke dauran chal rahe hain. "
@@ -2196,9 +2225,13 @@ def format_local_qa_response(qa_data: dict, user_context: dict) -> str:
     When a local database hit occurs, dynamically populates the structured JSON fields
     with the user's active birth facts.
     """
-    ascendant = user_context.get("ascendant", "Libra")
-    moon_sign = user_context.get("moon_sign", "Gemini")
-    active_dasha = user_context.get("active_dasha", "Rahu-Mars")
+    if not user_context:
+        return PROFILE_REQUIRED_PROMPT
+    ascendant = user_context.get("ascendant") or user_context.get("lagna")
+    if not ascendant:
+        return PROFILE_REQUIRED_PROMPT
+    moon_sign = user_context.get("moon_sign") or "Aries"
+    active_dasha = user_context.get("active_dasha") or "Active Dasha"
     house_rulerships = user_context.get("house_rulerships") or calculate_house_rulerships(ascendant)
 
     user_name = user_context.get("name")
