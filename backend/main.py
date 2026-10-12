@@ -76,7 +76,8 @@ try:
         get_renderer_system_instruction,
         select_renderer_tier,
         build_compact_evidence_package,
-        format_llm_assisted_prompt
+        format_llm_assisted_prompt,
+        estimate_tokens
     )
 except ImportError:
     from reasoning.llm_renderer import (
@@ -84,7 +85,8 @@ except ImportError:
         get_renderer_system_instruction,
         select_renderer_tier,
         build_compact_evidence_package,
-        format_llm_assisted_prompt
+        format_llm_assisted_prompt,
+        estimate_tokens
     )
 
 try:
@@ -183,6 +185,11 @@ try:
     from backend.reasoning.direct_fact_engine import is_direct_fact_query, extract_direct_fact
 except ImportError:
     from reasoning.direct_fact_engine import is_direct_fact_query, extract_direct_fact
+
+try:
+    from backend.llm_router import stream_cascading_router, trim_to_last_sentence
+except ImportError:
+    from llm_router import stream_cascading_router, trim_to_last_sentence
 
 FRONTEND_PATH = os.path.join(BASE_DIR, "..", "frontend", "index.html")
 
@@ -3234,151 +3241,106 @@ async def _handle_chat_response(request: ChatRequest, session_id: Optional[str] 
         return JSONResponse(content=backend_error_payload(request.query))
 
     async def async_stream_generator():
-        response_stream = None
         req_start_time = time.time()
         call_records = []
-
-        async def close_stream() -> None:
-            nonlocal response_stream
-            close = getattr(response_stream, "aclose", None)
-            if close is not None:
-                try:
-                    close_result = close()
-                    if inspect.isawaitable(close_result):
-                        await close_result
-                except asyncio.CancelledError:
-                    raise
-                except Exception:
-                    logger.warning("Failed to close Gemini response stream", exc_info=True)
-            response_stream = None
+        attempt_chunks = []
+        active_provider = "gemini"
+        active_model = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite")
+        final_meta = {}
 
         try:
-            config = types.GenerateContentConfig(
-                system_instruction=system_instruction,
-                temperature=0.2,
+            router_gen = stream_cascading_router(
+                prompt=llm_prompt_text,
+                system_prompt=system_instruction,
                 max_output_tokens=max_out_tokens,
-                safety_settings=GEMINI_SAFETY_SETTINGS,
+                temperature=0.2,
+                session_id=request.user_id,
+                custom_gemini_client=client,
             )
-            for attempt in range(3):
-                attempt_chunks = []
-                last_usage_metadata = None
-                call_start_time = time.time()
-                try:
-                    model_name = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite")
-                    if attempt > 0:
-                        model_name = "gemini-3.5-flash-lite"
-                    response_stream = await client.aio.models.generate_content_stream(
-                        model=model_name,
-                        contents=llm_prompt_text,
-                        config=config,
-                    )
-                    async for chunk in response_stream:
-                        if hasattr(chunk, "usage_metadata") and chunk.usage_metadata:
-                            last_usage_metadata = chunk.usage_metadata
-                        if chunk.text:
-                            attempt_chunks.append(chunk.text)
-                            yield chunk.text
-                    full_text = "".join(attempt_chunks).strip()
-                    if not full_text:
-                        raise ConnectionError("Gemini returned an empty stream")
 
-                    call_latency = (time.time() - call_start_time) * 1000
-                    inp_tok = getattr(last_usage_metadata, "prompt_token_count", 0) if last_usage_metadata else 0
-                    out_tok = getattr(last_usage_metadata, "candidates_token_count", 0) if last_usage_metadata else 0
+            async for chunk_text, meta in router_gen:
+                if meta:
+                    final_meta = meta
+                    if meta.get("provider"):
+                        active_provider = meta.get("provider")
+                    if meta.get("model"):
+                        active_model = meta.get("model")
+                if chunk_text:
+                    attempt_chunks.append(chunk_text)
+                    yield chunk_text
 
-                    evidence_rule_ids = [r.get("rule_id", "") for r in matched_rules_list if r.get("matched")]
+            raw_text = "".join(attempt_chunks).strip()
+            full_text = trim_to_last_sentence(raw_text)
+            total_req_latency = (time.time() - req_start_time) * 1000
 
-                    call_rec = print_llm_call_report(
-                        call_number=len(call_records) + 1,
-                        purpose="MODE_3_LLM_ASSISTED (Renderer)" if mode_info.get("mode") == "LLM_ASSISTED" else "MODE_4_LLM_FALLBACK",
-                        model_name=model_name,
-                        input_tokens=inp_tok,
-                        output_tokens=out_tok,
-                        evidence_sent=evidence_rule_ids or ["natal_chart_evidence"],
-                        latency_ms=call_latency
-                    )
-                    call_records.append(call_rec)
+            inp_tok = est_tokens
+            out_tok = estimate_tokens(full_text)
+            evidence_rule_ids = [r.get("rule_id", "") for r in matched_rules_list if r.get("matched")]
 
-                    final_src = mode_info.get("answer_source", "EVIDENCE_GROUNDED_LLM")
-                    total_req_latency = (time.time() - req_start_time) * 1000
-                    print_request_total_report(call_records, total_req_latency)
-                    print_evidence_observability_report(
-                        question=request.query, domain=predicted_domain, intent=resolved_intent,
-                        answer_source=final_src,
-                        api_calls=1, local_rules=len(matched_rules_list), gemini_calls=len(call_records),
-                        input_tokens=sum(c["input_tokens"] for c in call_records),
-                        output_tokens=sum(c["output_tokens"] for c in call_records),
-                        required_evidence=ev_audit["required_evidence"],
-                        available_evidence=ev_audit["available_evidence"],
-                        missing_evidence=ev_audit["missing_evidence"],
-                        evidence_status=ev_audit["evidence_status"],
-                        domain_match=cov_eval.get("domain_match", True),
-                        intent_match=cov_eval.get("intent_match", True),
-                        exact_rule_match=cov_eval.get("exact_rule_match", False),
-                        rule_coverage_score=cov_eval.get("rule_coverage_score", 0.0)
-                    )
+            call_rec = print_llm_call_report(
+                call_number=1,
+                purpose="MODE_3_LLM_ASSISTED (Renderer)" if mode_info.get("mode") == "LLM_ASSISTED" else "MODE_4_LLM_FALLBACK",
+                model_name=active_model,
+                input_tokens=inp_tok,
+                output_tokens=out_tok,
+                evidence_sent=evidence_rule_ids or ["natal_chart_evidence"],
+                latency_ms=total_req_latency
+            )
+            call_records.append(call_rec)
 
-                    record_production_decision_trace(
-                        question=request.query,
-                        domain=predicted_domain,
-                        selected_model=mode_info.get("selected_model", "V3"),
-                        domain_confidence=raw_confidence,
-                        intent=raw_intent,
-                        resolved_intent=resolved_intent,
-                        complexity=complexity,
-                        chart_required=True,
-                        chart_evidence=stage8_result.get("stage_8_14_evidence_matrix", {}).get("evidence_summary", []),
-                        matched_rules=evidence_rule_ids,
-                        evidence_score=1.0,
-                        evidence_status="complete",
-                        answer_source=final_src,
-                        gemini_calls=len(call_records),
-                        llm_input_tokens=sum(c["input_tokens"] for c in call_records),
-                        llm_output_tokens=sum(c["output_tokens"] for c in call_records),
-                        llm_total_tokens=sum(c["total_tokens"] for c in call_records),
-                        llm_call_details=call_records,
-                        latency_ms=total_req_latency
-                    )
+            final_src = mode_info.get("answer_source", "EVIDENCE_GROUNDED_LLM")
+            print_request_total_report(call_records, total_req_latency)
+            print_evidence_observability_report(
+                question=request.query, domain=predicted_domain, intent=resolved_intent,
+                answer_source=final_src,
+                api_calls=1, local_rules=len(matched_rules_list), gemini_calls=1 if active_provider == "gemini" else 0,
+                input_tokens=inp_tok,
+                output_tokens=out_tok,
+                required_evidence=ev_audit["required_evidence"],
+                available_evidence=ev_audit["available_evidence"],
+                missing_evidence=ev_audit["missing_evidence"],
+                evidence_status=ev_audit["evidence_status"],
+                domain_match=cov_eval.get("domain_match", True),
+                intent_match=cov_eval.get("intent_match", True),
+                exact_rule_match=cov_eval.get("exact_rule_match", False),
+                rule_coverage_score=cov_eval.get("rule_coverage_score", 0.0)
+            )
 
-                    await close_stream()
-                    USER_SESSIONS[request.user_id]["history"].append({"role": "user", "content": request.query})
-                    USER_SESSIONS[request.user_id]["history"].append({"role": "assistant", "content": full_text})
-                    yield " (LLM)"
-                    target_domain = query_domains[0] if query_domains else predicted_domain
-                    follow_ups = generate_follow_up_questions(request.query, full_text, domain=target_domain)
-                    yield f"\n[FOLLOW_UPS]: {json.dumps(follow_ups)}"
-                    break
-                except asyncio.CancelledError:
-                    await close_stream()
-                    logger.info("Gemini stream cancelled for user %s", request.user_id)
-                    raise
-                except Exception as e:
-                    await close_stream()
-                    if is_daily_gemini_quota_error(e):
-                        logger.error("Gemini daily quota exhausted: %s", str(e), exc_info=True)
-                        yield "\n\n" + gemini_error_message(e, request.query)
-                        break
-                    if attempt == 2 or attempt_chunks or not is_retryable_gemini_error(e):
-                        logger.error("Gemini Streaming Error: %s", str(e), exc_info=True)
-                        message = gemini_error_message(e, request.query)
-                        yield "\n\n" + message if attempt_chunks else message
-                        break
-                    delay_seconds = 0.5 * (2 ** attempt)
-                    logger.warning(
-                        "Transient Gemini chat failure (attempt %s/3); retrying in %.1fs: %s",
-                        attempt + 1,
-                        delay_seconds,
-                        e,
-                    )
-                    await asyncio.sleep(delay_seconds)
+            record_production_decision_trace(
+                question=request.query,
+                domain=predicted_domain,
+                selected_model=f"{active_provider}:{active_model}",
+                domain_confidence=raw_confidence,
+                intent=raw_intent,
+                resolved_intent=resolved_intent,
+                complexity=complexity,
+                chart_required=True,
+                chart_evidence=stage8_result.get("stage_8_14_evidence_matrix", {}).get("evidence_summary", []),
+                matched_rules=evidence_rule_ids,
+                evidence_score=1.0,
+                evidence_status="complete",
+                answer_source=final_src,
+                gemini_calls=1 if active_provider == "gemini" else 0,
+                llm_input_tokens=inp_tok,
+                llm_output_tokens=out_tok,
+                llm_total_tokens=inp_tok + out_tok,
+                llm_call_details=call_records,
+                latency_ms=total_req_latency
+            )
+
+            USER_SESSIONS[request.user_id]["history"].append({"role": "user", "content": request.query})
+            USER_SESSIONS[request.user_id]["history"].append({"role": "assistant", "content": full_text})
+
+            target_domain = query_domains[0] if query_domains else predicted_domain
+            follow_ups = generate_follow_up_questions(request.query, full_text, domain=target_domain)
+            yield f"\n[FOLLOW_UPS]: {json.dumps(follow_ups)}"
+
         except asyncio.CancelledError:
-            await close_stream()
             logger.info("Chat stream cancelled for user %s", request.user_id)
             raise
         except Exception as e:
-            await close_stream()
-            logger.error("Gemini Streaming Error: %s", str(e), exc_info=True)
-            yield gemini_error_message(e, request.query)
+            logger.error("Streaming Error in cascading router: %s", str(e), exc_info=True)
+            yield "\n\nAn error occurred while streaming the astrological response."
 
     return StreamingResponse(async_stream_generator(), media_type="text/plain; charset=utf-8")
 
