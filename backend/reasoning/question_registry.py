@@ -91,8 +91,44 @@ QUESTION_STRATEGIES: Dict[str, Dict[str, Any]] = {
         "domain": "finance"
     },
     "health_general": {
-        "required_evidence": ["ascendant_rashi", "1st_house"],
-        "rules": [],
+        "required_evidence": ["ascendant_rashi", "1st_house", "6th_house", "12th_house", "mahadasha"],
+        "rules": ["HEALTH_LAGNA_VITALITY", "HEALTH_6TH_LORD_WELLNESS", "HEALTH_12TH_HOUSE_REST", "HEALTH_DASHA_ENERGY"],
+        "answer_strategy": "LOCAL_RULE_SYNTHESIS",
+        "domain": "health"
+    },
+    "health_vitality": {
+        "required_evidence": ["ascendant_rashi", "sun_rashi", "mahadasha"],
+        "rules": ["HEALTH_LAGNA_VITALITY", "HEALTH_DASHA_ENERGY"],
+        "answer_strategy": "LOCAL_RULE_SYNTHESIS",
+        "domain": "health"
+    },
+    "health_fatigue": {
+        "required_evidence": ["ascendant_rashi", "6th_house", "12th_house", "mahadasha"],
+        "rules": ["HEALTH_LAGNA_VITALITY", "HEALTH_6TH_LORD_WELLNESS", "HEALTH_12TH_HOUSE_REST", "HEALTH_DASHA_ENERGY"],
+        "answer_strategy": "LOCAL_RULE_SYNTHESIS",
+        "domain": "health"
+    },
+    "health_sleep": {
+        "required_evidence": ["12th_house", "12th_lord", "moon_rashi", "mahadasha"],
+        "rules": ["HEALTH_12TH_HOUSE_REST", "HEALTH_DASHA_ENERGY"],
+        "answer_strategy": "LOCAL_RULE_SYNTHESIS",
+        "domain": "health"
+    },
+    "health_stress": {
+        "required_evidence": ["moon_rashi", "ascendant_rashi", "6th_house", "12th_house", "mahadasha"],
+        "rules": ["HEALTH_LAGNA_VITALITY", "HEALTH_6TH_LORD_WELLNESS", "HEALTH_12TH_HOUSE_REST", "HEALTH_DASHA_ENERGY"],
+        "answer_strategy": "LOCAL_RULE_SYNTHESIS",
+        "domain": "health"
+    },
+    "health_period": {
+        "required_evidence": ["ascendant_rashi", "6th_house", "12th_house", "mahadasha"],
+        "rules": ["HEALTH_LAGNA_VITALITY", "HEALTH_DASHA_ENERGY"],
+        "answer_strategy": "LOCAL_RULE_SYNTHESIS",
+        "domain": "health"
+    },
+    "health_wellness": {
+        "required_evidence": ["ascendant_rashi", "6th_house", "12th_house", "mahadasha"],
+        "rules": ["HEALTH_LAGNA_VITALITY", "HEALTH_6TH_LORD_WELLNESS", "HEALTH_12TH_HOUSE_REST", "HEALTH_DASHA_ENERGY"],
         "answer_strategy": "LOCAL_RULE_SYNTHESIS",
         "domain": "health"
     },

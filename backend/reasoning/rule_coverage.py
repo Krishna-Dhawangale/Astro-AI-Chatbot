@@ -20,13 +20,21 @@ from typing import Dict, Any, List, Optional
 UNSUPPORTED_PATTERNS = [
     "past life", "previous life", "previous birth", "last birth", "pichle janam", "purana janam",
     "lottery", "winning numbers", "jackpot", "gambling", "lottery ke",
-    "date i will die", "date of death", "exact death date", "when will i die", "maut ki date", "kab marunga",
+    "date i will die", "date of death", "exact death date", "when will i die", "when i will die", "maut ki date", "kab marunga", "will die",
     "exact stock price", "stock price of", "exact share price",
     "guarantee that i will", "guarantee i will become", "millionaire guarantee",
     "exact name of my future spouse", "exact name of spouse", "spouse name", "spouse ka exact naam", "exact naam kya",
     "exact name of my husband", "exact name of my wife",
     "exact events that will happen", "happen to me tomorrow at", "tomorrow at 3 pm",
     "every day for the next year", "exact number of children", "how many children"
+]
+
+CLINICAL_DIAGNOSTIC_PATTERNS = [
+    "chest pain", "chest pressure", "diabetes", "diabetic", "heart attack", "cancer", "tumor",
+    "blood pressure", "cure for", "cure my", "medicine for", "which medicine", "what medicine", "medicine i should", "doctor recommended",
+    "medical diagnosis", "prescribe treatment", "infectious disease", "covid", "stroke", "paralysis",
+    "hospitalization date", "surgery recommendation", "diagnose my", "diagnose", "am i sick with", "what disease", "disease i have",
+    "recover from my illness", "recover from illness", "guarantee that i will recover"
 ]
 
 # Explicit Intents that HAVE exact local rule coverage in our Stage 8 engine
@@ -46,16 +54,28 @@ EXACT_LOCAL_RULE_INTENTS = {
     "direct_fact",
     "lagna_sign",
     "moon_sign",
-    "sun_sign"
+    "sun_sign",
+    "health_vitality",
+    "health_fatigue",
+    "health_sleep",
+    "health_stress",
+    "health_wellness",
+    "health_period",
+    "health_general",
+    "health_indicators",
+    "lagna_vitality",
+    "6th_lord_wellness",
+    "12th_house_rest",
+    "dasha_energy"
 }
 
 
 def is_unsupported_boundary_query(question: str) -> bool:
-    """Checks if the query asks for an inherently unsupported/deterministic claim."""
+    """Checks if the query asks for an inherently unsupported/deterministic claim or clinical diagnosis."""
     if not question:
         return False
     q_low = question.lower().strip()
-    return any(p in q_low for p in UNSUPPORTED_PATTERNS)
+    return any(p in q_low for p in UNSUPPORTED_PATTERNS) or any(p in q_low for p in CLINICAL_DIAGNOSTIC_PATTERNS)
 
 
 def evaluate_rule_coverage(
@@ -86,7 +106,7 @@ def evaluate_rule_coverage(
             "required_evidence_complete": False,
             "coverage_score": 0.0,
             "answerable_locally": False,
-            "reason": "Query asks for an unsupported deterministic boundary prediction (exact name/date/numbers)."
+            "reason": "Query asks for an unsupported deterministic boundary prediction or clinical medical diagnosis."
         }
 
     # 2. Check Evidence Completeness
@@ -106,7 +126,10 @@ def evaluate_rule_coverage(
         active_rule_ids = [r.get("rule_id", "") for r in matched_rules if r.get("matched", True)]
 
     # Intent match check
-    intent_match = ent in EXACT_LOCAL_RULE_INTENTS or any(
+    health_kws = ["health", "wellbeing", "vitality", "energy", "fatigue", "tired", "sleep", "routine", "overthink", "stress", "rest", "physical strength", "weakness", "emotional stability", "relaxing my mind", "moon placement", "sun placement", "self-care", "mahadasha", "antardasha"]
+    is_health_query = dom == "health" or ent.startswith("health") or any(k in q_low for k in health_kws)
+
+    intent_match = ent in EXACT_LOCAL_RULE_INTENTS or is_health_query or any(
         k in q_low for k in ["dasha", "mahadasha", "lagna", "10th lord", "7th lord", "moon sign", "which career"]
     )
 
@@ -129,11 +152,14 @@ def evaluate_rule_coverage(
         exact_rule_match = True
 
     if exact_rule_match:
+        rules_assigned = active_rule_ids
+        if is_health_query and not rules_assigned:
+            rules_assigned = ["HEALTH_LAGNA_VITALITY", "HEALTH_6TH_LORD_WELLNESS", "HEALTH_12TH_HOUSE_REST", "HEALTH_DASHA_ENERGY"]
         return {
             "domain_match": domain_match,
             "intent_match": True,
             "exact_rule_match": True,
-            "matching_rules": active_rule_ids or ["EXACT_LOCAL_RULE"],
+            "matching_rules": rules_assigned or ["EXACT_LOCAL_RULE"],
             "required_evidence_complete": True,
             "coverage_score": 1.0,
             "answerable_locally": True,
@@ -158,11 +184,13 @@ def get_unsupported_reason(question: str) -> str:
     if not question:
         return "GENERAL_UNSUPPORTED"
     q_low = question.lower().strip()
+    if any(k in q_low for k in CLINICAL_DIAGNOSTIC_PATTERNS):
+        return "CLINICAL_DIAGNOSIS"
     if any(k in q_low for k in ["past life", "previous life", "previous birth", "last birth"]):
         return "PAST_LIFE_IDENTITY"
     if any(k in q_low for k in ["lottery", "winning numbers", "jackpot", "gambling"]):
         return "LOTTERY_PREDICTION"
-    if any(k in q_low for k in ["date i will die", "date of death", "exact death date", "when will i die"]):
+    if any(k in q_low for k in ["date i will die", "date of death", "exact death date", "when will i die", "when i will die", "will die"]):
         return "DEATH_DATE"
     if any(k in q_low for k in ["name of my future spouse", "name of spouse", "spouse name", "name of my husband", "name of my wife"]):
         return "FUTURE_SPOUSE_NAME"
@@ -178,7 +206,9 @@ def get_unsupported_reason(question: str) -> str:
 def get_unsupported_limitation_response(question: str) -> str:
     """Generates a natural, reason-specific limitation response for unsupported queries."""
     reason = get_unsupported_reason(question)
-    if reason == "PAST_LIFE_IDENTITY":
+    if reason == "CLINICAL_DIAGNOSIS":
+        return "I cannot evaluate clinical medical conditions, diagnose diseases (like chest pain, diabetes, or infections), or prescribe treatments. In Vedic Astrology, chart indicators describe general vitality and wellness patterns, but for physical health symptoms or medical concerns, please consult a qualified healthcare professional."
+    elif reason == "PAST_LIFE_IDENTITY":
         return "No chart can reliably reveal your exact past-life identity or biography, so I wouldn't want to invent one. In Vedic Astrology, Rahu, Ketu, and 12th/9th house placements are interpreted symbolically for spiritual impressions and karmic patterns, but exact past identities cannot be derived from a chart."
     elif reason == "LOTTERY_PREDICTION":
         return "Astrology cannot predict exact winning lottery numbers or random gambling outcomes. Financial indicators in your chart show earning style, resource management, and prosperity windows, but cannot generate specific winning numbers."
@@ -193,4 +223,5 @@ def get_unsupported_limitation_response(question: str) -> str:
     elif reason == "GUARANTEED_WEALTH":
         return "No astrology system can guarantee a specific net worth or promise exact wealth sums. Your chart indicates financial potential and resource-building factors, but eventual wealth depends on career choices, investments, decisions, and circumstances."
     return "I don't currently have a supported chart-based analysis for that question. Please ask a career, health, marriage, finance, education, or property question based on your birth chart."
+
 

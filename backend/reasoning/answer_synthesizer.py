@@ -82,6 +82,89 @@ def synthesize_local_answer(
 
     # 1. SPECIFIC INTENT ROUTING & ANSWER SHAPES (Safeguard 3)
     
+    # 1. SPECIFIC INTENT ROUTING & ANSWER SHAPES (Safeguard 3)
+    
+    # Health Domain Handling
+    if domain == "health" or intent.startswith("health") or any(k in q_lower for k in ["tired", "energy", "sleep", "wellbeing", "vitality", "routine", "overthink", "stressed", "emotional", "rest", "physical strength", "weakness"]):
+        disclaimer_en = "\n\nThese are astrological wellness indicators, not a medical diagnosis."
+        disclaimer_hi = "\n\nYeh astrological wellness indicators hain, koi medical diagnosis nahi."
+
+        # Sleep & Rest Focus (Questions 9-14)
+        if any(k in q_lower for k in ["sleep", "rest", "night", "insomnia", "bedtime"]):
+            if is_hinglish:
+                return (
+                    f"**Rest & Sleep Analysis ({asc} Lagna, {moon} Moon sign):**\n\n"
+                    f"- **Rest & Sleep Indicators**: 12th-house placements recovery, relaxation, aur nighttime quietude ko manage karte hain.\n"
+                    f"- **Moon & Mind**: {moon} Moon placement suggest karti hai ki sleep se pehle mind ko relax karna sleep quality aur recovery ko favor karta hai.\n"
+                    f"- **Dasha Influence**: Active Dasha ({c_maha}{'/' + c_antar if c_antar else ''}) highlight karti hai ki busy phases ke dauran constant sleep schedule maintan karna beneficial rehta hai."
+                    f"{disclaimer_hi}"
+                )
+            return (
+                f"**Rest & Sleep Indicators ({asc} Ascendant, {moon} Moon sign):**\n\n"
+                f"- **Rest & Recovery Indicators**: Your 12th-house placements govern recovery, relaxation, and nighttime quietude.\n"
+                f"- **Moon & Mind Balance**: Your {moon} Moon placement suggests that calming your mental state before sleep supports higher sleep quality and emotional rest.\n"
+                f"- **Dasha Influence**: Your active Dasha period ({c_maha}{'/' + c_antar if c_antar else ''}) highlights the importance of maintaining a consistent sleep schedule to prevent restlessness during demanding phases."
+                f"{disclaimer_en}"
+            )
+
+        # Overthinking / Stress / Emotional Balance Focus (Questions 15-22)
+        if any(k in q_lower for k in ["overthink", "stress", "emotional", "relax", "mind", "mental"]):
+            if is_hinglish:
+                return (
+                    f"**Emotional Balance & Mind ({asc} Lagna, {moon} Moon sign):**\n\n"
+                    f"- **Moon Placement & Emotional Nature**: {moon} mein Moon placement deep thinking aur active mental reflection ko show karti hai, jo kabhi fatigue create kar sakti hai.\n"
+                    f"- **Stress Management**: 6th-house indicators suggest karte hain ki daily work aur relaxation ke beech clear boundaries maintain karne se emotional stability strengthening hoti hai.\n"
+                    f"- **Dasha Period**: Current Dasha ({c_maha}{'/' + c_antar if c_antar else ''}) intentional mental relaxation aur mindful pacing ko favor karti hai."
+                    f"{disclaimer_hi}"
+                )
+            return (
+                f"**Emotional Nature & Mind ({asc} Ascendant, {moon} Moon sign):**\n\n"
+                f"- **Moon Placement & Mind**: Your Moon in {moon} indicates an analytical, deeply reflective emotional disposition, which can occasionally lead to mental fatigue if unpaced.\n"
+                f"- **Stress & Workload Balance**: 6th-house indicators suggest that maintaining clear boundaries between work tasks and relaxation strengthens emotional resilience.\n"
+                f"- **Dasha Period**: Your current Dasha ({c_maha}{'/' + c_antar if c_antar else ''}) emphasizes intentional mental relaxation and mindful energy management during active phases."
+                f"{disclaimer_en}"
+            )
+
+        # Fatigue / Low Energy / Vitality Fluctuations (Questions 1-2, 4-8, 23-28)
+        if any(k in q_lower for k in ["tired", "energy", "vitality", "routine", "weak", "strength", "wellbeing"]):
+            if is_hinglish:
+                return (
+                    f"**Vitality & Energy Patterns ({asc} Lagna, {moon} Moon sign):**\n\n"
+                    f"- **Astrological Vitality**: {asc} Lagna aur Sun placements ({sun}) aapki core energy aur stamina tendencies ko highlight karte hain.\n"
+                    f"- **Routine & Wellness**: 6th-house indicators batate hain ki consistent daily routine aur workload balance energy levels ko support karte hain.\n"
+                    f"- **Rest & Recovery**: 12th-house factors suggest karte hain ki adequate rest aur recovery windows physical vitality refresh karne ke liye essential hain.\n"
+                    f"- **Dasha Influence**: Active Dasha ({c_maha}{'/' + c_antar if c_antar else ''}) active work phases mein physical pacing ko favor karti hai."
+                    f"{disclaimer_hi}"
+                )
+            return (
+                f"**Vitality & Energy Patterns ({asc} Ascendant, {moon} Moon sign):**\n\n"
+                f"- **Astrological Vitality**: Your {asc} Lagna and {sun} Sun placement describe your baseline physical constitution and vitality tendencies.\n"
+                f"- **Routine & Wellness**: 6th-house indicators emphasize the importance of maintaining consistent daily routines and workload discipline to manage energy levels.\n"
+                f"- **Rest & Recovery**: 12th-house factors indicate that structured quiet recovery time plays a key role in maintaining physical resilience.\n"
+                f"- **Dasha Influence**: Your active Dasha ({c_maha}{'/' + c_antar if c_antar else ''}) suggests pacing your activities and balancing exertion with adequate rest during this period."
+                f"{disclaimer_en}"
+            )
+
+        # Default Health Overview (Overall Wellbeing)
+        if is_hinglish:
+            return (
+                f"**Overall Astrological Wellness ({asc} Lagna, {moon} Moon sign):**\n\n"
+                f"- **Vitality**: {asc} Lagna placements baseline stamina aur energy patterns ko support karte hain.\n"
+                f"- **Wellness Routine**: 6th-house indicators disciplined daily habits ko emphasize karte hain.\n"
+                f"- **Rest & Recovery**: 12th-house factors recovery aur sleep quality par emphasis dete hain.\n"
+                f"- **Timing**: Active Dasha ({c_maha}{'/' + c_antar if c_antar else ''}) work-rest equilibrium ko favor karti hai."
+                f"{disclaimer_hi}"
+            )
+        return (
+            f"**Overall Astrological Wellness ({asc} Ascendant, {moon} Moon sign):**\n\n"
+            f"Your chart indicates generally supportive wellness factors through your {asc} Lagna and related indicators.\n\n"
+            f"- **Astrological Vitality**: Lagna strength supports your core constitution and physical resilience.\n"
+            f"- **Wellness Habits**: 6th-house indicators highlight the benefits of maintaining disciplined daily routines and stress management.\n"
+            f"- **Rest & Recovery**: 12th-house factors make adequate rest and sleep especially relevant for sustained stamina.\n"
+            f"- **Dasha Context**: Your current Dasha ({c_maha}{'/' + c_antar if c_antar else ''}) suggests prioritizing work-rest equilibrium during active phases."
+            f"{disclaimer_en}"
+        )
+
     # Career Suitability ("Which career suits me?")
     if "suit" in q_lower or "field" in q_lower or intent == "career_suitability":
         if is_hinglish:

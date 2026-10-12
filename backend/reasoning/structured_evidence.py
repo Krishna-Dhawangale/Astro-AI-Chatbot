@@ -22,6 +22,15 @@ ZODIAC_SIGNS = [
 ]
 
 
+HEALTH_INTENT_STRATEGIES = {
+    "health_vitality": ["lagna", "lagna_lord", "vitality_indicators", "dasha"],
+    "health_fatigue": ["lagna", "sixth_house", "twelfth_house", "dasha"],
+    "health_sleep": ["twelfth_house", "twelfth_lord", "moon", "dasha"],
+    "health_stress": ["moon", "lagna", "sixth_house", "twelfth_house", "dasha"],
+    "health_wellness": ["lagna", "sixth_house", "twelfth_house", "dasha"]
+}
+
+
 @dataclass
 class StructuredEvidence:
     """
@@ -175,7 +184,10 @@ def build_structured_evidence(
         positive_factors.append("gradual_wealth_accumulation")
 
     elif domain == "health":
-        positive_factors.append("ascendant_vitality_support")
+        positive_factors.append("HEALTH_LAGNA_VITALITY")
+        positive_factors.append("HEALTH_6TH_LORD_WELLNESS")
+        positive_factors.append("HEALTH_12TH_HOUSE_REST")
+        positive_factors.append("HEALTH_DASHA_ENERGY")
 
     elif domain == "education":
         positive_factors.append("strong_4th_5th_house_intellect")
@@ -211,16 +223,26 @@ def build_structured_evidence(
     elif domain in ["finance", "wealth"]:
         themes = ["budgeting", "steady_accumulation", "prudent_investment"]
     elif domain == "health":
-        themes = ["vitality", "routine_balance", "stress_management"]
+        themes = ["astrological_vitality", "routine_balance", "rest_and_recovery", "energy_management"]
     elif domain == "education":
         themes = ["intellect", "conceptual_clarity", "focused_study"]
     else:
         themes = ["structured_growth", "personal_development"]
 
+    health_evidence_payload = {}
+    if domain == "health":
+        health_evidence_payload = {
+            "lagna_vitality": "supportive",
+            "sixth_house": "moderate",
+            "twelfth_house_rest": "supportive",
+            "dasha_energy": "challenging" if c_maha in ["Saturn", "Rahu", "Ketu", "Mars"] else "supportive"
+        }
+
     evaluations = {
         "overall_status": overall_status,
         "strength_score": strength_score,
-        "dasha_active": "dasha_career_active" in positive_factors or "dasha_marriage_active" in positive_factors,
+        "dasha_active": "dasha_career_active" in positive_factors or "dasha_marriage_active" in positive_factors or domain == "health",
+        "health_evidence": health_evidence_payload
     }
 
     interpretation = {
