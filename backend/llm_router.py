@@ -1090,6 +1090,13 @@ CAREER_SUB_INTENT_PATTERNS: Dict[str, List[str]] = {
         r"\b(?:when\s+will\s+i\s+get\s+(?:a\s+)?(?:new\s+)?job|job\s+kab\s+lagegi|naukri\s+kab\s+milegi)\b",
         r"\b(?:promotion\s+kab\s+hoga|appraisal\s+timing|salary\s+hike\s+timing)\b",
         r"\b(?:kab\s+(?:change|badlu)\s+(?:naukri|job))\b",
+        # Hinglish natural-speech variants: 'mujhe acchi job kab milegi' etc.
+        r"\b(?:mujhe\s+(?:acchi\s+|achi\s+|achhi\s+|nai\s+|new\s+)?(?:job|naukri)\s+kab\s+milegi)\b",
+        r"\b(?:mujhe\s+(?:job|naukri)\s+kab\s+(?:milegi|lagegi|milega))\b",
+        r"\b(?:naukri\s+(?:kab|kb)\s+(?:milegi|milega|lagegi|lagega|aayegi|ayegi))\b",
+        r"\b(?:job\s+(?:kab|kb)\s+(?:milegi|milega|lagegi|lagega|aayegi|ayegi))\b",
+        r"\b(?:acchi\s+(?:job|naukri)\s+kab|kab\s+milegi\s+(?:acchi\s+)?(?:job|naukri))\b",
+        r"\b(?:interview\s+kab\s+hoga|offer\s+letter\s+kab\s+aayega|job\s+offer\s+kab)\b",
     ],
     "career_path": [
         r"\b(?:which\s+career\s+suits?\s+me(?:\s+best)?|what\s+career\s+suits?\s+me|best\s+career\s+for\s+me)\b",
@@ -1247,85 +1254,158 @@ def format_career_rule_response(
 
     sub_intent = classify_career_intent(query) or "career_path"
 
+    # ---------------------------------------------------------------------------
+    # Extract Antardasha (sub-period) from dasha string for hyper-specific timing
+    # e.g. "Rahu-Mars" -> antardasha = "Mars"
+    # ---------------------------------------------------------------------------
+    dasha_parts = str(dasha).split("-")
+    mahadasha = dasha_parts[0].strip() if dasha_parts else dasha
+    antardasha = dasha_parts[1].strip() if len(dasha_parts) > 1 else ""
+
+    # Lookup gemstone for Lagna lord and 10th lord (Vedic standard mapping)
+    PLANET_GEMSTONE: Dict[str, Dict[str, str]] = {
+        "Sun":     {"stone_en": "Ruby (Manik)",      "stone_hi": "Manik (Ruby)",     "metal_en": "gold",   "day_en": "Sunday",    "metal_hi": "sone",     "day_hi": "Ravivar"},
+        "Moon":    {"stone_en": "Pearl (Moti)",      "stone_hi": "Moti (Pearl)",     "metal_en": "silver", "day_en": "Monday",    "metal_hi": "chaandi",  "day_hi": "Somvar"},
+        "Mars":    {"stone_en": "Red Coral (Moonga)","stone_hi": "Moonga (Red Coral)","metal_en": "copper","day_en": "Tuesday",  "metal_hi": "taamba",   "day_hi": "Mangalvar"},
+        "Mercury": {"stone_en": "Emerald (Panna)",   "stone_hi": "Panna (Emerald)",  "metal_en": "gold",   "day_en": "Wednesday", "metal_hi": "sone",     "day_hi": "Budhvar"},
+        "Jupiter": {"stone_en": "Yellow Sapphire (Pukhraj)","stone_hi": "Pukhraj (Yellow Sapphire)","metal_en": "gold","day_en": "Thursday","metal_hi": "sone","day_hi": "Guruvar"},
+        "Venus":   {"stone_en": "Diamond or White Sapphire (Heera/Safed Pukhraj)","stone_hi": "Heera ya Safed Pukhraj","metal_en": "platinum or silver","day_en": "Friday","metal_hi": "chaandi ya platinum","day_hi": "Shukravar"},
+        "Saturn":  {"stone_en": "Blue Sapphire (Neelam)","stone_hi": "Neelam (Blue Sapphire)","metal_en": "iron or silver","day_en": "Saturday","metal_hi": "loha ya chaandi","day_hi": "Shanivar"},
+        "Rahu":    {"stone_en": "Hessonite Garnet (Gomed)","stone_hi": "Gomed",       "metal_en": "silver", "day_en": "Saturday", "metal_hi": "chaandi",  "day_hi": "Shanivar"},
+        "Ketu":    {"stone_en": "Cat's Eye (Lehsunia)","stone_hi": "Lehsunia",        "metal_en": "silver", "day_en": "Tuesday",  "metal_hi": "chaandi",  "day_hi": "Mangalvar"},
+    }
+    # Determine Lagna lord from ascendant sign
+    lagna_lord = SIGN_LORDS.get(asc, "Jupiter")
+    gem_info = PLANET_GEMSTONE.get(h10_lord, PLANET_GEMSTONE["Jupiter"])
+    lagna_gem = PLANET_GEMSTONE.get(lagna_lord, PLANET_GEMSTONE["Jupiter"])
+
     if sub_intent == "gemstone_remedies":
         if hinglish:
             p1 = (
-                f"**Astrological Insight:** {intro} Vedic jyotish ke anusaar career vriddhi ke liye keval functional benefic grahon (visheshkar Lagna lord ya supportive 10th lord {h10_lord}) ke ratna dharan kiye jaate hain. "
-                f"Kabhi bhi trik bhavon (6th, 8th, 12th) ke ashubh grahon ka ratna career ke liye dharan na karein."
+                f"**Astrological Insight:** {intro} aapke {asc} Lagna ke lord {lagna_lord} ke liye {lagna_gem['stone_hi']} sabse zyada upyukt ratna hai, "
+                f"aur 10th house ke lord {h10_lord} ke liye {gem_info['stone_hi']} career vriddhi mein sahayak hoga. "
+                f"Active {dasha} dasha mein yeh ratna aapki professional energy ko align karta hai."
             )
             p2 = (
-                f"**Actionable Advice:** Kisi bhi ratna ko dharan karne se pehle apni kundali mein {h10_lord} ki bal-avastha check karein. "
-                f"Keval natural, unheated ratna ko sahi metal mein uske shubh vaar par prana-pratishtha ke baad hi pehnein."
+                f"**Actionable Advice:** {lagna_gem['stone_hi']} ko {lagna_gem['metal_hi']} mein set karwake {lagna_gem['day_hi']} ko subah prana-pratishtha ke baad ring finger mein pehnein. "
+                f"Keval certified, natural, unheated ratna hi dharan karein aur dharan karne se pehle expert jyotishi se {lagna_lord} ki bal-avastha zaroor verify karwayein."
             )
         else:
             p1 = (
-                f"**Astrological Insight:** {intro} in Vedic astrology, gemstones for career must strictly strengthen functional benefic planets—primarily your Lagna lord and auspicious 10th house ruler ({h10_lord})—and must never empower Dusthana lords. "
-                f"Under your active {dasha} period, energetic resonance requires precise planetary harmonizing."
+                f"**Astrological Insight:** {intro} for your {asc} Lagna, {lagna_lord} is your Lagna lord—its strengthening stone is {lagna_gem['stone_en']}. "
+                f"Your 10th house ruler {h10_lord} governs career elevation and responds to {gem_info['stone_en']}, particularly potent during your active {dasha} period."
             )
             p2 = (
-                f"**Actionable Advice:** Verify that {h10_lord} holds functional benefic status without malefic combustion in your birth chart before selecting a stone. "
-                f"Wear only natural, lab-certified gemstones set in the recommended metal and consecrated on the ruling planet's weekday."
+                f"**Actionable Advice:** Wear {lagna_gem['stone_en']} set in {lagna_gem['metal_en']} on your ring finger on {lagna_gem['day_en']} after proper Vedic consecration. "
+                f"Consult a certified jyotishi to confirm {lagna_lord}'s functional benefic status in your chart before purchasing—only natural, unheated stones are effective."
             )
 
     elif sub_intent == "business_vs_job":
+        h6_info = rulerships.get("6th_house", "Jupiter (Pisces)")
+        h7_info = rulerships.get("7th_house", "Mars (Aries)")
+        m6 = re.match(r"^(\w+)\s*\(([^)]+)\)$", str(h6_info).strip())
+        m7 = re.match(r"^(\w+)\s*\(([^)]+)\)$", str(h7_info).strip())
+        h6_lord = m6.group(1) if m6 else "Jupiter"
+        h7_lord = m7.group(1) if m7 else "Mars"
         if hinglish:
             p1 = (
-                f"**Astrological Insight:** {intro} aapki kundali mein structured naukri (service) 6th house se dekhi jaati hai, jabki independent vyapar aur partnerships 7th aur 10th house ({h10_sign}, lord {h10_lord}) se sanchalit hote hain. "
-                f"Aapki vartaman {dasha} dasha mein financial risk-cushion aur stability ka santulan dekhna anivarya hai."
+                f"**Astrological Insight:** {intro} aapke {asc} Lagna chart mein salaried naukri (service) 6th house ke lord {h6_lord} se dekhi jaati hai, "
+                f"jabki swatantra vyapar aur partnerships 7th house ({h7_lord}) aur 10th house ({h10_sign}, lord {h10_lord}) se chalti hain. "
+                f"Active {dasha} dasha aapko risk aur stability ke beech sahi alignment dikhati hai."
             )
             p2 = (
-                f"**Actionable Advice:** Pehle kisi stable role mein domain authority aur financial reserves banayein. "
-                f"Apne vyaparik vicharon ko low-capital side experiments ke roop mein validate karein, uske baad hi poori tarah se business mein switch karein."
+                f"**Actionable Advice:** Pehle structured employment mein domain authority aur financial reserve banayein—phir low-capital pilot project se vyapar validate karein. "
+                f"Jab tak 6 mahine ka emergency fund na ho, full-time business switch avoid karein."
             )
         else:
             p1 = (
-                f"**Astrological Insight:** {intro} salaried employment and service are governed by your 6th house, whereas independent commerce, partnerships, and market trade are governed by your 7th and 10th houses ({h10_sign} ruled by {h10_lord}). "
-                f"Under your current {dasha} period, planetary dynamics dictate assessing capital safety before taking complete commercial risks."
+                f"**Astrological Insight:** {intro} in your {asc} Lagna chart, salaried employment is governed by 6th house lord {h6_lord}, "
+                f"while self-employment, trade, and partnerships fall under 7th house lord {h7_lord} and 10th house ({h10_sign}, ruled by {h10_lord}). "
+                f"Your active {dasha} Dasha period is the key factor in timing any commercial pivot."
             )
             p2 = (
-                f"**Actionable Advice:** Anchor your professional foundation in structured employment to build domain credibility and savings. "
-                f"Validate entrepreneurial ventures through lean side-projects before executing an abrupt full-time business transition."
+                f"**Actionable Advice:** Build domain expertise and a 6-month financial cushion in structured employment before executing any business switch. "
+                f"Validate ideas with lean, low-capital pilots aligned with your {h10_lord}-governed vocational strengths first."
             )
 
     elif sub_intent == "job_timing":
+        h11_info = rulerships.get("11th_house", "Sun (Leo)")
+        m11 = re.match(r"^(\w+)\s*\(([^)]+)\)$", str(h11_info).strip())
+        h11_lord = m11.group(1) if m11 else "Sun"
+        h11_sign = m11.group(2) if m11 else "Leo"
+        antardasha_str = f"{antardasha} Antardasha" if antardasha else f"{mahadasha} Dasha"
         if hinglish:
             p1 = (
-                f"**Astrological Insight:** {intro} job change aur promotion ki timing aapke 10th house ({h10_sign}) par shubh grahon ke gochar aur active {dasha} Vimshottari period ke dwara nirdharit hoti hai. "
-                f"Vedic timing ke anusaar aane wale 3 se 6 mahine aapke karma kshetra mein naye professional opportunities aur role changes ko sakriya kar rahe hain."
+                f"**Astrological Insight:** {intro} aapki job aur promotion ki sabse acchi timing tab aati hai jab Jupiter ya Saturn aapke 10th house ({h10_sign}) ya 11th house ({h11_sign}) par gochar karte hain, "
+                f"aur {dasha} Dasha mein {antardasha_str} active hoti hai. "
+                f"Agale 3-4 mahine aapke liye nayi opportunities aur interview calls ke liye favorable transition window hain."
             )
             p2 = (
-                f"**Actionable Advice:** Is samay apni resume aur verifiable deliverables ko optimize karke targeted applications initiate karein. "
-                f"Impulsive resignation se bachein aur supportive planetary timing ke dauran hi compensation negotiations karein."
+                f"**Actionable Advice:** Abhi se apni resume update karein, quantified achievements highlight karein, aur targeted applications isi favorable window mein bhejein. "
+                f"Impulsive resignation se bachein—pehle offer letter haath mein aaye, phir resign karein."
             )
         else:
             p1 = (
-                f"**Astrological Insight:** {intro} job transitions and career elevations manifest when benefic transits activate your 10th house of status ({h10_sign}) alongside supportive sub-cycles of your active {dasha} Dasha. "
-                f"Vedic planetary timing indicates that significant transition and promotion windows open strongly over the coming 3 to 6 months."
+                f"**Astrological Insight:** {intro} your optimal job-change window opens when benefic planets transit your 10th house ({h10_sign}) and 11th house of gains ({h11_sign}, lord {h11_lord}), "
+                f"coinciding with your {antardasha_str} within the {mahadasha} Mahadasha. "
+                f"The next 3–4 months form a high-activation career transition window in your chart."
             )
             p2 = (
-                f"**Actionable Advice:** Prepare your quantifiable portfolio metrics and actively explore strategic openings during this favorable cycle. "
-                f"Schedule compensation reviews and high-stakes interviews during supportive transit windows rather than making hasty exits."
+                f"**Actionable Advice:** Update your resume with quantified deliverables and submit targeted applications now during this transit window. "
+                f"Secure your offer letter before resigning—never make an impulsive exit outside a supportive {h10_lord} transit period."
             )
 
     else:  # career_path
         spec = CAREER_LORD_SPECIALIZATIONS.get(h10_lord, CAREER_LORD_SPECIALIZATIONS["Sun"])
+        # Sign-specific career trait addendum (makes each answer unique per 10th sign)
+        SIGN_CAREER_TRAITS: Dict[str, str] = {
+            "Aries": "pioneering leadership and speed-to-market execution",
+            "Taurus": "financial stability, craftsmanship, and long-term value creation",
+            "Gemini": "communication agility, multi-tasking, and information synthesis",
+            "Cancer": "empathetic service, nurturing leadership, and public welfare",
+            "Leo": "stage presence, creative authority, and brand-building charisma",
+            "Virgo": "precision analysis, quality systems, and process optimization",
+            "Libra": "diplomatic deal-making, aesthetic vision, and collaborative equity",
+            "Scorpio": "deep research, transformational risk-taking, and investigative acuity",
+            "Sagittarius": "philosophical breadth, cross-cultural reach, and high-vision strategy",
+            "Capricorn": "executive discipline, institutional authority, and long-range planning",
+            "Aquarius": "innovation, technology systems, and humanitarian reform",
+            "Pisces": "intuitive creativity, spiritual service, and adaptive imagination",
+        }
+        SIGN_CAREER_TRAITS_HI: Dict[str, str] = {
+            "Aries": "aagrah aur speed-driven execution",
+            "Taurus": "sthir arthik nirman aur craftsmanship",
+            "Gemini": "sanchar-kushalata aur information management",
+            "Cancer": "bhavatmak netritva aur jan-seva",
+            "Leo": "manch-pradarshan aur brand-building",
+            "Virgo": "viश्लेषण (analysis) aur quality control",
+            "Libra": "samajhasya aur aesthetic vision",
+            "Scorpio": "shodh, risk-management aur investigative drishtikon",
+            "Sagittarius": "darshanik vishaalata aur cross-cultural strategy",
+            "Capricorn": "karyakaari anushaasan aur institutional leadership",
+            "Aquarius": "innovation, technology aur samajik sudhar",
+            "Pisces": "srishti-shakti, adhyatmik seva aur adaptive creativity",
+        }
+        sign_trait_en = SIGN_CAREER_TRAITS.get(h10_sign, "strategic excellence and domain mastery")
+        sign_trait_hi = SIGN_CAREER_TRAITS_HI.get(h10_sign, "strategic excellence aur domain mastery")
         if hinglish:
             p1 = (
-                f"**Astrological Insight:** {intro} aapka vocational path 10th house ({h10_sign}) se govern hota hai jiske lord {h10_lord} hain, aur abhi aapki {dasha} dasha chal rahi hai. "
-                f"Yeh planetary placements aapko {spec['aptitudes_hi']} ki shakti dete hain. Aapke chart ke anusaar sarvottam career fields hain: {spec['fields_hi']}."
+                f"**Astrological Insight:** {intro} aapka 10th house {h10_sign} rashi mein hai jiske lord {h10_lord} hain, "
+                f"jo aapko {sign_trait_hi} mein natural strength deta hai. "
+                f"Active {dasha} dasha ke saath {spec['fields_hi']} mein career sarvottam rahega."
             )
             p2 = (
-                f"**Actionable Advice:** Apne 10th lord ({h10_lord}) ke anusaar specialized domain skills aur verifiable deliverables par focus karein. "
-                f"Apne {asc} Lagna ki strengths ka upyog karke high-leverage projects mein lead karein jo long-term recognition dilwayegi."
+                f"**Actionable Advice:** {h10_lord} ke domain ({spec['fields_hi']}) mein deep specialization build karein aur measurable results-driven roles mein lead karein. "
+                f"Apne {asc} Lagna ki core strengths ko usi domain mein leverage karein jo long-term reputation banaye."
             )
         else:
             p1 = (
-                f"**Astrological Insight:** {intro} your vocational trajectory is governed by your 10th house in {h10_sign} ruled by {h10_lord}, operating under your active {dasha} Vimshottari Dasha period. "
-                f"These planetary dynamics highlight natural aptitudes for {spec['aptitudes_en']}. Your highest-leverage career disciplines are {spec['fields_en']}."
+                f"**Astrological Insight:** {intro} your 10th house falls in {h10_sign}, ruled by {h10_lord}, channeling natural aptitude for {sign_trait_en}. "
+                f"Under your active {dasha} Dasha, your highest-leverage career fields are {spec['fields_en']}."
             )
             p2 = (
-                f"**Actionable Advice:** Anchor your focus in specialized roles aligned with {h10_lord} and your {asc} Lagna constitution. "
-                f"Build deep subject-matter expertise in these domains and pursue milestone-driven responsibilities that establish your authority."
+                f"**Actionable Advice:** Pursue deep specialization in {h10_lord}-governed domains ({spec['fields_en'].split(',')[0].strip()}) and build a track record of measurable, milestone-driven results. "
+                f"Leverage your {asc} Lagna constitution to anchor authority in your chosen field."
             )
 
     badge = format_source_badge("Local Database / FreeAstrologyAPI")
@@ -2428,52 +2508,84 @@ def build_system_prompt(
     birth_details_str = user_natal_context.get('birth_details') or 'Not specified'
     birth_place_str = user_natal_context.get('birth_place') or 'Not specified'
 
+    # Pre-compute chart coordinates for injecting into micro-intent mandates
+    _rulerships = user_natal_context.get("house_rulerships") or calculate_house_rulerships(
+        user_natal_context.get("ascendant", "Libra")
+    )
+    _asc = user_natal_context.get("ascendant", "Libra")
+    _lagna_lord = SIGN_LORDS.get(_asc, "Jupiter")
+    _h7 = _rulerships.get("7th_house", "Venus (Taurus)")
+    _h10 = _rulerships.get("10th_house", "Moon (Cancer)")
+    _h11 = _rulerships.get("11th_house", "Sun (Leo)")
+    _h6 = _rulerships.get("6th_house", "Jupiter (Pisces)")
+    _m7 = re.match(r"^(\w+)\s*\(([^)]+)\)$", str(_h7).strip())
+    _m10 = re.match(r"^(\w+)\s*\(([^)]+)\)$", str(_h10).strip())
+    _m11 = re.match(r"^(\w+)\s*\(([^)]+)\)$", str(_h11).strip())
+    _h7_lord = _m7.group(1) if _m7 else "Venus"
+    _h7_sign = _m7.group(2) if _m7 else "Taurus"
+    _h10_lord = _m10.group(1) if _m10 else "Moon"
+    _h10_sign = _m10.group(2) if _m10 else "Cancer"
+    _h11_lord = _m11.group(1) if _m11 else "Sun"
+    _dasha_parts = str(active_dasha_str).split("-")
+    _mahadasha = _dasha_parts[0].strip() if _dasha_parts else active_dasha_str
+    _antardasha = _dasha_parts[1].strip() if len(_dasha_parts) > 1 else ""
+    _antardasha_label = f"{_antardasha} Antardasha" if _antardasha else f"{_mahadasha} Dasha"
+
     micro_directive = ""
     if query:
         m_intent = classify_micro_intent(str(query))
         if m_intent == "partner_traits":
             micro_directive = (
-                "\n8. MICRO-INTENT MANDATE (PARTNER TRAITS):\n"
-                "   - The user is asking specifically about their life partner/spouse's physical, emotional, and professional nature.\n"
-                "   - Base your insight directly on the 7th house sign, 7th lord, and Venus/Jupiter to describe personality and traits.\n"
-                "   - DO NOT answer about marriage timing, wedding dates, or general career path!\n"
+                f"\n8. MICRO-INTENT MANDATE (PARTNER TRAITS):\n"
+                f"   - The user is asking specifically about their life partner/spouse's physical, emotional, and professional nature.\n"
+                f"   - Your {_asc} Lagna chart places the 7th house in {_h7_sign} ruled by {_h7_lord}—describe partner personality directly from this sign's nature and {_h7_lord}'s qualities.\n"
+                f"   - Also reference Venus and Jupiter placements to shape emotional and physical partner traits.\n"
+                f"   - DO NOT mention marriage timing, wedding dates, or career path in this response.\n"
             )
         elif m_intent == "marriage_timing":
             micro_directive = (
-                "\n8. MICRO-INTENT MANDATE (MARRIAGE TIMING):\n"
-                "   - The user is asking specifically when marriage or commitment will happen.\n"
-                "   - Focus on 7th house activation, supportive Dasha periods, and planetary transit windows.\n"
-                "   - DO NOT describe partner personality traits.\n"
+                f"\n8. MICRO-INTENT MANDATE (MARRIAGE TIMING):\n"
+                f"   - The user is asking specifically WHEN marriage or commitment will happen.\n"
+                f"   - Focus on 7th house ({_h7_sign}, lord {_h7_lord}) activation by Jupiter/Saturn transit and the active {active_dasha_str} Dasha sub-period windows.\n"
+                f"   - Give a concrete timing window (e.g., specific months or Antardasha period) rather than vague statements.\n"
+                f"   - DO NOT describe partner personality traits or generic marriage advice.\n"
             )
         elif m_intent == "marriage_remedies":
             micro_directive = (
-                "\n8. MICRO-INTENT MANDATE (MARRIAGE REMEDIES):\n"
-                "   - The user is asking specifically for astrological remedies for delays or obstacles in marriage.\n"
-                "   - Provide authentic Vedic remedies (Venus/Jupiter propitiation, fasts, seed mantras, donations).\n"
+                f"\n8. MICRO-INTENT MANDATE (MARRIAGE REMEDIES):\n"
+                f"   - The user is asking for specific astrological remedies for delays or obstacles in marriage.\n"
+                f"   - Tailor remedies to {_h7_lord} (7th house lord of {_h7_sign}): propitiation mantras, fasting day, donation, or gemstone strengthening.\n"
+                f"   - Include at least one practical remedy (mantra/fasting/donation) and one lifestyle guideline.\n"
             )
         elif m_intent == "business_vs_job":
             micro_directive = (
-                "\n8. MICRO-INTENT MANDATE (BUSINESS VS JOB):\n"
-                "   - The user is asking whether their chart favors independent business/entrepreneurship or structured employment/job.\n"
-                "   - Contrast the 6th house (employment) with the 7th & 10th houses (business/commerce) and provide a clear verdict.\n"
+                f"\n8. MICRO-INTENT MANDATE (BUSINESS VS JOB):\n"
+                f"   - The user is asking whether their chart ({_asc} Lagna) favors independent business or structured employment.\n"
+                f"   - Contrast 6th house ({_h6}) for service/employment versus 10th house ({_h10_sign}, lord {_h10_lord}) and 7th house ({_h7_sign}, lord {_h7_lord}) for commerce/partnership.\n"
+                f"   - Give a clear verdict (business or job) backed by these house lords and the active {active_dasha_str} Dasha.\n"
             )
         elif m_intent == "job_timing":
             micro_directive = (
-                "\n8. MICRO-INTENT MANDATE (JOB CHANGE & PROMOTION TIMING):\n"
-                "   - The user is asking about timing for a job switch, promotion, or appraisal.\n"
-                "   - Focus on 10th/11th house transit windows and active Dasha cycles.\n"
+                f"\n8. MICRO-INTENT MANDATE (JOB CHANGE & PROMOTION TIMING):\n"
+                f"   - The user is asking WHEN they will get a job, change jobs, or get a promotion.\n"
+                f"   - Reference the 10th house ({_h10_sign}, lord {_h10_lord}) and 11th house of gains ({_h11_lord}) transit activation.\n"
+                f"   - Cite the active {_antardasha_label} within {_mahadasha} Mahadasha as the timing anchor and give a concrete 3-4 month window.\n"
+                f"   - Include specific interview preparation or application advice—NOT generic career fluff.\n"
             )
         elif m_intent == "career_path":
             micro_directive = (
-                "\n8. MICRO-INTENT MANDATE (CAREER PATH):\n"
-                "   - The user is asking about suitable career directions and vocational fields.\n"
-                "   - Focus on 10th house authority, natural aptitudes, and highest-leverage professions.\n"
+                f"\n8. MICRO-INTENT MANDATE (CAREER PATH):\n"
+                f"   - The user is asking which career or vocational field best suits their chart.\n"
+                f"   - Map the 10th house sign ({_h10_sign}) and its lord ({_h10_lord}) directly to specific career disciplines and natural aptitudes.\n"
+                f"   - Reference the {_asc} Lagna's constitutional strengths as the secondary vocational filter.\n"
+                f"   - DO NOT give generic 'explore multiple options' advice—give a direct, chart-specific career verdict.\n"
             )
         elif m_intent == "gemstone_remedies":
             micro_directive = (
-                "\n8. MICRO-INTENT MANDATE (GEMSTONE REMEDIES):\n"
-                "   - The user is asking about career or fortune gemstones.\n"
-                "   - Recommend strengthening functional benefics (Lagna/5th/9th lords) and warn against functional malefics.\n"
+                f"\n8. MICRO-INTENT MANDATE (GEMSTONE REMEDIES):\n"
+                f"   - The user is asking which gemstone suits them for career or fortune enhancement.\n"
+                f"   - Name the EXACT gemstone for the {_asc} Lagna lord ({_lagna_lord}) and the 10th house lord ({_h10_lord}) explicitly.\n"
+                f"   - Specify the metal, wearing day, and finger—do NOT give vague warnings without a concrete recommendation.\n"
             )
 
     system_prompt_str = f"""You are Astro AI, a precision Vedic Astrology assistant.
