@@ -86,6 +86,9 @@ try:
         classify_career_intent,
         is_wealth_query,
         format_wealth_rule_response,
+        is_health_query,
+        format_health_rule_response,
+        render_domain_reading,
         resolve_followup_context,
         generate_local_rule_fallback,
     )
@@ -136,6 +139,9 @@ except ImportError:
         classify_career_intent,
         is_wealth_query,
         format_wealth_rule_response,
+        is_health_query,
+        format_health_rule_response,
+        render_domain_reading,
         resolve_followup_context,
         generate_local_rule_fallback,
     )
@@ -1563,6 +1569,23 @@ def check_qa_database(
         if not is_template_recently_served(session_id, "wealth_stage8_rule", chat_history=chat_history):
             record_served_template(session_id, "wealth_stage8_rule")
             return format_wealth_rule_response(
+                raw_query,
+                user_natal_context=user_natal_context,
+                hinglish=is_hinglish,
+            )
+
+    # 4. HEALTH INTENT & LOCAL STAGE-8 RULE LOOKUP:
+    if is_health_query(raw_query):
+        if QA_STRUCTURED_DATABASE and "health_and_wellness" in QA_STRUCTURED_DATABASE:
+            keywords = QA_STRUCTURED_DATABASE["health_and_wellness"].get("keywords", [])
+            clean_norm = normalize_hinglish(clean_lower)
+            if any(kw in clean_lower or kw in clean_norm for kw in keywords):
+                if not is_template_recently_served(session_id, "health_and_wellness", chat_history=chat_history):
+                    record_served_template(session_id, "health_and_wellness")
+                    return format_local_qa_response(QA_STRUCTURED_DATABASE["health_and_wellness"], user_natal_context)
+        if not is_template_recently_served(session_id, "health_stage8_rule", chat_history=chat_history):
+            record_served_template(session_id, "health_stage8_rule")
+            return format_health_rule_response(
                 raw_query,
                 user_natal_context=user_natal_context,
                 hinglish=is_hinglish,

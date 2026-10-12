@@ -466,5 +466,16 @@
     "core_analysis": "Occurs when Mars sits in houses 1, 2, 4, 7, 8, or 12, infusing relationships with intense assertiveness.",
     "dasha_influence": "When triggered by your {active_dasha} dasha, conscious communication channels its passion positively.",
     "recommendation": "Practice calm active listening in relationships and channel excess intensity into fitness or career goals."
+  },
+  "health_and_wellness": {
+    "concept": "Health, Immunity & Vitality Overview",
+    "keywords": [
+      "health", "wellness", "fitness", "immunity", "sehat", "bimari", "swasthya",
+      "health remedies", "health recovery", "diet", "lifestyle", "stamina"
+    ],
+    "analogy": "In Vedic astrology, health is like a well-tended garden—your 1st house is the soil quality and seed constitution, while the 6th house is the daily weeding and metabolic defense.",
+    "core_analysis": "For your {ascendant} Lagna, fundamental vitality is anchored by your Lagna lord ({1st_house_lord}), while daily immune response and stress resilience are governed by your 6th house ({6th_house}) ruled by {6th_house_lord}.",
+    "dasha_influence": "Under your active {active_dasha} period, {user_name}, karmic alignments emphasize consistent restorative routines to sustain peak vitality.",
+    "recommendation": "Maintain a regular sleep schedule, stay well-hydrated, practice 15 minutes of grounding breathwork, and avoid overexertion during stressful transit cycles."
   }
 }

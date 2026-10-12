@@ -1182,6 +1182,121 @@ def is_wealth_query(query: str) -> bool:
     return any(re.search(pat, clean_q) for pat in WEALTH_PATTERNS)
 
 
+HEALTH_PATTERNS = [
+    r"\b(?:health|fitness|wellness|immunity|illness|disease|sehat|bimari|swasthya|upay|recovery)\b",
+    r"\b(?:stress|anxiety|mental\s+peace|vitality|stamina|digestion|diet|nutrition|sleep)\b",
+    r"\b(?:6th\s+house|sixth\s+house|ari\s+bhava?|roga\s+bhava?|health\s+house)\b",
+]
+
+
+def is_health_query(query: str) -> bool:
+    """Checks if query belongs to health, wellness, immunity, or vitality domain."""
+    if not query or not str(query).strip():
+        return False
+    clean_q = str(query).lower().strip()
+    return any(re.search(pat, clean_q) for pat in HEALTH_PATTERNS)
+
+
+WEALTH_LORD_ARCHETYPES: Dict[str, Dict[str, str]] = {
+    "Sun": {
+        "style_en": "executive authority, public administration, institutional management, and sovereign capital",
+        "style_hi": "prashasanik pad, government contracts, aur institutional leadership se dhan aagman",
+    },
+    "Moon": {
+        "style_en": "consumer commerce, liquid assets, public-facing services, and intuitive trade cycles",
+        "style_hi": "liquid assets, retail trade, healthcare, aur jan-sampark se labh",
+    },
+    "Mars": {
+        "style_en": "real estate acquisitions, industrial execution, engineering enterprise, and calculated decisive ventures",
+        "style_hi": "bhoomi, real estate, engineering, aur decisive business ventures se dhan vriddhi",
+    },
+    "Mercury": {
+        "style_en": "commercial trade, quantitative analytics, software innovation, fintech, and multi-stream compounding",
+        "style_hi": "commercial vyapar, IT, data analytics, aur multi-stream bachat se dhan sanchay",
+    },
+    "Jupiter": {
+        "style_en": "ethical wealth management, high-level advisory, institutional banking, and steady long-term compounding",
+        "style_hi": "shuddh gyan, consultancy, banking, aur long-term compounding se sthir samriddhi",
+    },
+    "Venus": {
+        "style_en": "design commerce, media luxury, aesthetic brand assets, and creative financial partnerships",
+        "style_hi": "creative media, luxury branding, aesthetics, aur strategic partnerships se dhan aagman",
+    },
+    "Saturn": {
+        "style_en": "tangible infrastructure, manufacturing, supply-chain assets, and patient disciplined capital accumulation",
+        "style_hi": "infrastructure, manufacturing, sthir astitva, aur anushasit compounding se dirghakalin dhan",
+    },
+}
+
+
+SIGN_PARTNER_TRAITS: Dict[str, Dict[str, str]] = {
+    "Aries": {
+        "trait_en": "dynamic, bold, independent, and action-oriented",
+        "trait_hi": "urjavan, nirdhayak, aur independent soch wale",
+    },
+    "Taurus": {
+        "trait_en": "grounded, emotionally stable, artistic, and dependable",
+        "trait_hi": "sthir, bharosemand, aur kalaatmak abhiruchi wale",
+    },
+    "Gemini": {
+        "trait_en": "intellectually curious, witty, articulate, and versatile",
+        "trait_hi": "buddhiman, baat-cheet mein nipun, aur adaptable",
+    },
+    "Cancer": {
+        "trait_en": "nurturing, deeply empathetic, intuitive, and family-centered",
+        "trait_hi": "caring, bhavatmak, aur parivarik moolyon ko aadar dene wale",
+    },
+    "Leo": {
+        "trait_en": "charismatic, dignified, self-respecting, and noble-hearted",
+        "trait_hi": "aatmavishwasi, swabhimani, aur netritva-kshamata se yukta",
+    },
+    "Virgo": {
+        "trait_en": "analytical, pragmatic, detail-focused, and supportive",
+        "trait_hi": "practical, sahaj, aur karyashil swabhav wale",
+    },
+    "Libra": {
+        "trait_en": "harmonious, graceful, charming, aesthetic, and diplomatic",
+        "trait_hi": "akarshak, shant, aur prem-bhav ko prathmikta dene wale",
+    },
+    "Scorpio": {
+        "trait_en": "deeply loyal, intense, transformative, and protective",
+        "trait_hi": "nishthavan, gambhir, aur gehre aatmiya judav wale",
+    },
+    "Sagittarius": {
+        "trait_en": "philosophical, adventurous, optimistic, and morally upright",
+        "trait_hi": "gyani, dharmi, aur aashavadi drishtikon wale",
+    },
+    "Capricorn": {
+        "trait_en": "mature, disciplined, ambitious, and steadfastly committed",
+        "trait_hi": "parishrami, jimmedar, aur sthir drishti wale",
+    },
+    "Aquarius": {
+        "trait_en": "visionary, original, humanitarian, and intellectually free",
+        "trait_hi": "adhunik soch wale, swatantra, aur samajik drishti wale",
+    },
+    "Pisces": {
+        "trait_en": "compassionate, imaginative, spiritually inclined, and gentle",
+        "trait_hi": "dayalu, kalpanasheel, aur adhyatmik moolyon wale",
+    },
+}
+
+
+LAGNA_ELEMENT_CONSTITUTION: Dict[str, Dict[str, str]] = {
+    "Aries":       {"element": "Fire", "dosha": "Pitta", "focus_en": "cellular vitality, cardiovascular pacing, and cooling hydration to prevent heat burnout", "focus_hi": "pitta shanti, cooling hydration, aur excessive heat burnout se bachav"},
+    "Leo":         {"element": "Fire", "dosha": "Pitta", "focus_en": "heart vitality, spinal alignment, and balanced aerobic exercise without overexertion", "focus_hi": "hriday urja, reedh ki haddi ka alignment, aur niyamit aerobic vyayam"},
+    "Sagittarius": {"element": "Fire", "dosha": "Pitta-Vata", "focus_en": "liver metabolism, arterial circulation, and outdoor mobility paired with adequate rest", "focus_hi": "liver metabolism, blood circulation, aur outdoor mobility ke sath paryaapt aaram"},
+    "Taurus":      {"element": "Earth", "dosha": "Kapha", "focus_en": "throat/thyroid balance, consistent metabolic rhythm, and moderate seasonal nutrition", "focus_hi": "gala aur thyroid santulan, metabolic gati, aur clean fibrous diet"},
+    "Virgo":       {"element": "Earth", "dosha": "Vata-Kapha", "focus_en": "digestive gut health, neuro-muscular calming, and routine stress-free mealtimes", "focus_hi": "pachan tantra (gut health), neuro-muscular shanti, aur niyamit bhojan ka samay"},
+    "Capricorn":   {"element": "Earth", "dosha": "Vata", "focus_en": "bone density, joint flexibility, and warm nourishing hydration against cold stiffness", "focus_hi": "haddiyon ki mazbooti, jodon ki lachak, aur gunguna paani peena"},
+    "Gemini":      {"element": "Air", "dosha": "Vata", "focus_en": "respiratory vitality, nervous system de-stimulation, and steady evening sleep routines", "focus_hi": "swas tantra, nervous system shanti, aur digital detox ke sath gahri neend"},
+    "Libra":       {"element": "Air", "dosha": "Vata-Pitta", "focus_en": "renal/kidney hydration, hormonal equilibrium, and consistent physical posture", "focus_hi": "kidney hydration, hormonal santulan, aur sahi posture banaye rakhna"},
+    "Aquarius":    {"element": "Air", "dosha": "Vata", "focus_en": "peripheral blood circulation, neurological relaxation, and balanced screen detoxes", "focus_hi": "rakt sanchar (circulation), sensory relaxation, aur niyamit digital detox"},
+    "Cancer":      {"element": "Water", "dosha": "Kapha", "focus_en": "digestive emotional peace, lymphatic drainage, and gentle water-side walking", "focus_hi": "manasik pachan, lymphatic circulation, aur jalaashay ke paas shant tehalna"},
+    "Scorpio":     {"element": "Water", "dosha": "Pitta-Kapha", "focus_en": "reproductive vitality, deep emotional detoxification, and restorative sleep", "focus_hi": "cellular detox, emotional release, aur gahri restorative neend"},
+    "Pisces":      {"element": "Water", "dosha": "Kapha", "focus_en": "lymphatic immunity, foot reflexology, and calming mindfulness before bed", "focus_hi": "lymphatic immunity, pairon ki dekhbhaal, aur sone se pehle dhyan lagana"},
+}
+
+
 CAREER_LORD_SPECIALIZATIONS: Dict[str, Dict[str, str]] = {
     "Sun": {
         "fields_en": "government administration, civil services, executive leadership, institutional management, public policy, medicine, and corporate governance",
@@ -1419,6 +1534,10 @@ def format_wealth_rule_response(
 ) -> str:
     """
     Deterministic Stage-8 Wealth & 2nd/11th House / Dasha rule generator (0 LLM tokens, <10ms).
+    Synthesizes:
+      - 2nd House (accumulated wealth, savings, liquid capital) & lord
+      - 11th House (income cashflow, fulfillment of desires, network gains) & lord
+      - Active Dasha accumulation window
     Structures output into strictly 2 paragraphs (5-7 lines total) with source badge.
     """
     if hinglish is None:
@@ -1427,34 +1546,121 @@ def format_wealth_rule_response(
     asc = user_natal_context.get("ascendant") or "Libra"
     dasha = user_natal_context.get("active_dasha") or "Rahu-Mars"
     rulerships = user_natal_context.get("house_rulerships") or calculate_house_rulerships(asc)
-    h2_info = rulerships.get("2nd_house", "Mars (Scorpio)")
     intro = format_user_intro(user_natal_context, hinglish=hinglish)
 
-    m = re.match(r"^(\w+)\s*\(([^)]+)\)$", str(h2_info).strip())
-    h2_lord = m.group(1) if m else "Mars"
-    h2_sign = m.group(2) if m else "Scorpio"
+    h2_info = rulerships.get("2nd_house", "Mars (Scorpio)")
+    h11_info = rulerships.get("11th_house", "Sun (Leo)")
+    m2 = re.match(r"^(\w+)\s*\(([^)]+)\)$", str(h2_info).strip())
+    m11 = re.match(r"^(\w+)\s*\(([^)]+)\)$", str(h11_info).strip())
+    h2_lord = m2.group(1) if m2 else "Mars"
+    h2_sign = m2.group(2) if m2 else "Scorpio"
+    h11_lord = m11.group(1) if m11 else "Sun"
+    h11_sign = m11.group(2) if m11 else "Leo"
+
+    arch2 = WEALTH_LORD_ARCHETYPES.get(h2_lord, WEALTH_LORD_ARCHETYPES["Mercury"])
+    arch11 = WEALTH_LORD_ARCHETYPES.get(h11_lord, WEALTH_LORD_ARCHETYPES["Jupiter"])
 
     if hinglish:
         p1 = (
-            f"**Astrological Insight:** {intro} dhan ka 2nd house {h2_sign} mein sthit hai jiske lord {h2_lord} hain, "
-            f"jabki aapki active Dasha {dasha} chal rahi hai. Yeh planetary combination speculative risk ke bajay steady savings aur disciplined compounding ko favor karta hai."
+            f"**Astrological Insight:** {intro} aapki Janam Kundali ke anusaar dhan ka 2nd house {h2_sign} mein sthit hai jiske lord {h2_lord} hain, "
+            f"aur aamdaani/labh ka 11th house {h11_sign} mein hai jiske swami {h11_lord} hain. "
+            f"Active {dasha} Vimshottari cycle ke dauran, {arch2['style_hi']} ke madhyam se sanchay aur labh ka majboot yog ban raha hai."
         )
         p2 = (
-            f"**Actionable Advice:** Apne dainik budget ko track karein, anavashyak kharche rokein, aur long-term savings buffer create karein. "
-            f"Bade financial investments se pehle structured risk analysis zaroor karein."
+            f"**Actionable Advice:** Dainik cash flow aur budget ko strictly track karein, {h2_lord} ki sthirta hetu 20% savings buffer banayein, "
+            f"aur speculative gambles ke bajay patient compounding par focus karein. Bade financial contracts ko auspicious Dasha sub-windows mein hi finalize karein."
         )
     else:
         p1 = (
-            f"**Astrological Insight:** {intro} accumulated wealth is anchored in your 2nd house in {h2_sign} governed by {h2_lord}, "
-            f"moving under your {dasha} Vimshottari period. Your planetary placements strongly favor methodical wealth accumulation, disciplined budgeting, and diversified compounding over speculative gambles."
+            f"**Astrological Insight:** {intro} karmic alignments indicate accumulated capital is anchored in your 2nd house ({h2_sign}, ruled by {h2_lord}), "
+            f"while incoming cashflow and aspirations stem from your 11th house ({h11_sign}, ruled by {h11_lord}). "
+            f"Under your active {dasha} Vimshottari cycle, strategic growth aligns with {arch2['style_en']} to open a key wealth accumulation window."
         )
         p2 = (
-            f"**Actionable Advice:** Track cash flow meticulously, maintain an emergency liquidity reserve, and avoid impulsive financial commitments. "
-            f"Leverage this timing cycle to build steady long-term financial security through structured patience."
+            f"**Actionable Advice:** Maintain rigorous financial discipline by earmarking a fixed 20% liquidity reserve and diversifying into tangible assets. "
+            f"Avoid hyper-speculative schemes and align major investments or high-stakes compensation reviews with supportive transit windows."
         )
 
     badge = format_source_badge("Local Database / FreeAstrologyAPI")
     return f"{p1}\n\n{p2}{badge}"
+
+
+def format_health_rule_response(
+    query: str,
+    user_natal_context: Dict[str, Any],
+    hinglish: Optional[bool] = None,
+) -> str:
+    """
+    Deterministic Stage-8 Health & 6th House / Lagna Lord rule generator (0 LLM tokens, <10ms).
+    Synthesizes:
+      - 6th House sign & lord (daily routine, immunity, metabolic resistance)
+      - 1st House Lagna lord (vitality, physical constitution)
+      - Lagna elemental balance (Fire, Earth, Air, Water)
+      - Active Dasha cycle
+    Returns an AstroTalk-style, strictly 5-7 line response with source badge.
+    """
+    if hinglish is None:
+        hinglish = is_hinglish_query(query)
+
+    asc = user_natal_context.get("ascendant") or "Libra"
+    dasha = user_natal_context.get("active_dasha") or "Rahu-Mars"
+    rulerships = user_natal_context.get("house_rulerships") or calculate_house_rulerships(asc)
+    intro = format_user_intro(user_natal_context, hinglish=hinglish)
+
+    h6_info = rulerships.get("6th_house", "Jupiter (Pisces)")
+    m6 = re.match(r"^(\w+)\s*\(([^)]+)\)$", str(h6_info).strip())
+    h6_lord = m6.group(1) if m6 else "Jupiter"
+    h6_sign = m6.group(2) if m6 else "Pisces"
+    lagna_lord = SIGN_LORDS.get(asc, "Venus")
+
+    elem_info = LAGNA_ELEMENT_CONSTITUTION.get(asc, LAGNA_ELEMENT_CONSTITUTION["Libra"])
+
+    if hinglish:
+        p1 = (
+            f"**Astrological Insight:** {intro} aapke {asc} Lagna ke lord {lagna_lord} aapki aantarik vitality ko guide karte hain, "
+            f"jabki dainik immunity aur routine stress resistance 6th house ({h6_sign}, ruled by {h6_lord}) ke adheen aati hai. "
+            f"Aapke {elem_info['element']} tatva ke anusaar, active {dasha} Vimshottari cycle mein {elem_info['focus_hi']} par dhyan dena zaroori hai."
+        )
+        p2 = (
+            f"**Actionable Advice:** Dainik dincharya mein niyamit neend, paryaapt hydration, aur 15 minute ka dhyan/pranayama shamil karein. "
+            f"Functional malefic transits ke dauran overexertion aur irregular eating habits se bachein taaki vitality bani rahe."
+        )
+    else:
+        p1 = (
+            f"**Astrological Insight:** {intro} in your {asc} Lagna chart, vital constitution is anchored by your Lagna lord {lagna_lord}, "
+            f"while daily immune defense and metabolic resilience are governed by your 6th house ({h6_sign}, ruled by {h6_lord}). "
+            f"Under your active {dasha} Vimshottari cycle, karmic alignments emphasize {elem_info['focus_en']} to maintain peak vitality."
+        )
+        p2 = (
+            f"**Actionable Advice:** Anchor your daily routine with consistent circadian sleep patterns, mindful clean hydration, and 15 minutes of grounding breathwork. "
+            f"Avoid irregular meal timings and excessive nervous overstimulation to protect your natural constitutional stamina."
+        )
+
+    badge = format_source_badge("Local Database / FreeAstrologyAPI")
+    return f"{p1}\n\n{p2}{badge}"
+
+
+def render_domain_reading(
+    domain: str,
+    query: str,
+    user_natal_context: Dict[str, Any],
+    hinglish: Optional[bool] = None,
+) -> str:
+    """
+    Unified Multi-Domain Astrological Reading Engine.
+    Dispatches to hyper-personalized, 5-7 line AstroTalk-style generators
+    across Career, Marriage, Wealth, and Health.
+    """
+    d_clean = (domain or "").lower().strip()
+    if d_clean in ("career", "career_path", "job", "business"):
+        return format_career_rule_response(query, user_natal_context, hinglish=hinglish)
+    elif d_clean in ("marriage", "partner", "relationship", "marriage_timing", "partner_traits"):
+        return format_marriage_rule_response(query, user_natal_context, hinglish=hinglish)
+    elif d_clean in ("wealth", "finances", "money", "dhan"):
+        return format_wealth_rule_response(query, user_natal_context, hinglish=hinglish)
+    elif d_clean in ("health", "wellness", "fitness", "immunity"):
+        return format_health_rule_response(query, user_natal_context, hinglish=hinglish)
+    return generate_local_rule_fallback(query, user_natal_context, hinglish=hinglish)
 
 
 def resolve_followup_context(
@@ -1858,10 +2064,11 @@ def format_marriage_rule_response(
 
     if sub_intent == "partner_traits":
         trait_info = PARTNER_LORD_TRAITS.get(h7_lord, PARTNER_LORD_TRAITS["Venus"])
+        sign_trait = SIGN_PARTNER_TRAITS.get(h7_sign, {"trait_en": "supportive and balanced", "trait_hi": "sahaj aur santulit"})
         if hinglish:
             p1 = (
                 f"**Astrological Insight:** {intro} aapka 7th house (vivah bhav) {h7_sign} rashi mein sthit hai jiske lord {h7_lord} hain, "
-                f"aur Venus prem evan vivahik chemistry ke mukhya karaka hain. Aapke jeevansathi {trait_info['nature_hi']}. "
+                f"aur Venus/Guru prem evan vivahik chemistry ke mukhya karaka hain. Aapke jeevansathi {sign_trait['trait_hi']} aur {trait_info['nature_hi']}. "
                 f"Unka karyakshetra mukhya roop se {trait_info['profession_hi']} se juda hone ke majboot yog hain, "
                 f"aur unka vyaktitva aapke {asc} Lagna ki urja ko poori tarah santulit karega."
             )
@@ -1872,9 +2079,9 @@ def format_marriage_rule_response(
         else:
             p1 = (
                 f"**Astrological Insight:** {intro} your 7th house of committed partnership is in {h7_sign} governed by {h7_lord}, "
-                f"with Venus signifying relational grace and emotional harmony. Your future life partner will be {trait_info['nature_en']}, "
-                f"naturally balancing your {asc} Lagna. Professionally, their planetary placements favor {trait_info['profession_en']}. "
-                f"Under your active {dasha} Vimshottari cycle, you will attract someone who provides profound intellectual and emotional equilibrium."
+                f"with Venus and Jupiter signifying relational grace and emotional wisdom. Your future life partner will be {sign_trait['trait_en']} ({trait_info['nature_en']}), "
+                f"naturally balancing your {asc} Lagna constitution. Professionally, their planetary placements favor {trait_info['profession_en']}. "
+                f"Under your active {dasha} Vimshottari cycle, karmic alignments indicate profound intellectual and emotional equilibrium."
             )
             p2 = (
                 f"**Actionable Advice:** Prioritize genuine emotional authenticity and mutual values over superficial compatibility. "
@@ -1952,33 +2159,12 @@ def generate_local_rule_fallback(
         return format_career_rule_response(clean_q, ctx, hinglish=hinglish)
 
     # 3. Wealth / finance check
-    h2_info = rulerships.get("2nd_house", "Mars (Scorpio)")
-    m2 = re.match(r"^(\w+)\s*\(([^)]+)\)$", str(h2_info).strip())
-    h2_lord = m2.group(1) if m2 else "Mars"
-    h2_sign = m2.group(2) if m2 else "Scorpio"
+    if is_wealth_query(clean_q):
+        return format_wealth_rule_response(clean_q, ctx, hinglish=hinglish)
 
-    is_wealth = any(k in clean_q for k in ("wealth", "money", "finance", "paisa", "financial", "dhan", "savings", "earning"))
-    if is_wealth:
-        if hinglish:
-            p1 = (
-                f"**Astrological Insight:** {intro} dhan ka 2nd house {h2_sign} mein hai jiske swami {h2_lord} hain, jabki aapki active Dasha {dasha} hai. "
-                f"Yeh planetary yog speculative risk ke bajay steady savings aur disciplined financial compounding ko favor karta hai."
-            )
-            p2 = (
-                f"**Actionable Advice:** Apne daily budget ko track karein, anavashyak kharche rokein, aur long-term savings buffer create karein. "
-                f"Bade financial investments se pehle structured analysis zaroor karein."
-            )
-        else:
-            p1 = (
-                f"**Astrological Insight:** {intro} accumulated wealth is anchored in your 2nd house ({h2_sign}) governed by {h2_lord}, moving under the {dasha} period. "
-                f"Your planetary placements strongly favor methodical accumulation, disciplined budgeting, and diversified compounding over speculative gambles."
-            )
-            p2 = (
-                f"**Actionable Advice:** Track cash flow meticulously, maintain an emergency liquidity reserve, and avoid impulsive financial risks. "
-                f"Leverage this timing cycle to build steady long-term financial security through structured patience."
-            )
-        badge = format_source_badge("Local Database / FreeAstrologyAPI")
-        return f"{p1}\n\n{p2}{badge}"
+    # 4. Health / wellness check
+    if is_health_query(clean_q):
+        return format_health_rule_response(clean_q, ctx, hinglish=hinglish)
 
     # 4. General / Life path fallback
     if hinglish:
