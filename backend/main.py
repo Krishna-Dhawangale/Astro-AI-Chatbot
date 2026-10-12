@@ -40,7 +40,7 @@ from requests.adapters import HTTPAdapter
 from urllib3.util import Retry
 
 try:
-    from router import DOMAIN_KEYWORDS, IntentRouter
+    from router import DOMAIN_KEYWORDS, IntentRouter, validate_astrology_domain, OUT_OF_SCOPE_RESPONSE
     from qa_engine import intercept_qa, strip_greeting
     from llm_router import (
         stream_chat_response,
@@ -62,15 +62,35 @@ try:
         get_local_qa_response,
         qa_database_index,
         should_bypass_local_qa,
+        record_served_template,
+        is_template_recently_served,
+        match_sub_intent,
+        clear_served_templates,
         SYSTEM_BUSY_MESSAGE,
         SYSTEM_BUSY_PAYLOAD,
         get_system_busy_payload,
         calculate_house_rulerships,
         get_user_natal_context,
         format_local_qa_response,
+        get_last_token_stats,
+        is_hinglish_query,
+        format_source_badge,
+        is_direct_calculation_query,
+        format_direct_api_response,
+        is_marriage_query,
+        format_marriage_rule_response,
+        classify_marriage_intent,
+        classify_micro_intent,
+        is_career_query,
+        format_career_rule_response,
+        classify_career_intent,
+        is_wealth_query,
+        format_wealth_rule_response,
+        resolve_followup_context,
+        generate_local_rule_fallback,
     )
 except ImportError:
-    from backend.router import DOMAIN_KEYWORDS, IntentRouter
+    from backend.router import DOMAIN_KEYWORDS, IntentRouter, validate_astrology_domain, OUT_OF_SCOPE_RESPONSE
     from backend.qa_engine import intercept_qa, strip_greeting
     from backend.llm_router import (
         stream_chat_response,
@@ -92,13 +112,38 @@ except ImportError:
         get_local_qa_response,
         qa_database_index,
         should_bypass_local_qa,
+        record_served_template,
+        is_template_recently_served,
+        match_sub_intent,
+        clear_served_templates,
         SYSTEM_BUSY_MESSAGE,
         SYSTEM_BUSY_PAYLOAD,
         get_system_busy_payload,
         calculate_house_rulerships,
         get_user_natal_context,
         format_local_qa_response,
+        get_last_token_stats,
+        is_hinglish_query,
+        format_source_badge,
+        is_direct_calculation_query,
+        format_direct_api_response,
+        is_marriage_query,
+        format_marriage_rule_response,
+        classify_marriage_intent,
+        classify_micro_intent,
+        is_career_query,
+        format_career_rule_response,
+        classify_career_intent,
+        is_wealth_query,
+        format_wealth_rule_response,
+        resolve_followup_context,
+        generate_local_rule_fallback,
     )
+
+try:
+    from abuse_guardrail import check_abuse_guardrail, guardrail_router, AbuseGuardrailMiddleware
+except ImportError:
+    from backend.abuse_guardrail import check_abuse_guardrail, guardrail_router, AbuseGuardrailMiddleware
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 if BASE_DIR not in sys.path:
@@ -134,12 +179,26 @@ app.state.limiter = limiter
 async def rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded) -> JSONResponse:
     """
     Gracefully catches local SlowAPI rate limits and returns HTTP 200 OK
-    with the system busy payload instead of raw 429 client errors.
+    with a deterministic local calculation fallback response instead of raw 429 client errors.
     """
     logger.warning("Local SlowAPI rate limit triggered for %s", request.client.host if request.client else "unknown")
+    body_query = ""
+    try:
+        if request.method in ("POST", "PUT"):
+            body = await request.json()
+            body_query = body.get("user_query") or body.get("query") or body.get("prompt") or ""
+    except Exception:
+        pass
+    fallback_ans = generate_local_rule_fallback(body_query)
     return JSONResponse(
         status_code=200,
-        content=dict(SYSTEM_BUSY_PAYLOAD),
+        content={
+            "status": "local_fallback",
+            "response": fallback_ans,
+            "answer": fallback_ans,
+            "usage": {"prompt_tokens": 0, "completion_tokens": 0},
+            "related_questions": [],
+        },
     )
 
 app.add_middleware(
@@ -151,23 +210,39 @@ app.add_middleware(
     expose_headers=["*"],
     max_age=86400,
 )
+app.add_middleware(
+    AbuseGuardrailMiddleware,
+    protected_paths=["/chat", "/api/chat"],
+)
+
+app.include_router(guardrail_router)
 
 
 def label_answer_source(answer: str, source: str) -> str:
-    label = f"({source})"
-    answer = answer.rstrip()
-    return answer if answer.endswith(label) else f"{answer} {label}"
+    cleaned = strip_server_metadata(answer)
+    if source:
+        return f"{cleaned}{_format_source_suffix(source)}"
+    return cleaned
 
 
-def backend_error_payload(query: str) -> Dict[str, Any]:
-    answer = SYSTEM_BUSY_MESSAGE
+def backend_error_payload(query: str, user_natal_context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    answer = generate_local_rule_fallback(query, user_natal_context=user_natal_context)
     return {
-        "status": "busy",
+        "status": "local_fallback",
         "response": answer,
-        "answer": label_answer_source(answer, "Backend"),
+        "answer": answer,
         "usage": {"prompt_tokens": 0, "completion_tokens": 0},
         "related_questions": [],
     }
+
+
+def _format_source_suffix(source: str) -> str:
+    """
+    Returns the standardized source provenance badge appended at the end of every response:
+      - API / Local DB hits: "[Local Database / FreeAstrologyAPI]"
+      - LLM hits: "[LLM - <Clean Model Name>]" (e.g. "[LLM - Llama 3.3 70B]", "[LLM - Gemini 3.5 Flash]")
+    """
+    return format_source_badge(source)
 
 
 def is_daily_gemini_quota_error(error: Exception) -> bool:
@@ -179,19 +254,8 @@ def is_daily_gemini_quota_error(error: Exception) -> bool:
 
 
 def gemini_error_message(error: Exception, query: str) -> str:
-    if is_daily_gemini_quota_error(error):
-        answer = (
-            "Gemini's daily free-tier quota for this model has been reached. "
-            "Please try again after the quota resets or enable billing/increase the project quota."
-        )
-        return label_answer_source(answer, "Backend")
-
-    status_code = getattr(error, "code", None) or getattr(error, "status_code", None)
-    if status_code == 429:
-        answer = "Gemini is temporarily rate limited. Please wait a moment and try again."
-        return label_answer_source(answer, "Backend")
-
-    return backend_error_payload(query)["answer"]
+    logger.warning("Upstream LLM exception caught (%s). Returning local calculation fallback...", error)
+    return generate_local_rule_fallback(query)
 
 
 def is_retryable_gemini_error(error: Exception) -> bool:
@@ -320,17 +384,15 @@ def normalize_hinglish(text: str) -> str:
 
 
 def is_hinglish_query(text: str) -> bool:
-    """Detect Hinglish using normalized vocabulary and common Hindi markers."""
-    if normalize_hinglish(text).casefold() != text.casefold():
-        return True
-    hindi_markers = {
-        "aap", "aapka", "aapki", "aapke", "hai", "hain", "ho", "hoga", "hogi",
-        "ka", "ki", "ke", "ko", "kya", "kab", "kaise", "kyun", "mein", "nahi",
-        "raha", "rahi", "rahe", "mujhe", "mera", "meri", "mere", "chahiye",
-        "sakta", "sakti", "sakte", "badhega", "badhegi", "milega", "milega",
-    }
-    words = set(re.findall(r"\b[\w']+\b", text.casefold()))
-    return bool(words & hindi_markers)
+    """Detect Hinglish/Hindi using the central detection engine in llm_router.
+    Ensures English queries with Sanskrit terms (dasha, lagna, rashi) remain classified as English.
+    """
+    try:
+        from llm_router import is_hinglish_query as router_is_hinglish
+        return router_is_hinglish(text)
+    except Exception:
+        from backend.llm_router import is_hinglish_query as router_is_hinglish
+        return router_is_hinglish(text)
 
 
 SEMANTIC_DOMAIN_SENTENCES = {
@@ -533,11 +595,13 @@ INDIRECT_PATTERNS: List[Tuple[List[str], str]] = [
 ]
 
 
-def resolve_indirect_intent(query: str) -> Optional[str]:
+def resolve_indirect_intent(query: Optional[str]) -> Optional[str]:
     """Detect the hidden topic from roundabout, vague, or indirect questions.
     Returns a domain string if an indirect intent is found, else None.
     This handles 'ghuma-fira ke pooche gaye sawaal'.
     """
+    if not query:
+        return None
     q_lower = query.lower().strip()
     q_normalized = normalize_hinglish(q_lower)
 
@@ -613,7 +677,7 @@ def load_qa_database():
                             QA_STRUCTURED_DATABASE[clean_k] = entries
                             for kw in entries.get("keywords", []):
                                 clean_kw = str(kw).lower().strip()
-                                if clean_kw:
+                                if clean_kw and clean_kw not in ("career", "job", "work"):
                                     QA_STRUCTURED_DATABASE[clean_kw] = entries
                             concept = entries.get("concept", key.title())
                             analogy = entries.get("simple_analogy", entries.get("analogy", ""))
@@ -627,7 +691,10 @@ def load_qa_database():
                                 parts.append(f"Actionable takeaway: {takeaway}")
                             formatted_answer = " ".join([p for p in parts if p]).strip()
                             QA_DATABASE[clean_k] = formatted_answer
-                            keywords = [clean_k] + [str(kw).lower().strip() for kw in entries.get("keywords", []) if kw]
+                            keywords = [clean_k] + [
+                                str(kw).lower().strip() for kw in entries.get("keywords", [])
+                                if kw and str(kw).lower().strip() not in ("career", "job", "work")
+                            ]
                             for kw in keywords:
                                 QA_DATABASE[kw] = formatted_answer
                             ASTRO_RULE_INDEX.append(("general_and_basics", keywords, formatted_answer))
@@ -1140,6 +1207,9 @@ def generate_follow_up_questions(query: str, answer: str = "", domain: Optional[
             else:
                 resolved = "general"
 
+    if is_hinglish_query(query):
+        return fallback_related_questions([resolved], query)
+
     pool = DOMAIN_BANKS.get(resolved, DOMAIN_BANKS["general"])
 
     # Exclude questions that match the current query to ensure fresh prompts
@@ -1208,6 +1278,8 @@ class ChatRequest(BaseModel):
     birth_month: int = 1
     birth_day: int = 1
     birth_hour: float = 12.0
+    birth_place: Optional[str] = None
+    place: Optional[str] = None
     latitude: float = 20.5937
     longitude: float = 78.9629
     timezone: float = 5.5
@@ -1218,6 +1290,10 @@ class ChatRequest(BaseModel):
             self.user_query = self.query
         elif not self.query and self.user_query:
             self.query = self.user_query
+        if self.place and not self.birth_place:
+            self.birth_place = self.place
+        elif self.birth_place and not self.place:
+            self.place = self.birth_place
         if self.name and (not self.profile.name or self.profile.name == "Friend"):
             self.profile.name = self.name
 
@@ -1234,27 +1310,120 @@ class BirthDetailsRequest(BaseModel):
     timezone: float = 5.5
 
 
+BASIC_CONVERSATION_MAP = {
+    "greetings": {
+        "patterns": [
+            r"^(?:hi|hello|hey|namaste|greetings|good\s+(?:morning|evening|afternoon|day))\b"
+        ],
+        "response_en": (
+            "Hello! I am your Vedic Astrology guide. How can I assist you with your birth chart, "
+            "career, marriage, Sade Sati, or current Dasha period today?"
+        ),
+        "response_hinglish": (
+            "Namaste! Main aapka Vedic Astrology guide hoon. Aaj aapki Janam Kundali, career, "
+            "shaadi, Sade Sati, ya Dasha ke baare mein kya janna chahte hain?"
+        ),
+        "response": (
+            "Hello! I am your Vedic Astrology guide. How can I assist you with your birth chart, "
+            "career, marriage, Sade Sati, or current Dasha period today?"
+        ),
+    },
+    "identity": {
+        "patterns": [
+            r"\bwho\s+are\s+you\b", r"\bwhat\s+are\s+you\b", r"\bwhat\s+can\s+you\s+do\b",
+            r"\bwhat\s+do\s+you\s+do\b", r"\bhow\s+can\s+you\s+help\b", r"\bintroduce\s+yourself\b",
+            r"\babout\s+yourself\b", r"^help\b", r"\baap\s+kaun\s+ho\b", r"\btum\s+kaun\s+ho\b",
+        ],
+        "response_en": (
+            "I am your personal Vedic Astrology assistant. I analyze your Janam Kundali (Lagna, Moon sign, "
+            "house lords, and active Mahadasha) to provide grounded guidance on career, marriage, finances, "
+            "Sade Sati, and life timing. You can ask me about any house, planet, or life question!"
+        ),
+        "response_hinglish": (
+            "Main aapka personal Vedic Astrology saathi hoon. Main aapki Janam Kundali (Lagna, Rashi, "
+            "Dasha) analyze karke career, shaadi, dhan aur timing par sahi guidance deta hoon. "
+            "Aap mujhse kisi bhi graha, house ya jeevan ke sawaal ke baare mein pooch sakte hain!"
+        ),
+        "response": (
+            "I am your personal Vedic Astrology assistant. I analyze your Janam Kundali (Lagna, Moon sign, "
+            "house lords, and active Mahadasha) to provide grounded guidance on career, marriage, finances, "
+            "Sade Sati, and life timing."
+        ),
+    },
+    "thanks": {
+        "patterns": [r"\b(?:thank\s+you|thanks|thx|dhanyavad|dhanyawad|shukriya)\b"],
+        "response_en": "You are very welcome! Feel free to ask anytime if you want to explore more about your planetary periods or birth chart.",
+        "response_hinglish": "Aapka bahut swagat hai! Kundali ya grahon ke baare mein jab bhi koi sawaal ho, aap bina jhijhak pooch sakte hain.",
+        "response": "You are very welcome! Feel free to ask anytime if you want to explore more about your planetary periods or birth chart.",
+    },
+    "farewell": {
+        "patterns": [r"\b(?:bye|goodbye|see\s+you|take\s+care|alvida)\b"],
+        "response_en": "Take care! Wishing you peace, clarity, and auspicious planetary blessings on your journey.",
+        "response_hinglish": "Apna khayal rakhiye! Aapke jeevan mein shanti aur shubh grahon ka aashirwad bana rahe.",
+        "response": "Take care! Wishing you peace, clarity, and auspicious planetary blessings on your journey.",
+    },
+    "acknowledgment": {
+        "patterns": [r"^(?:ok|okay|cool|sure|alright|fine|got\s+it|understood|theek\s+hai|thik\s+hai|achha|accha)\b"],
+        "response_en": "Great! Let me know if you would like insights on your career house, marriage timing, Sade Sati, or current Dasha.",
+        "response_hinglish": "Badhiya! Agar aap career, shaadi ke timing, Sade Sati ya Dasha par kuch aur janna chahte hain toh zaroor batayein.",
+        "response": "Great! Let me know if you would like insights on your career house, marriage timing, Sade Sati, or current Dasha.",
+    }
+}
+
+GENERAL_ASTROLOGY_FAQS = [
+    (
+        [r"\bwhat\s+is\s+vedic\s+astrology\b", r"\bvedic\s+astrology\s+meaning\b", r"\babout\s+vedic\s+astrology\b", r"\bjyotish\b"],
+        "Vedic Astrology (Jyotish, the 'Science of Light') is an ancient Indian system based on the Vedas. "
+        "It uses the sidereal zodiac (reflecting visible constellations) to map cosmic energies at your exact birth time, "
+        "revealing karmic patterns, life purpose, and planetary timing cycles (Dashas)."
+    ),
+    (
+        [r"\bhow\s+does\s+(?:vedic\s+)?astrology\s+work\b", r"\bhow\s+astrology\s+works\b"],
+        "Vedic Astrology works by analyzing your birth chart (Janam Kundali), which maps the cosmic positions at the moment of your birth. "
+        "The chart is divided into 12 Houses and 12 Signs ruled by 9 Planets (Grahas). When active planetary periods (Dashas) and "
+        "transits trigger these houses, corresponding life themes and growth opportunities unfold."
+    ),
+    (
+        [r"\bwhat\s+is\s+(?:a\s+)?(?:kundali|birth\s+chart|horoscope|janam\s+kundali)\b", r"\bhow\s+is\s+kundali\s+made\b"],
+        "A Kundali (birth chart) is an astronomical blueprint of the 12 houses and 9 planets at the exact moment and location you were born. "
+        "It highlights your Ascendant (Lagna/vitality), Moon sign (Rashi/mind), Sun sign (soul), and the timeline of your life's developmental phases."
+    ),
+    (
+        [r"\bwhat\s+are\s+houses\s+in\s+astrology\b", r"\b12\s+houses\s+meaning\b", r"\bwhat\s+is\s+a\s+house\b"],
+        "In Vedic Astrology, the chart has 12 Houses (Bhavas). Each house governs a vital pillar of life: "
+        "1st (Self/Vitality), 2nd (Wealth & Speech), 3rd (Courage), 4th (Home/Peace), 5th (Intellect & Children), 6th (Service & Challenges), "
+        "7th (Marriage & Partnerships), 8th (Longevity & Transformation), 9th (Dharma & Fortune), 10th (Career & Status), 11th (Gains & Network), and 12th (Expenses & Moksha)."
+    ),
+    (
+        [r"\bwhat\s+are\s+planets\s+in\s+astrology\b", r"\bnavagraha\b", r"\b9\s+planets\b"],
+        "Vedic Astrology evaluates 9 primary cosmic energies (Navagrahas): Sun (soul & confidence), Moon (mind & emotion), Mars (courage & action), "
+        "Mercury (intellect & communication), Jupiter (wisdom & expansion), Venus (love & harmony), Saturn (discipline & karma), Rahu (ambition & desire), and Ketu (detachment & spirituality)."
+    ),
+]
+
+
 def check_qa_database(
     query: str,
     profile: Optional[UserChartProfile] = None,
     already_greeted: bool = False,
     user_natal_context: Optional[Dict[str, Any]] = None,
+    session_id: Optional[str] = None,
+    chat_history: Optional[List[Dict[str, Any]]] = None,
 ) -> Optional[str]:
-    """Search qa_database.json for a matching key/keyword and format with user profile.
+    """Search qa_database.json, greetings, or general astrology FAQs for an instant local response (0 LLM tokens).
 
     Step 1 & 4 Ground-Truth Injection:
     If matched against structured QA database entry, dynamically populates fields
     with user_natal_context using format_local_qa_response.
+    Enforces sub-intent granularity and session state tracking (forces LLM fallback if recently served).
     """
-    if not query or (not QA_DATABASE and not QA_STRUCTURED_DATABASE):
+    if not query or not query.strip() or (not QA_DATABASE and not QA_STRUCTURED_DATABASE):
         return None
 
-    # Strict Length & Intent Guard for Local QA (< 10 words, no personal intents)
-    if should_bypass_local_qa(query):
-        return None
-
-    words = query.strip().split()
-    if len(words) >= 10:
+    raw_query = query.strip()
+    clean_lower = re.sub(r'[\'\".,?!;:()\[\]{}_+\-=/\\<>]', ' ', raw_query.lower())
+    clean_lower = " ".join(clean_lower.split())
+    if not clean_lower:
         return None
 
     if profile is None:
@@ -1265,97 +1434,285 @@ def check_qa_database(
         asc = getattr(profile, "ascendant", None) or getattr(profile, "lagna", "Libra")
         moon = getattr(profile, "rashi", None) or getattr(profile, "moon_sign", "Gemini")
         dasha = getattr(profile, "dasha", None) or getattr(profile, "current_dasha", "Rahu-Mars")
+        p_name = getattr(profile, "name", "") or ""
+        if p_name.lower() in ("guest", "there", "friend"):
+            p_name = ""
         user_natal_context = {
+            "name": p_name,
+            "birth_details": getattr(profile, "birth_details", "") or "",
+            "birth_place": getattr(profile, "birth_place", getattr(profile, "place", "")) or "",
             "ascendant": asc,
             "moon_sign": moon,
             "active_dasha": str(dasha),
             "house_rulerships": calculate_house_rulerships(asc),
         }
 
-    # a. Clean and normalize the query (lowercase, remove punctuation/quotes)
-    cleaned_query = re.sub(r'[\'\".,?!;:()\[\]{}_+\-=/\\<>]', ' ', query.lower())
-    cleaned_query = " ".join(cleaned_query.split())
-    if not cleaned_query:
+    # 1. Check Basic Conversational Queries (Greetings, Bot Identity, Thanks, Bye)
+    is_hinglish = is_hinglish_query(raw_query)
+    for cat, data in BASIC_CONVERSATION_MAP.items():
+        for pat in data["patterns"]:
+            if re.search(pat, clean_lower):
+                if is_hinglish:
+                    resp = data.get("response_hinglish", data["response"])
+                    if cat == "greetings" and already_greeted:
+                        return "Aapki Janam Kundali, Dasha ya career timing ke baare mein aur kya janna chahte hain?"
+                else:
+                    resp = data.get("response_en", data["response"])
+                    if cat == "greetings" and already_greeted:
+                        return "How can I help you explore your chart, Dasha cycles, or career timing today?"
+                return resp
+
+    # 0. DIRECT-API CALCULATION PATH:
+    # For queries asking about "moon sign", "sun sign", "rashi", "lagna", "ascendant", "dasha", "mahadasha",
+    # or "planetary positions", compute directly from API/natal parameters (0 token cost, <10ms latency).
+    if is_direct_calculation_query(raw_query):
+        return format_direct_api_response(
+            raw_query,
+            user_natal_context=user_natal_context,
+            hinglish=is_hinglish,
+        )
+
+    # 1. MARRIAGE MICRO-INTENT DISCRIMINATION & DYNAMIC RULE LOOKUP:
+    # Breaks broad marriage queries down into granular sub-intents:
+    # 'partner_traits', 'marriage_remedies', and 'marriage_timing'.
+    marriage_intent = classify_marriage_intent(raw_query)
+    if marriage_intent:
+        marriage_keys = {
+            "partner_traits": ["partner_traits", "7th_house"],
+            "marriage_remedies": ["marriage_remedies", "mangal_dosha"],
+            "marriage_timing": ["marriage_timing", "marriage_and_relationships", "7th_house"],
+        }
+        candidate_keys = marriage_keys.get(marriage_intent, ["marriage_and_relationships"])
+        clean_norm = normalize_hinglish(clean_lower)
+
+        matched_entry = None
+        matched_key = None
+        if QA_STRUCTURED_DATABASE:
+            for m_key in candidate_keys:
+                if m_key in QA_STRUCTURED_DATABASE:
+                    entry = QA_STRUCTURED_DATABASE[m_key]
+                    keywords = entry.get("keywords", [])
+                    if any(kw in clean_lower or kw in clean_norm for kw in keywords):
+                        matched_entry = entry
+                        matched_key = m_key
+                        break
+
+        if matched_entry and matched_key:
+            if not is_template_recently_served(session_id, matched_key, chat_history=chat_history):
+                record_served_template(session_id, matched_key)
+                return format_local_qa_response(matched_entry, user_natal_context)
+
+        # Fallback to deterministic Stage-8 rule response specialized for this exact marriage micro-intent
+        if not is_template_recently_served(session_id, marriage_intent, chat_history=chat_history):
+            record_served_template(session_id, marriage_intent)
+            return format_marriage_rule_response(
+                raw_query,
+                user_natal_context=user_natal_context,
+                hinglish=is_hinglish,
+            )
+
+        # If already served recently in this session, return None so it routes to the LLM
         return None
 
-    # Check QA_STRUCTURED_DATABASE first for exact or keyword boundary matches
-    sorted_struct = sorted(QA_STRUCTURED_DATABASE.items(), key=lambda item: len(item[0]), reverse=True)
-    for key, qa_dict in sorted_struct:
-        clean_key = re.sub(r'[\'\".,?!;:()\[\]{}_+\-=/\\<>]', ' ', key.lower()).strip()
-        clean_key = " ".join(clean_key.split())
-        if clean_key and cleaned_query == clean_key:
-            return format_local_qa_response(qa_dict, user_natal_context)
-        if clean_key and len(clean_key) >= 2:
-            pattern = rf'^\s*(?:what\s+is\s+(?:a\s+|an\s+)?|define\s+|definition\s+of\s+|tell\s+me\s+about\s+|explain\s+)?{re.escape(clean_key)}\s*$'
-            if re.match(pattern, cleaned_query):
+    # 2. CAREER SUB-INTENT DISCRIMINATION & DYNAMIC RULE LOOKUP:
+    # Separates broad career queries into distinct intent categories:
+    # 'career_path', 'business_vs_job', 'gemstone_remedies', and 'job_timing'.
+    career_intent = classify_career_intent(raw_query)
+    if career_intent:
+        intent_to_keys = {
+            "business_vs_job": ["business_vs_job"],
+            "gemstone_remedies": ["gemstone_remedies", "career_gemstones"],
+            "job_timing": ["job_timing", "career_timing_promotion"],
+            "career_path": ["career_path", "career_general", "10th_house"],
+        }
+        candidate_keys = intent_to_keys.get(career_intent, [])
+        clean_norm = normalize_hinglish(clean_lower)
+
+        matched_entry = None
+        matched_key = None
+        if QA_STRUCTURED_DATABASE:
+            for c_key in candidate_keys:
+                if c_key in QA_STRUCTURED_DATABASE:
+                    entry = QA_STRUCTURED_DATABASE[c_key]
+                    keywords = entry.get("keywords", [])
+                    if any(kw in clean_lower or kw in clean_norm for kw in keywords):
+                        matched_entry = entry
+                        matched_key = c_key
+                        break
+
+        if matched_entry and matched_key:
+            if not is_template_recently_served(session_id, matched_key, chat_history=chat_history):
+                record_served_template(session_id, matched_key)
+                return format_local_qa_response(matched_entry, user_natal_context)
+
+        # CRITICAL RULE (Requirements 1, 2, 3):
+        # If a specific sub-intent (like gemstone recommendations or job change timing)
+        # does not have an exact local rule match, DO NOT fall back to a generic career overview!
+        # Return None so the query is routed to the LLM with the appropriate chart context.
+        return None
+
+    # 3. WEALTH INTENT & LOCAL STAGE-8 RULE LOOKUP:
+    if is_wealth_query(raw_query):
+        if QA_STRUCTURED_DATABASE and "wealth_and_finance" in QA_STRUCTURED_DATABASE:
+            keywords = QA_STRUCTURED_DATABASE["wealth_and_finance"].get("keywords", [])
+            clean_norm = normalize_hinglish(clean_lower)
+            if any(kw in clean_lower or kw in clean_norm for kw in keywords):
+                if not is_template_recently_served(session_id, "wealth_and_finance", chat_history=chat_history):
+                    record_served_template(session_id, "wealth_and_finance")
+                    return format_local_qa_response(QA_STRUCTURED_DATABASE["wealth_and_finance"], user_natal_context)
+        if not is_template_recently_served(session_id, "wealth_stage8_rule", chat_history=chat_history):
+            record_served_template(session_id, "wealth_stage8_rule")
+            return format_wealth_rule_response(
+                raw_query,
+                user_natal_context=user_natal_context,
+                hinglish=is_hinglish,
+            )
+
+    # 4. Check QA_STRUCTURED_DATABASE entries (all 33 entries: houses, grahas, yogas, dasha)
+    if QA_STRUCTURED_DATABASE:
+        clean_norm = normalize_hinglish(clean_lower)
+        for concept_id, qa_dict in QA_STRUCTURED_DATABASE.items():
+            keywords = qa_dict.get("keywords", [])
+            if any(kw in clean_lower or kw in clean_norm for kw in keywords):
+                if not is_template_recently_served(session_id, concept_id, chat_history=chat_history):
+                    record_served_template(session_id, concept_id)
+                    return format_local_qa_response(qa_dict, user_natal_context)
+
+    # For astrological inquiries: if the query is in Hinglish, bypass static English database answers
+    # so that the LLM cascading router can answer directly in conversational, authentic Hinglish.
+    if is_hinglish:
+        return None
+
+    # CRITICAL: If the query is compound (asks multiple things), predictive, or transit-specific,
+    # immediately bypass all local single-concept templates to the LLM cascading router!
+    if should_bypass_local_qa(raw_query, session_id=session_id):
+        return None
+
+    # 5. Check General Astrology FAQs (English queries only)
+    for patterns, faq_answer in GENERAL_ASTROLOGY_FAQS:
+        for pat in patterns:
+            if re.search(pat, clean_lower):
+                intro = format_user_intro(user_natal_context, hinglish=is_hinglish)
+                p1 = f"**Astrological Insight:** {intro} {faq_answer.strip()}"
+                p2 = f"**Actionable Advice:** Apply these foundational principles to navigate your active chart periods with clarity and measured discipline."
+                badge = format_source_badge("Local Database / FreeAstrologyAPI")
+                return f"{p1}\n\n{p2}{badge}"
+
+    # 3. Check Granular Sub-Intents via llm_router with Session State Tracking
+    sub_intent_response = get_local_qa_response(
+        raw_query,
+        user_profile=profile,
+        user_natal_context=user_natal_context,
+        session_id=session_id,
+        chat_history=chat_history,
+    )
+    if sub_intent_response:
+        return sub_intent_response
+
+    # 4. Check Predefined Astrological Concepts from qa_database.json (QA_STRUCTURED_DATABASE)
+    if QA_STRUCTURED_DATABASE:
+        # Match house queries specifically (e.g. "10th house", "tenth house", "karma bhava")
+        house_ordinals = {
+            "1st": "1st_house", "first": "1st_house", "tanu": "1st_house",
+            "2nd": "2nd_house", "second": "2nd_house", "dhana": "2nd_house", "dhan": "2nd_house",
+            "3rd": "3rd_house", "third": "3rd_house", "sahaja": "3rd_house",
+            "4th": "4th_house", "fourth": "4th_house", "sukha": "4th_house", "sukh": "4th_house",
+            "5th": "5th_house", "fifth": "5th_house", "putra": "5th_house",
+            "6th": "6th_house", "sixth": "6th_house", "ari": "6th_house", "roga": "6th_house",
+            "7th": "7th_house", "seventh": "7th_house", "yuvati": "7th_house",
+            "8th": "8th_house", "eighth": "8th_house", "randhra": "8th_house",
+            "9th": "9th_house", "ninth": "9th_house", "bhagya": "9th_house",
+            "10th": "10th_house", "tenth": "10th_house", "karma": "10th_house",
+            "11th": "11th_house", "eleventh": "11th_house", "labha": "11th_house", "labh": "11th_house",
+            "12th": "12th_house", "twelfth": "12th_house", "vyaya": "12th_house", "vyay": "12th_house",
+        }
+        for ord_word, house_key in house_ordinals.items():
+            if re.search(rf"\b{ord_word}\s+(?:house|bhava|bhav)\b", clean_lower):
+                if house_key in QA_STRUCTURED_DATABASE:
+                    if is_template_recently_served(session_id, house_key, chat_history=chat_history):
+                        return None
+                    record_served_template(session_id, house_key)
+                    return format_local_qa_response(QA_STRUCTURED_DATABASE[house_key], user_natal_context)
+
+        # Match specific high-frequency concepts (never broad 'career')
+        high_freq_concepts = [
+            ("sade_sati", [r"\bsade\s*sati\b", r"\bshani\s+ki\s+sade\s*sati\b"]),
+            ("mahadasha_antardasha", [r"\bmahadasha\b", r"\bantardasha\b", r"\bvimshottari\b", r"\bdasha\b", r"\bmaha\s+dasha\b", r"\bantar\s+dasha\b"]),
+            ("business_vs_job", [
+                r"\bbusiness\s+(?:or|vs|ya)\s+job\b",
+                r"\bjob\s+(?:or|vs|ya)\s+business\b",
+                r"\bdoes\s+my\s+chart\s+favor\s+business\s+or\s+(?:a\s+)?job\b",
+                r"\bfavor\s+business\s+or\s+(?:a\s+)?job\b",
+                r"\bshould\s+i\s+do\s+business\s+or\s+(?:a\s+)?job\b",
+            ]),
+            ("partner_traits", [r"\bpartner(?:'s)?\s+(?:nature|personality|traits?)\b", r"\bspouse(?:'s)?\s+(?:nature|personality|traits?)\b", r"\bpartner\s+kaisa\s+hoga\b", r"\bjeevansathi\s+kaisa\s+hoga\b"]),
+            ("marriage_remedies", [r"\bmarriage\s+remed(?:y|ies)\b", r"\bremed(?:y|ies)\s+for\s+marriage\b", r"\bshadi\s+m(?:e|ein)\s+deri\b", r"\blate\s+marriage\b"]),
+            ("marriage_timing", [r"\bwhen\s+will\s+i\s+get\s+married\b", r"\bmarriage\s+timing\b", r"\bshadi\s+kab\s+hogi\b", r"\bmeri\s+shadi\s+kab\s+hogi\b", r"\bvivah\s+kab\s+hoga\b"]),
+            ("marriage_and_relationships", [r"\bmarriage\b", r"\bshaadi\b", r"\bshadi\b", r"\bvivah\b", r"\bspouse\b", r"\blife\s+partner\b", r"\brelationship\b"]),
+            ("wealth_and_finance", [r"\bwealth\b", r"\bfinancial\b", r"\bmoney\b", r"\bsavings\b", r"\bdhan\s+yoga\b", r"\bfinances\b", r"\bpaisa\b"]),
+            ("lagna", [r"\blagna\b", r"\bascendant\b", r"\brising\s+sign\b"]),
+            ("rashi", [r"\brashi\b", r"\bmoon\s+sign\b", r"\bjanma\s+rashi\b"]),
+            ("mangal_dosha", [r"\bmangal\s+dosha?\b", r"\bmanglik\b", r"\bkuja\s+dosha?\b"]),
+            ("nakshatra", [r"\bnakshatra\b", r"\bbirth\s+star\b", r"\blunar\s+mansion\b"]),
+            ("sun", [r"\bsun\s+(?:planet|in\s+astrology)?\b", r"\bsurya\s+(?:graha)?\b"]),
+            ("moon", [r"\bchandra\s+(?:graha)?\b", r"\bmoon\s+in\s+astrology\b"]),
+            ("mars", [r"\bmars\s+(?:planet|in\s+astrology)?\b", r"\bmangal\s+(?:graha)?\b"]),
+            ("mercury", [r"\bmercury\s+(?:planet|in\s+astrology)?\b", r"\bbudh(?:a)?\s+(?:graha)?\b"]),
+            ("jupiter", [r"\bjupiter\s+(?:planet|in\s+astrology)?\b", r"\bguru\s+(?:graha)?\b", r"\bbrihaspati\b"]),
+            ("venus", [r"\bvenus\s+(?:planet|in\s+astrology)?\b", r"\bshukra\s+(?:graha)?\b"]),
+            ("saturn", [r"\bsaturn\s+(?:planet|in\s+astrology)?\b", r"\bshani\s+(?:graha|dev)?\b"]),
+            ("rahu", [r"\brahu\s+(?:graha)?\b"]),
+            ("ketu", [r"\bketu\s+(?:graha)?\b"]),
+        ]
+        for concept_id, patterns in high_freq_concepts:
+            for pat in patterns:
+                if re.search(pat, clean_lower):
+                    if concept_id in QA_STRUCTURED_DATABASE:
+                        if is_template_recently_served(session_id, concept_id, chat_history=chat_history):
+                            return None
+                        record_served_template(session_id, concept_id)
+                        return format_local_qa_response(QA_STRUCTURED_DATABASE[concept_id], user_natal_context)
+
+        # General loop over QA_STRUCTURED_DATABASE entries
+        sorted_struct = sorted(QA_STRUCTURED_DATABASE.items(), key=lambda item: len(item[0]), reverse=True)
+        for key, qa_dict in sorted_struct:
+            clean_key = re.sub(r'[\'\".,?!;:()\[\]{}_+\-=/\\<>]', ' ', key.lower()).strip()
+            clean_key = " ".join(clean_key.split())
+            if not clean_key or len(clean_key) < 3 or clean_key in ("career", "job", "work"):
+                continue
+            if re.search(rf"\b{re.escape(clean_key)}\b", clean_lower):
+                if is_template_recently_served(session_id, key, chat_history=chat_history):
+                    return None
+                record_served_template(session_id, key)
                 return format_local_qa_response(qa_dict, user_natal_context)
 
-    # b. Match against keys/keywords in qa_database.json
-    matched_template: Optional[str] = None
-    matched_key: str = ""
-
-    # Prioritize longer multi-word keys (e.g., 'current dasha' before 'dasha')
+    # 5. Check QA_DATABASE plain text templates
     sorted_entries = sorted(QA_DATABASE.items(), key=lambda item: len(item[0]), reverse=True)
-
-    # 1. Exact match check
     for key, template in sorted_entries:
         clean_key = re.sub(r'[\'\".,?!;:()\[\]{}_+\-=/\\<>]', ' ', key.lower()).strip()
         clean_key = " ".join(clean_key.split())
-        if clean_key and cleaned_query == clean_key:
-            matched_template = template
-            matched_key = clean_key
-            break
+        if not clean_key or len(clean_key) < 3 or clean_key in ("career", "job", "work"):
+            continue
+        if re.search(rf"\b{re.escape(clean_key)}\b", clean_lower):
+            if is_template_recently_served(session_id, key, chat_history=chat_history):
+                return None
+            params = profile.model_dump()
+            for src, dst in [("lagna", "ascendant"), ("moon_sign", "moon"), ("sun_sign", "sun"), ("current_dasha", "dasha"), ("jupiter_house", "jupiter")]:
+                if src in params and dst not in params:
+                    params[dst] = params[src]
+                if dst in params and src not in params:
+                    params[src] = params[dst]
+            try:
+                formatted_text = template.format(**params)
+            except Exception:
+                class SafeDict(dict):
+                    def __missing__(self, k):
+                        return f"{{{k}}}"
+                formatted_text = template.format_map(SafeDict(**params))
+            record_served_template(session_id, key)
+            return formatted_text
 
-    # 2. Exact Keyword Boundary Matching: only match exact short question structures
-    if not matched_template:
-        for key, template in sorted_entries:
-            clean_key = re.sub(r'[\'\".,?!;:()\[\]{}_+\-=/\\<>]', ' ', key.lower()).strip()
-            clean_key = " ".join(clean_key.split())
-            if not clean_key or len(clean_key) < 2:
-                continue
-            pattern = rf'^\s*(?:what\s+is\s+(?:a\s+|an\s+)?|define\s+|definition\s+of\s+|tell\s+me\s+about\s+|explain\s+)?{re.escape(clean_key)}\s*$'
-            if re.match(pattern, cleaned_query):
-                matched_template = template
-                matched_key = clean_key
-                break
-
-    if not matched_template:
-        return None
-
-    params = profile.model_dump()
-    # Backward compatibility aliases
-    if "ascendant" not in params and "lagna" in params:
-        params["ascendant"] = params["lagna"]
-    if "lagna" not in params and "ascendant" in params:
-        params["lagna"] = params["ascendant"]
-    if "moon" not in params and "moon_sign" in params:
-        params["moon"] = params["moon_sign"]
-    if "sun" not in params and "sun_sign" in params:
-        params["sun"] = params["sun_sign"]
-    if "dasha" not in params and "current_dasha" in params:
-        params["dasha"] = params["current_dasha"]
-    if "jupiter" not in params and "jupiter_house" in params:
-        params["jupiter"] = params["jupiter_house"]
-
-    # 3. Exception Handling: Safely handle missing template keys using KeyError
-    try:
-        formatted_text = matched_template.format(**params)
-    except KeyError as exc:
-        logger.warning("Missing template key %s in profile during formatting; applying safe fallback", exc)
-        class SafeDict(dict):
-            def __missing__(self, k):
-                return f"{{{k}}}"
-        formatted_text = matched_template.format_map(SafeDict(**params))
-    except Exception as exc:
-        logger.warning("Unexpected error formatting template: %s", exc)
-        formatted_text = matched_template
-
-    # Strip repeated greetings if already greeted and not a greeting query
-    is_greeting_key = matched_key in {"hello", "hi", "namaste", "hey", "greetings"}
-    if already_greeted and not is_greeting_key:
-        formatted_text = strip_greeting(formatted_text)
-
-    return formatted_text
+    return None
 
 
 # ------------------------------------------------------------------
@@ -1378,13 +1735,12 @@ ASTRO_INQUIRY_TERMS = {
     "hoga", "hogi", "milega", "milegi", "batao", "bata"
 }
 
-def match_faq_only(user_query: str) -> Optional[str]:
-    """Return a local FAQ from the 85+ item database for exact or indexed factual phrases, saving LLM tokens."""
+def match_faq_only(user_query: str, session_id: Optional[str] = None) -> Optional[str]:
+    """Return a local FAQ from the database for exact or indexed factual phrases, saving LLM tokens."""
     if not user_query:
         return None
 
-    # Strict Length & Intent Guard: Never match FAQ if query contains personal intent or >= 10 words
-    if should_bypass_local_qa(user_query):
+    if should_bypass_local_qa(user_query, session_id=session_id):
         return None
 
     clean_norm = re.sub(r"[^\w\s'-]", " ", normalize_hinglish(user_query).casefold()).strip()
@@ -1710,6 +2066,7 @@ def build_gemini_prompt(
         },
         session_profile=session_profile,
         user_natal_context=user_natal_context,
+        query=request.query,
     )
 
 
@@ -2745,6 +3102,45 @@ def read_root():
 async def _handle_chat_response(request: ChatRequest):
     t_start = time.perf_counter()
 
+    query_text = (request.user_query or request.query or "").strip()
+    session_id = request.user_id or "default_user"
+
+    # Toxicity & Abusive Language Guardrail (3-Strike Policy)
+    guardrail_result = check_abuse_guardrail(session_id, query_text)
+    if guardrail_result:
+        msg = guardrail_result["message"]
+        status_str = "terminated" if guardrail_result["terminated"] else "warning"
+        return JSONResponse(
+            status_code=200,
+            content={
+                "status": status_str,
+                "answer": msg,
+                "response": msg,
+                "abuse_strikes": guardrail_result["strikes"],
+                "terminated": guardrail_result["terminated"],
+                "related_questions": [],
+            },
+        )
+
+    # Domain Restriction Guardrail (Rule 1: Astrology & Life-Path Only)
+    is_valid_domain, out_of_scope_msg = validate_astrology_domain(query_text)
+    if not is_valid_domain:
+        return JSONResponse(
+            status_code=200,
+            content={
+                "status": "out_of_scope",
+                "answer": out_of_scope_msg,
+                "response": out_of_scope_msg,
+                "abuse_strikes": 0,
+                "terminated": False,
+                "related_questions": [
+                    "How does my birth chart shape my career?",
+                    "When is a favorable period for marriage in my chart?",
+                    "What do my planetary transits say about my health?",
+                ],
+            },
+        )
+
     current_birth_signature = (
         request.birth_year,
         request.birth_month,
@@ -2809,82 +3205,148 @@ async def _handle_chat_response(request: ChatRequest):
 
     session_data = USER_SESSIONS[request.user_id]
 
-    birth_seconds = round((request.birth_hour % 24) * 60 * 60)
-    birth_hour, remaining_seconds = divmod(birth_seconds, 60 * 60)
-    birth_minute, birth_second = divmod(remaining_seconds, 60)
-    birth_details = BirthDetailsRequest(
-        year=request.birth_year,
-        month=request.birth_month,
-        day=request.birth_day,
-        hour=birth_hour,
-        minute=birth_minute,
-        second=birth_second,
-        latitude=request.latitude,
-        longitude=request.longitude,
-        timezone=request.timezone,
-    )
-
-    # Fetch API or local Swiss Ephemeris sidereal signs without blocking the event loop.
-    try:
-        astro_features, _api_chart_data = await run_in_threadpool(
-            get_chart_from_api,
-            birth_details,
+    # CONVERSATIONAL FOLLOW-UP CONTEXT HANDLING:
+    # If chart_profile and user_natal_context already exist in session_data and signature unchanged,
+    # REUSE cached chart context directly without re-querying external APIs or ephemeris (<1ms latency).
+    cached_natal = session_data.get("user_natal_context")
+    cached_profile = session_data.get("chart_profile")
+    if (
+        cached_natal
+        and cached_profile
+        and session_data.get("birth_signature") == current_birth_signature
+        and session_data.get("turn_count", 1) > 1
+    ):
+        user_natal_context = cached_natal
+        active_profile = cached_profile
+        asc_sign = user_natal_context["ascendant"]
+        sun_sign = user_natal_context.get("sun_sign", "Aries")
+        moon_sign = user_natal_context["moon_sign"]
+        current_dasha = user_natal_context.get("active_dasha", "Rahu-Mars")
+        jupiter_house_str = session_data.get("jupiter_house_str", "1st house")
+        astro_features = session_data.get("astro_features", [2, 8, 2, 10, 8, 0, 7, 0, 3, 9])
+        _api_chart_data = session_data.get("api_chart_data", {})
+        dasha_data = session_data.get("dasha_data", {})
+    else:
+        birth_seconds = round((request.birth_hour % 24) * 60 * 60)
+        birth_hour, remaining_seconds = divmod(birth_seconds, 60 * 60)
+        birth_minute, birth_second = divmod(remaining_seconds, 60)
+        birth_details = BirthDetailsRequest(
+            year=request.birth_year,
+            month=request.birth_month,
+            day=request.birth_day,
+            hour=birth_hour,
+            minute=birth_minute,
+            second=birth_second,
+            latitude=request.latitude,
+            longitude=request.longitude,
+            timezone=request.timezone,
         )
-    except Exception as e:
-        logger.warning("Error obtaining chart features: %s; using local defaults", e)
-        astro_features = [2, 8, 2, 10, 8, 0, 7, 0, 3, 9]
-        _api_chart_data = {}
 
-    asc_sign = ZODIAC_SIGNS[int(astro_features[0]) % 12] if len(astro_features) > 0 else "Aries"
-    sun_sign = ZODIAC_SIGNS[int(astro_features[1]) % 12] if len(astro_features) > 1 else "Taurus"
-    moon_sign = ZODIAC_SIGNS[int(astro_features[2]) % 12] if len(astro_features) > 2 else "Gemini"
-
-    # Calculate Jupiter house relative to Lagna
-    asc_idx = int(astro_features[0]) % 12 if len(astro_features) > 0 else 0
-    jup_idx = int(astro_features[5]) % 12 if len(astro_features) > 5 else 0
-    jupiter_house_str = get_ordinal_house(((jup_idx - asc_idx) % 12) + 1)
-
-    # Calculate or fetch Dasha details for this user's birth details
-    current_dasha = ""
-    dasha_data = {}
-    try:
-        dasha_data = await run_in_threadpool(fetch_dasha_details_external, birth_details)
-        current_dasha = extract_current_dasha(dasha_data)
-    except Exception as e:
-        logger.warning("External dasha API lookup error: %s", e)
-
-    if not current_dasha:
+        # Fetch API or local Swiss Ephemeris sidereal signs without blocking the event loop.
         try:
-            current_dasha = compute_vimshottari_dasha_local(
-                request.birth_year, request.birth_month, request.birth_day,
-                request.birth_hour, request.timezone
+            astro_features, _api_chart_data = await run_in_threadpool(
+                get_chart_from_api,
+                birth_details,
             )
         except Exception as e:
-            logger.warning("Local dasha computation error: %s", e)
-            current_dasha = "Rahu-Moon"
+            logger.warning("Error obtaining chart features: %s; using local defaults", e)
+            astro_features = [2, 8, 2, 10, 8, 0, 7, 0, 3, 9]
+            _api_chart_data = {}
 
-    # Always synchronize active profile with the active user's calculated chart
-    active_profile = UserChartProfile(
-        name=request.name or "Friend",
-        lagna=asc_sign,
-        moon_sign=moon_sign,
-        sun_sign=sun_sign,
-        jupiter_house=jupiter_house_str,
-        current_dasha=current_dasha,
+        asc_sign = ZODIAC_SIGNS[int(astro_features[0]) % 12] if len(astro_features) > 0 else "Aries"
+        sun_sign = ZODIAC_SIGNS[int(astro_features[1]) % 12] if len(astro_features) > 1 else "Taurus"
+        moon_sign = ZODIAC_SIGNS[int(astro_features[2]) % 12] if len(astro_features) > 2 else "Gemini"
+
+        # Calculate Jupiter house relative to Lagna
+        asc_idx = int(astro_features[0]) % 12 if len(astro_features) > 0 else 0
+        jup_idx = int(astro_features[5]) % 12 if len(astro_features) > 5 else 0
+        jupiter_house_str = get_ordinal_house(((jup_idx - asc_idx) % 12) + 1)
+
+        # Calculate or fetch Dasha details for this user's birth details
+        current_dasha = ""
+        dasha_data = {}
+        try:
+            dasha_data = await run_in_threadpool(fetch_dasha_details_external, birth_details)
+            current_dasha = extract_current_dasha(dasha_data)
+        except Exception as e:
+            logger.warning("External dasha API lookup error: %s", e)
+
+        if not current_dasha:
+            try:
+                current_dasha = compute_vimshottari_dasha_local(
+                    request.birth_year, request.birth_month, request.birth_day,
+                    request.birth_hour, request.timezone
+                )
+            except Exception as e:
+                logger.warning("Local dasha computation error: %s", e)
+                current_dasha = "Rahu-Moon"
+
+        # Always synchronize active profile with the active user's calculated chart
+        active_profile = UserChartProfile(
+            name=request.name or "Friend",
+            lagna=asc_sign,
+            moon_sign=moon_sign,
+            sun_sign=sun_sign,
+            jupiter_house=jupiter_house_str,
+            current_dasha=current_dasha,
+        )
+
+        # Ground-Truth Injection — pre-calculate user's explicit birth facts
+        b_year = request.birth_year
+        b_month = request.birth_month
+        b_day = request.birth_day
+        b_hour_f = request.birth_hour
+        b_hour_int = int(b_hour_f)
+        b_min_int = int(round((b_hour_f - b_hour_int) * 60))
+        time_str = f"{b_hour_int:02d}:{b_min_int:02d}"
+        
+        month_names = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+        month_str = month_names[b_month] if 1 <= b_month <= 12 else str(b_month)
+        birth_date_str = f"{b_day} {month_str} {b_year}"
+        birth_details_str = f"{birth_date_str}, {time_str}"
+        birth_place_str = (request.birth_place or request.place or "").strip()
+        if not birth_place_str:
+            birth_place_str = f"Lat {request.latitude:.2f}, Lon {request.longitude:.2f}"
+
+        user_name_str = (request.name or getattr(active_profile, "name", "") or "").strip()
+        if user_name_str.lower() in ("guest", "there", "friend"):
+            user_name_str = ""
+
+        user_natal_context = {
+            "name": user_name_str,
+            "birth_details": birth_details_str,
+            "birth_date": birth_date_str,
+            "birth_time": time_str,
+            "birth_place": birth_place_str,
+            "ascendant": asc_sign,
+            "moon_sign": moon_sign,
+            "sun_sign": sun_sign,
+            "active_dasha": current_dasha or "Rahu-Mars",
+            "house_rulerships": calculate_house_rulerships(asc_sign),
+        }
+
+        # Cache chart context into session state for zero-latency follow-up turns
+        session_data["chart_profile"] = active_profile
+        session_data["user_natal_context"] = user_natal_context
+        session_data["jupiter_house_str"] = jupiter_house_str
+        session_data["astro_features"] = astro_features
+        session_data["api_chart_data"] = _api_chart_data
+        session_data["dasha_data"] = dasha_data
+        session_data["birth_signature"] = current_birth_signature
+
+    query_text = (request.user_query or request.query or "").strip()
+
+    # Conversational Follow-Up Resolution:
+    # Resolve implicit pronouns/references using previous message context without re-querying raw birth parameters
+    resolved_query, follow_up_domain = resolve_followup_context(
+        query_text,
+        chat_history=session_data.get("history", []),
+        session_data=session_data,
     )
-    session_data["chart_profile"] = active_profile
-    session_data["birth_signature"] = current_birth_signature
-
-    # Step 1: Ground-Truth Injection — pre-calculate user's explicit birth facts
-    user_natal_context = {
-        "ascendant": asc_sign,
-        "moon_sign": moon_sign,
-        "active_dasha": current_dasha or "Rahu-Mars",
-        "house_rulerships": calculate_house_rulerships(asc_sign),
-    }
-    session_data["user_natal_context"] = user_natal_context
-
-    query_text = request.user_query or request.query or ""
+    if follow_up_domain and follow_up_domain != "general":
+        topics = session_data.setdefault("profile", {}).setdefault("topics_asked", [])
+        if follow_up_domain not in topics:
+            topics.append(follow_up_domain)
 
     # Single Greeting Policy: Never greet the user more than 1 time per session
     is_greeting_query = query_text.lower().strip() in {"hi", "hello", "hey", "namaste", "greetings"}
@@ -2894,12 +3356,16 @@ async def _handle_chat_response(request: ChatRequest):
         or session_data["turn_count"] > 1
     )
 
+    query_for_lookup = resolved_query if resolved_query else query_text
+
     # 1. Dynamic local Q&A response with dynamic parameters (0 LLM Token Cost)
     local_answer = check_qa_database(
-        query_text,
+        query_for_lookup,
         active_profile,
         already_greeted=already_greeted,
         user_natal_context=user_natal_context,
+        session_id=request.user_id,
+        chat_history=session_data.get("history"),
     )
     if local_answer:
         if already_greeted and not is_greeting_query:
@@ -2908,39 +3374,68 @@ async def _handle_chat_response(request: ChatRequest):
         session_data["history"].append({"role": "user", "content": query_text})
         session_data["history"].append({"role": "assistant", "content": local_answer})
         follow_ups = generate_follow_up_questions(query_text, local_answer)
+        if "[Local Database / FreeAstrologyAPI]" in local_answer or "[LLM -" in local_answer:
+            answer_with_suffix = local_answer
+        else:
+            answer_with_suffix = local_answer + _format_source_suffix("Local Database")
         return JSONResponse(content={
-            "answer": label_answer_source(local_answer, "Backend"),
+            "answer": answer_with_suffix,
             "related_questions": follow_ups,
         })
 
-    faq_template = match_faq_only(query_text)
-    if faq_template:
-        answer = format_personalized_answer(
-            faq_template,
-            asc_sign,
-            sun_sign,
-            moon_sign,
-            name=request.name or "",
-            hinglish=is_hinglish_query(query_text),
-            query=query_text,
-            astro_features=astro_features,
-            current_dasha=current_dasha,
-            jupiter_house=jupiter_house_str,
+    if not is_hinglish_query(query_for_lookup):
+        faq_template = match_faq_only(query_for_lookup, session_id=request.user_id)
+        if faq_template:
+            answer = format_personalized_answer(
+                faq_template,
+                asc_sign,
+                sun_sign,
+                moon_sign,
+                name=request.name or "",
+                hinglish=False,
+                query=query_for_lookup,
+                astro_features=astro_features,
+                current_dasha=current_dasha,
+                jupiter_house=jupiter_house_str,
+            )
+            if already_greeted and not is_greeting_query:
+                answer = strip_greeting(answer)
+            session_data["has_greeted"] = True
+            USER_SESSIONS[request.user_id]["history"].append({"role": "user", "content": query_text})
+            USER_SESSIONS[request.user_id]["history"].append({"role": "assistant", "content": answer})
+            follow_ups = generate_follow_up_questions(query_text, answer)
+            if "[Local Database / FreeAstrologyAPI]" in answer or "[LLM -" in answer:
+                answer_with_suffix = answer
+            else:
+                answer_with_suffix = answer + _format_source_suffix("Local Database")
+            return JSONResponse(content={
+                "answer": answer_with_suffix,
+                "related_questions": follow_ups,
+            })
+
+        fuzzy_answer = intercept_qa(
+            query_for_lookup,
+            user_profile=active_profile.model_dump() if hasattr(active_profile, "model_dump") else None,
+            already_greeted=already_greeted,
+            session_id=request.user_id,
+            chat_history=session_data.get("history"),
         )
-        if already_greeted and not is_greeting_query:
-            answer = strip_greeting(answer)
-        session_data["has_greeted"] = True
-        USER_SESSIONS[request.user_id]["history"].append({"role": "user", "content": query_text})
-        USER_SESSIONS[request.user_id]["history"].append({"role": "assistant", "content": answer})
-        follow_ups = generate_follow_up_questions(query_text, answer)
-        return JSONResponse(content={
-            "answer": label_answer_source(answer, "Backend"),
-            "related_questions": follow_ups,
-        })
+        if fuzzy_answer:
+            if already_greeted and not is_greeting_query:
+                fuzzy_answer = strip_greeting(fuzzy_answer)
+            session_data["has_greeted"] = True
+            USER_SESSIONS[request.user_id]["history"].append({"role": "user", "content": query_text})
+            USER_SESSIONS[request.user_id]["history"].append({"role": "assistant", "content": fuzzy_answer})
+            follow_ups = generate_follow_up_questions(query_text, fuzzy_answer)
+            fuzzy_with_suffix = fuzzy_answer + _format_source_suffix("Local Database")
+            return JSONResponse(content={
+                "answer": fuzzy_with_suffix,
+                "related_questions": follow_ups,
+            })
 
     # Every non-FAQ query is interpreted by the LLM; local rules only provide domain context.
-    raw_indirect_intent = resolve_indirect_intent(request.query)
-    internal_query = request.query
+    raw_indirect_intent = resolve_indirect_intent(query_for_lookup)
+    internal_query = query_for_lookup
 
     # Normalize Hinglish before routing so keyword classifiers work.
     normalized_query = normalize_hinglish(internal_query)
@@ -3001,9 +3496,11 @@ async def _handle_chat_response(request: ChatRequest):
                 yield chunk
 
             raw_streamed = "".join(attempt_chunks).strip()
-            # Ensure stream displayed to user ends with a complete sentence before the LLM tag
-            if raw_streamed and raw_streamed[-1] not in (".", "!", "?"):
-                yield "."
+            # Raw streamed output complete
+
+            # Append the active model name as a visible source suffix
+            if active_model and active_model != "Backend":
+                yield _format_source_suffix(active_model)
 
             # [SPECIFICATION 3 & 4: Output Sanitization & Sentence Truncation] Strip internal reasoning / preambles and trim to last complete sentence
             full_text = trim_to_last_sentence(clean_llm_output(raw_streamed))
@@ -3021,6 +3518,11 @@ async def _handle_chat_response(request: ChatRequest):
                 target_domain = query_domains[0] if query_domains else predicted_domain
                 follow_ups = generate_follow_up_questions(request.query, full_text, domain=target_domain)
                 yield f"\n[FOLLOW_UPS]: {json.dumps(follow_ups)}"
+
+                # Emit token usage metadata so the frontend/client can display token stats
+                token_stats = get_last_token_stats(request.user_id)
+                if token_stats:
+                    yield f"\n[TOKEN_USAGE]: {json.dumps(token_stats)}"
         except asyncio.CancelledError:
             logger.info("Chat stream cancelled for user %s", request.user_id)
             raise
@@ -3041,7 +3543,7 @@ async def _handle_chat(request: ChatRequest):
         logger.error("Chat request error: %s", str(e), exc_info=True)
         return JSONResponse(
             status_code=200,
-            content=backend_error_payload(request.query),
+            content=backend_error_payload(request.user_query or request.query or ""),
         )
 
 
@@ -3077,21 +3579,66 @@ async def api_chat_endpoint(chat_req: ApiChatRequest):
     """
     prompt = chat_req.prompt.strip()
     profile = chat_req.user_profile or {}
+    user_id: str = str(profile.get("user_id") or profile.get("id") or "api_default_user")
+
+    # Toxicity & Abusive Language Guardrail (3-Strike Policy)
+    guardrail_result = check_abuse_guardrail(user_id, prompt)
+    if guardrail_result:
+        msg = guardrail_result["message"]
+        status_str = "terminated" if guardrail_result["terminated"] else "warning"
+        return JSONResponse(
+            status_code=200,
+            content={
+                "status": status_str,
+                "answer": msg,
+                "response": msg,
+                "abuse_strikes": guardrail_result["strikes"],
+                "terminated": guardrail_result["terminated"],
+                "related_questions": [],
+            },
+        )
+
+    # Domain Restriction Guardrail (Rule 1: Astrology & Life-Path Only)
+    is_valid_domain, out_of_scope_msg = validate_astrology_domain(prompt)
+    if not is_valid_domain:
+        return JSONResponse(
+            status_code=200,
+            content={
+                "status": "out_of_scope",
+                "answer": out_of_scope_msg,
+                "response": out_of_scope_msg,
+                "abuse_strikes": 0,
+                "terminated": False,
+                "related_questions": [
+                    "How does my birth chart influence my career?",
+                    "When is a favorable period for marriage in my chart?",
+                    "What do my planetary transits say about my health?",
+                ],
+            },
+        )
 
     # Step 1: Ground-Truth Injection — pre-calculate user's explicit birth facts
     ascendant = profile.get("ascendant") or profile.get("lagna") or "Libra"
     moon_sign = profile.get("rashi") or profile.get("moon_sign") or profile.get("moon") or "Gemini"
+    sun_sign = profile.get("sun_sign") or profile.get("sun") or profile.get("surya") or ""
     active_dasha = profile.get("dasha") or profile.get("active_dasha") or profile.get("current_dasha") or "Rahu-Mars"
 
+    p_name = (profile.get("name") or "").strip()
+    if p_name.lower() in ("guest", "there", "friend"):
+        p_name = ""
+    b_details = str(profile.get("birth_details") or profile.get("dob") or "").strip()
+    b_place = str(profile.get("birth_place") or profile.get("place") or profile.get("city") or "").strip()
+
     user_natal_context = {
+        "name": p_name,
+        "birth_details": b_details,
+        "birth_place": b_place,
         "ascendant": ascendant,
         "moon_sign": moon_sign,
+        "sun_sign": sun_sign,
         "active_dasha": str(active_dasha),
         "house_rulerships": calculate_house_rulerships(ascendant),
     }
-
-    # Resolve user identity for session tracking
-    user_id: str = str(profile.get("user_id") or profile.get("id") or "api_default_user")
 
     # Build or update the per-user API session
     if user_id not in API_USER_SESSIONS:
@@ -3121,6 +3668,17 @@ async def api_chat_endpoint(chat_req: ApiChatRequest):
     api_session = API_USER_SESSIONS[user_id]
     session_profile_data = api_session["session_profile"]
 
+    # Conversational follow-up context resolution
+    resolved_prompt, follow_up_domain = resolve_followup_context(
+        prompt,
+        chat_history=api_session.get("history", []),
+        session_data=api_session,
+    )
+    if follow_up_domain and follow_up_domain != "general":
+        topics = session_profile_data.setdefault("topics_asked", [])
+        if follow_up_domain not in topics:
+            topics.append(follow_up_domain)
+
     already_greeted = bool(
         chat_req.already_greeted
         or profile.get("already_greeted")
@@ -3129,19 +3687,24 @@ async def api_chat_endpoint(chat_req: ApiChatRequest):
     )
 
     # 1. Local QA Intercept (0 Tokens) - dynamically populated with user_natal_context
-    local_answer = None
-    if not should_bypass_local_qa(prompt):
-        local_answer = check_qa_database(
-            prompt,
-            already_greeted=already_greeted,
-            user_natal_context=user_natal_context,
-        )
+    local_answer = check_qa_database(
+        resolved_prompt,
+        already_greeted=already_greeted,
+        user_natal_context=user_natal_context,
+        session_id=user_id,
+        chat_history=api_session.get("history"),
+    )
+    if not is_hinglish_query(resolved_prompt):
+        if not local_answer:
+            local_answer = match_faq_only(resolved_prompt, session_id=user_id)
         if not local_answer:
             local_answer = intercept_qa(
-                prompt,
+                resolved_prompt,
                 user_profile=profile,
                 threshold=82.0,
                 already_greeted=already_greeted,
+                session_id=user_id,
+                chat_history=api_session.get("history"),
             )
     if local_answer:
         is_greeting_query = prompt.lower().strip() in {"hi", "hello", "hey", "namaste", "greetings"}
@@ -3149,7 +3712,10 @@ async def api_chat_endpoint(chat_req: ApiChatRequest):
             local_answer = strip_greeting(local_answer)
 
         async def stream_local():
-            yield local_answer
+            resp = local_answer
+            if "[Local Database / FreeAstrologyAPI]" not in resp and "[LLM -" not in resp:
+                resp = strip_server_metadata(resp) + _format_source_suffix("Local Database")
+            yield resp
         return StreamingResponse(stream_local(), media_type="text/plain; charset=utf-8")
 
     # 2. Merge incoming chat_history with accumulated session history
@@ -3169,6 +3735,7 @@ async def api_chat_endpoint(chat_req: ApiChatRequest):
         "lagna": ascendant,
         "moon_sign": moon_sign,
         "rashi": moon_sign,
+        "sun_sign": sun_sign,
         "current_dasha": active_dasha,
         "dasha": active_dasha,
     })
@@ -3176,6 +3743,7 @@ async def api_chat_endpoint(chat_req: ApiChatRequest):
         user_profile=merged_profile,
         session_profile=session_profile_data,
         user_natal_context=user_natal_context,
+        query=prompt,
     )
 
     # Track topics for this query
@@ -3200,9 +3768,11 @@ async def api_chat_endpoint(chat_req: ApiChatRequest):
             yield chunk
 
         raw_streamed = "".join(attempt_chunks).strip()
-        # Ensure terminal punctuation
-        if raw_streamed and raw_streamed[-1] not in (".", "!", "?"):
-            yield "."
+        # Raw streamed output complete
+
+        # Append the active model name as a visible source suffix
+        if active_model and active_model != "Backend":
+            yield _format_source_suffix(active_model)
 
         full_text = trim_to_last_sentence(clean_llm_output(raw_streamed))
         if full_text and not is_conversational_fluff(prompt):
@@ -3216,6 +3786,11 @@ async def api_chat_endpoint(chat_req: ApiChatRequest):
 
         follow_ups = generate_follow_up_questions(prompt, full_text or raw_streamed)
         yield f"\n[FOLLOW_UPS]: {json.dumps(follow_ups)}"
+
+        # Emit token usage metadata so the frontend/client can display token stats
+        token_stats = get_last_token_stats(user_id)
+        if token_stats:
+            yield f"\n[TOKEN_USAGE]: {json.dumps(token_stats)}"
 
     return StreamingResponse(api_stream_generator(), media_type="text/plain; charset=utf-8")
 

@@ -19,13 +19,17 @@ except ImportError:
     HAS_RAPIDFUZZ = False
 
 try:
-    from llm_router import should_bypass_local_qa
+    from llm_router import should_bypass_local_qa, is_template_recently_served, record_served_template
 except ImportError:
     try:
-        from backend.llm_router import should_bypass_local_qa
+        from backend.llm_router import should_bypass_local_qa, is_template_recently_served, record_served_template
     except ImportError:
-        def should_bypass_local_qa(query: str) -> bool:
+        def should_bypass_local_qa(query: str, session_id: Optional[str] = None) -> bool:
             return len(query.strip().split()) >= 10
+        def is_template_recently_served(session_id: Optional[str], template_key: str, recent_limit: int = 5, chat_history: Optional[List[Dict[str, Any]]] = None) -> bool:
+            return False
+        def record_served_template(session_id: Optional[str], template_key: str) -> None:
+            pass
 
 logger = logging.getLogger(__name__)
 
@@ -120,21 +124,29 @@ class QAEngine:
                         for k, v in data.items():
                             if isinstance(v, dict):
                                 concept = v.get("concept", k.title())
-                                analogy = v.get("simple_analogy", "")
-                                meaning = v.get("core_meaning", "")
-                                impact = v.get("what_it_means", "")
-                                takeaway = v.get("actionable_takeaway", "")
-                                parts = [f"{concept}:", analogy, meaning]
+                                analogy = v.get("analogy") or v.get("simple_analogy", "")
+                                meaning = v.get("core_analysis") or v.get("core_meaning", "")
+                                impact = v.get("dasha_influence") or v.get("what_it_means", "")
+                                takeaway = v.get("recommendation") or v.get("actionable_takeaway", "")
+                                parts = []
+                                if meaning:
+                                    parts.append(f"**Astrological Insight:** {meaning}")
                                 if impact:
-                                    parts.append(f"What it means: {impact}")
+                                    parts.append(f"**Dasha Influence:** {impact}")
                                 if takeaway:
-                                    parts.append(f"Actionable takeaway: {takeaway}")
-                                v_str = " ".join([p for p in parts if p]).strip()
+                                    parts.append(f"**Actionable Advice:** {takeaway}")
+                                v_str = "\n\n".join([p for p in parts if p]).strip()
                                 raw_key = k.strip()
                                 norm_key = normalize_text(raw_key)
                                 self.database[raw_key] = v_str
                                 if norm_key:
                                     self.normalized_keys.append((raw_key, norm_key, v_str))
+                                for kw in v.get("keywords", []):
+                                    kw_raw = str(kw).strip()
+                                    kw_norm = normalize_text(kw_raw)
+                                    if kw_norm and kw_norm not in ("career", "job", "work"):
+                                        self.database[kw_raw] = v_str
+                                        self.normalized_keys.append((kw_raw, kw_norm, v_str))
                             elif isinstance(v, str):
                                 raw_key = k.strip()
                                 norm_key = normalize_text(raw_key)
@@ -211,14 +223,6 @@ class QAEngine:
         if not query or not self.normalized_keys:
             return None
 
-        # Strict Length & Intent Guard for Local QA (< 10 words, no personal intents)
-        if should_bypass_local_qa(query):
-            return None
-
-        words = query.strip().split()
-        if len(words) >= 10:
-            return None
-
         clean_query = normalize_text(query)
         if not clean_query:
             return None
@@ -275,21 +279,21 @@ def intercept_qa(
     user_profile: Optional[Dict[str, Any]] = None,
     threshold: float = 82.0,
     already_greeted: bool = False,
+    session_id: Optional[str] = None,
+    chat_history: Optional[List[Dict[str, Any]]] = None,
 ) -> Optional[str]:
     """
     Public intercept function: returns pre-written answer instantly if similarity >= 82%,
     consuming 0 tokens. Returns None if query does not meet threshold.
     Never greets user more than once if already_greeted is True.
+    Checks state tracking: if template was already served in the active session, returns None
+    to force fallback to LLM pipeline.
     """
     if not prompt:
         return None
 
-    # Strict Length & Intent Guard for Local QA (< 10 words, no personal intents)
-    if should_bypass_local_qa(prompt):
-        return None
-
-    words = prompt.strip().split()
-    if len(words) >= 10:
+    if should_bypass_local_qa(prompt, session_id=session_id):
+        logger.info("intercept_qa: bypassing local QA for compound or complex query '%s'", prompt)
         return None
 
     result = _QA_ENGINE.check_query(
@@ -300,6 +304,14 @@ def intercept_qa(
     )
     if result:
         formatted_answer, score, matched_key = result
+        if is_template_recently_served(session_id, matched_key, chat_history=chat_history):
+            logger.info(
+                "Local QA Intercept '%s' was already served in session '%s'. Forcing fallback to LLM pipeline.",
+                matched_key, session_id or "anonymous"
+            )
+            return None
+
+        record_served_template(session_id, matched_key)
         logger.info(
             "Local QA Intercept Hit! Score=%.1f%%, Key='%s', 0 LLM tokens consumed",
             score, matched_key

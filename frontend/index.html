@@ -1312,6 +1312,7 @@
 
       const rawAge = parseInt(document.getElementById('userAge')?.value, 10);
       const rawTimezone = parseFloat(document.getElementById('timezone')?.value);
+      const birthPlaceVal = (document.getElementById('birthPlace')?.value || '').trim();
       const payload = {
         user_id: USER_ID,
         query: query,
@@ -1322,6 +1323,8 @@
         birth_month: parseInt(document.getElementById('birthMonth')?.value, 10) || 1,
         birth_day: parseInt(document.getElementById('birthDay')?.value, 10) || 1,
         birth_hour: parseFloat(document.getElementById('birthHour')?.value) || 12.0,
+        birth_place: birthPlaceVal || 'New Delhi, India',
+        place: birthPlaceVal || 'New Delhi, India',
         latitude: parseFloat(document.getElementById('latitude')?.value) || 20.5937,
         longitude: parseFloat(document.getElementById('longitude')?.value) || 78.9629,
         timezone: Number.isFinite(rawTimezone) ? rawTimezone : 5.5,
@@ -1369,9 +1372,13 @@
             const chunk = decoder.decode(value, { stream: true });
             streamText += chunk;
 
-            // Strip [FOLLOW_UPS] metadata from visible bubble
-            const markerIdx = streamText.indexOf('[FOLLOW_UPS]:');
-            const displayText = markerIdx !== -1 ? streamText.slice(0, markerIdx).trim() : streamText;
+            // Strip [FOLLOW_UPS] and [TOKEN_USAGE] metadata from visible bubble
+            let cutIdx = streamText.indexOf('[FOLLOW_UPS]:');
+            const tokenIdx = streamText.indexOf('[TOKEN_USAGE]:');
+            if (tokenIdx !== -1 && (cutIdx === -1 || tokenIdx < cutIdx)) {
+              cutIdx = tokenIdx;
+            }
+            const displayText = cutIdx !== -1 ? streamText.slice(0, cutIdx).trim() : streamText;
 
             if (!botMsgContainer) {
               if (typingIndicator) typingIndicator.remove();

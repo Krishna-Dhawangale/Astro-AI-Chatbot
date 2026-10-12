@@ -13,10 +13,13 @@ async function sendChatMessage() {
   const payload = {
     user_id: "user_session_123", // Unique session identifier
     query: query,
+    name: "Seeker",
     birth_year: 2000,
     birth_month: 5,
     birth_day: 15,
     birth_hour: 14.5, // 2:30 PM
+    birth_place: "New Delhi, India",
+    place: "New Delhi, India",
     latitude: 28.6139,
     longitude: 77.2090
   };
@@ -82,10 +85,27 @@ async function sendChatMessage() {
       const chunk = decoder.decode(value, { stream: true });
       streamText += chunk;
 
-      const markerIdx = streamText.indexOf("[FOLLOW_UPS]:");
-      const displayText = markerIdx !== -1 ? streamText.slice(0, markerIdx).trim() : streamText;
+      let cutIdx = streamText.indexOf("[FOLLOW_UPS]:");
+      const tokenIdx = streamText.indexOf("[TOKEN_USAGE]:");
+      if (tokenIdx !== -1 && (cutIdx === -1 || tokenIdx < cutIdx)) {
+        cutIdx = tokenIdx;
+      }
+      const displayText = cutIdx !== -1 ? streamText.slice(0, cutIdx).trim() : streamText;
       botMsgDiv.innerHTML = `<b>Bot:</b> ${displayText}`;
       chatBox.scrollTop = chatBox.scrollHeight;
+    }
+
+    // Cleanly finalize streamed text so it never displays an incomplete sentence fragment
+    let finalCleanText = botMsgDiv.innerHTML.replace(/^<b>Bot:<\/b>\s*/, "").trim();
+    if (finalCleanText && !/[.!?\]\)]$/.test(finalCleanText)) {
+      const lastPunct = Math.max(
+        finalCleanText.lastIndexOf("."),
+        finalCleanText.lastIndexOf("!"),
+        finalCleanText.lastIndexOf("?")
+      );
+      if (lastPunct > 20) {
+        botMsgDiv.innerHTML = `<b>Bot:</b> ${finalCleanText.slice(0, lastPunct + 1).trim()}`;
+      }
     }
 
     // Parse follow-ups from stream or use default
