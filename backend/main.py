@@ -125,9 +125,35 @@ except ImportError:
     from reasoning.decomposer import decompose_and_synthesize_multidomain
 
 try:
-    from backend.reasoning.rule_coverage import evaluate_rule_coverage, get_unsupported_limitation_response
+    from backend.reasoning.rule_coverage import evaluate_rule_coverage, get_unsupported_limitation_response, is_unsupported_boundary_query
 except ImportError:
-    from reasoning.rule_coverage import evaluate_rule_coverage, get_unsupported_limitation_response
+    from reasoning.rule_coverage import evaluate_rule_coverage, get_unsupported_limitation_response, is_unsupported_boundary_query
+
+try:
+    from backend.domain_filter import check_domain_prefilter, FilterAction, OUT_OF_SCOPE_RESPONSE
+except ImportError:
+    from domain_filter import check_domain_prefilter, FilterAction, OUT_OF_SCOPE_RESPONSE
+
+try:
+    from backend.abuse_guardrail import (
+        abuse_tracker,
+        issue_secure_session_token,
+        validate_secure_session_token,
+        attach_session_cookie,
+        SESSION_COOKIE_NAME,
+        WARNING_TEMPLATE,
+        TERMINATED_MESSAGE
+    )
+except ImportError:
+    from abuse_guardrail import (
+        abuse_tracker,
+        issue_secure_session_token,
+        validate_secure_session_token,
+        attach_session_cookie,
+        SESSION_COOKIE_NAME,
+        WARNING_TEMPLATE,
+        TERMINATED_MESSAGE
+    )
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 if BASE_DIR not in sys.path:
@@ -2579,8 +2605,10 @@ def format_local_interpretation_answer(
     )
 
 
-async def _handle_chat_response(request: ChatRequest):
+async def _handle_chat_response(request: ChatRequest, session_id: Optional[str] = None):
     t_start = time.perf_counter()
+    if session_id is None:
+        session_id = request.user_id or "default_user"
 
     if request.user_id not in USER_SESSIONS:
         USER_SESSIONS[request.user_id] = {
@@ -2644,6 +2672,93 @@ async def _handle_chat_response(request: ChatRequest):
         )
         USER_SESSIONS[request.user_id]["history"] = []
     USER_SESSIONS[request.user_id]["birth_key"] = current_birth_key
+
+    # ---------------------------------------------------------------------------
+    # Layer 3 Safety Boundary: Clinical medical diagnosis & death prediction refusals
+    # ---------------------------------------------------------------------------
+    if is_unsupported_boundary_query(request.query):
+        abuse_tracker.record_safety_query(session_id, request.query)
+        unsupported_text = get_unsupported_limitation_response(request.query)
+        USER_SESSIONS[request.user_id]["history"].append({"role": "user", "content": request.query})
+        USER_SESSIONS[request.user_id]["history"].append({"role": "assistant", "content": unsupported_text})
+        print_no_llm_call_report("UNSUPPORTED", "Safety boundary enforced upstream of chart/LLM")
+        record_production_decision_trace(
+            question=request.query, domain="health" if "disease" in request.query.lower() or "medical" in request.query.lower() else "other",
+            selected_model="UNSUPPORTED", domain_confidence=1.0, intent="unsupported", resolved_intent="unsupported",
+            complexity="unsupported", chart_required=False, chart_evidence=[], matched_rules=[],
+            evidence_score=0.0, evidence_status="unsupported", answer_source="UNSUPPORTED", gemini_calls=0,
+            llm_input_tokens=0, llm_output_tokens=0, llm_total_tokens=0, llm_call_details=[], latency_ms=1.5
+        )
+        return JSONResponse(content={
+            "answer": label_answer_source(unsupported_text, "UNSUPPORTED"),
+            "answer_mode": "UNSUPPORTED",
+            "answer_source": "UNSUPPORTED",
+            "intent": "unsupported",
+            "evidence_complete": False,
+            "gemini_calls": 0,
+            "evidence_ids": [],
+            "related_questions": fallback_related_questions(["health"], request.query),
+            "source": "unsupported",
+        })
+
+    # ---------------------------------------------------------------------------
+    # Layer 1 Safety Guardrail: Abuse & Profanity Filtering (Session Isolated)
+    # ---------------------------------------------------------------------------
+    abuse_decision = abuse_tracker.check_message(session_id, request.query)
+    if abuse_decision and abuse_decision.get("blocked"):
+        abuse_msg = abuse_decision.get("message", TERMINATED_MESSAGE)
+        is_term = abuse_decision.get("terminated", False)
+        ans_mode = "TERMINATED" if is_term else "WARNING"
+        ans_source = "ABUSE_LOCKOUT" if is_term else "ABUSE_WARNING"
+        USER_SESSIONS[request.user_id]["history"].append({"role": "user", "content": request.query})
+        USER_SESSIONS[request.user_id]["history"].append({"role": "assistant", "content": abuse_msg})
+        print_no_llm_call_report(ans_mode, f"Abuse guardrail enforced: strikes={abuse_decision.get('strikes')}")
+        record_production_decision_trace(
+            question=request.query, domain="other", selected_model="ABUSE_GUARDRAIL",
+            domain_confidence=1.0, intent="abuse", resolved_intent="abuse",
+            complexity="unsupported", chart_required=False, chart_evidence=[], matched_rules=[],
+            evidence_score=0.0, evidence_status="unsupported", answer_source=ans_source, gemini_calls=0,
+            llm_input_tokens=0, llm_output_tokens=0, llm_total_tokens=0, llm_call_details=[], latency_ms=1.5
+        )
+        return JSONResponse(content={
+            "answer": label_answer_source(abuse_msg, "GUARDRAIL"),
+            "answer_mode": ans_mode,
+            "answer_source": ans_source,
+            "intent": "abuse",
+            "evidence_complete": False,
+            "gemini_calls": 0,
+            "evidence_ids": [],
+            "related_questions": [],
+            "source": "guardrail",
+        })
+
+    # ---------------------------------------------------------------------------
+    # Proposal 2: Conservative Deterministic Domain Pre-Filter
+    # ---------------------------------------------------------------------------
+    filter_decision = check_domain_prefilter(request.query)
+    if filter_decision.action == FilterAction.REJECT_OUT_OF_SCOPE:
+        rejection_text = filter_decision.message or OUT_OF_SCOPE_RESPONSE
+        USER_SESSIONS[request.user_id]["history"].append({"role": "user", "content": request.query})
+        USER_SESSIONS[request.user_id]["history"].append({"role": "assistant", "content": rejection_text})
+        print_no_llm_call_report("UNSUPPORTED", f"Domain pre-filter rejection: {filter_decision.reason}")
+        record_production_decision_trace(
+            question=request.query, domain="other", selected_model="PREFILTER",
+            domain_confidence=1.0, intent="out_of_scope", resolved_intent="out_of_scope",
+            complexity="unsupported", chart_required=False, chart_evidence=[], matched_rules=[],
+            evidence_score=0.0, evidence_status="unsupported", answer_source="OUT_OF_SCOPE_PREFILTER", gemini_calls=0,
+            llm_input_tokens=0, llm_output_tokens=0, llm_total_tokens=0, llm_call_details=[], latency_ms=1.5
+        )
+        return JSONResponse(content={
+            "answer": label_answer_source(rejection_text, "OUT_OF_SCOPE"),
+            "answer_mode": "UNSUPPORTED",
+            "answer_source": "OUT_OF_SCOPE_PREFILTER",
+            "intent": "out_of_scope",
+            "evidence_complete": False,
+            "gemini_calls": 0,
+            "evidence_ids": [],
+            "related_questions": fallback_related_questions(["general"], request.query),
+            "source": "unsupported",
+        })
 
     # Fetch API or local Swiss Ephemeris sidereal signs without blocking the event loop.
     try:
@@ -3256,21 +3371,51 @@ async def _handle_chat_response(request: ChatRequest):
     return StreamingResponse(async_stream_generator(), media_type="text/plain; charset=utf-8")
 
 
-async def _handle_chat(request: ChatRequest):
+def resolve_request_session(raw_request: Optional[Request], fallback_user_id: str) -> Tuple[str, Optional[str]]:
+    """
+    Resolve session ID and determine if a new/rotated cookie token needs to be set.
+    Returns:
+        (session_id: str, token_to_set: Optional[str])
+    """
+    if raw_request is not None and hasattr(raw_request, "cookies"):
+        cookie_val = raw_request.cookies.get(SESSION_COOKIE_NAME)
+        if cookie_val:
+            is_valid, sid, needs_rotation = validate_secure_session_token(cookie_val)
+            if is_valid and sid:
+                if needs_rotation:
+                    new_token = issue_secure_session_token(session_uuid=sid)
+                    return sid, new_token
+                return sid, None
+        # Cookie missing or invalid: issue a new cryptographically signed session
+        new_token = issue_secure_session_token()
+        _, new_sid, _ = validate_secure_session_token(new_token)
+        return new_sid or fallback_user_id or "default_user", new_token
+
+    # Internal test call or non-HTTP request: use fallback_user_id without setting cookie
+    return fallback_user_id or "default_user", None
+
+
+async def _handle_chat(request: ChatRequest, raw_request: Optional[Request] = None):
+    session_id, token_to_set = resolve_request_session(raw_request, request.user_id)
     try:
-        return await _handle_chat_response(request)
+        response = await _handle_chat_response(request, session_id=session_id)
     except asyncio.CancelledError:
         logger.info("Chat request cancelled during startup")
         raise
     except Exception as e:
         logger.error("Chat request error: %s", str(e), exc_info=True)
-        return JSONResponse(content=backend_error_payload(request.query))
+        response = JSONResponse(content=backend_error_payload(request.query))
+
+    if token_to_set:
+        attach_session_cookie(response, token_to_set)
+
+    return response
 
 
 @app.post("/chat")
 @limiter.limit("60/minute")
 async def chat_endpoint(request: Request, chat_request: ChatRequest):
-    return await _handle_chat(chat_request)
+    return await _handle_chat(chat_request, raw_request=request)
 
 
 if __name__ == "__main__":
