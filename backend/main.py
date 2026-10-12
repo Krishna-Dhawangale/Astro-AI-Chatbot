@@ -155,6 +155,23 @@ except ImportError:
         TERMINATED_MESSAGE
     )
 
+try:
+    from backend.faq_engine import (
+        match_educational_faq,
+        is_faq_eligible_query,
+        classify_faq_eligibility,
+        FAQEligibilityOutcome,
+        EXCLUDED_PREDICTIVE_KEYS,
+    )
+except ImportError:
+    from faq_engine import (
+        match_educational_faq,
+        is_faq_eligible_query,
+        classify_faq_eligibility,
+        FAQEligibilityOutcome,
+        EXCLUDED_PREDICTIVE_KEYS,
+    )
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
@@ -688,10 +705,12 @@ def load_qa_database():
                 with open(p, "r", encoding="utf-8") as f:
                     qa_db = json.load(f)
                     for key, entries in qa_db.items():
+                        clean_k = key.lower().strip()
                         if isinstance(entries, str):
-                            keywords = [key.lower().strip()]
+                            keywords = [clean_k]
                             ASTRO_RULE_INDEX.append(("general_and_basics", keywords, entries))
-                            FAQ_INDEX.append((keywords, entries))
+                            if clean_k not in EXCLUDED_PREDICTIVE_KEYS:
+                                FAQ_INDEX.append((keywords, entries))
                         elif isinstance(entries, list):
                             for item in entries:
                                 if not isinstance(item, dict):
@@ -701,7 +720,8 @@ def load_qa_database():
                                 if keywords and guidance:
                                     ASTRO_RULE_INDEX.append((key, keywords, guidance))
                                 if key == "general_and_basics" and keywords and item.get("answer"):
-                                    FAQ_INDEX.append((keywords, item["answer"]))
+                                    if not any(k in EXCLUDED_PREDICTIVE_KEYS for k in keywords):
+                                        FAQ_INDEX.append((keywords, item["answer"]))
                 print(
                     f"[OK] Q&A database loaded from {p} "
                     f"({len(FAQ_INDEX)} FAQ items, {len(ASTRO_RULE_INDEX)} rule items indexed)."
@@ -1087,50 +1107,8 @@ ASTRO_INQUIRY_TERMS = {
 }
 
 def match_faq_only(user_query: str) -> Optional[str]:
-    """Return a local FAQ from the 85+ item database for exact or indexed factual phrases, saving LLM tokens."""
-    if is_direct_fact_query(user_query):
-        return None
-
-    clean_norm = re.sub(r"[^\w\s'-]", " ", normalize_hinglish(user_query).casefold()).strip()
-    clean_raw = re.sub(r"[^\w\s'-]", " ", user_query.casefold()).strip()
-
-    # 1. Exact match against indexed FAQ keywords
-    for keywords, answer_template in FAQ_INDEX:
-        for kw in keywords:
-            normalized_keyword = normalize_hinglish(kw).casefold()
-            normalized_keyword = re.sub(r"[^\w\s'-]", " ", normalized_keyword).strip()
-            raw_keyword = re.sub(r"[^\w\s'-]", " ", kw.casefold()).strip()
-            if clean_norm == normalized_keyword or clean_raw == raw_keyword:
-                return answer_template
-
-    # 2. Standalone greetings (must NOT match substrings in words like 'which')
-    greeting_words = {"hi", "hello", "hey", "namaste", "greetings"}
-    clean_words = clean_raw.split()
-    if clean_raw in greeting_words or (len(clean_words) <= 2 and any(w in greeting_words for w in clean_words)):
-        for keywords, answer_template in FAQ_INDEX:
-            for kw in keywords:
-                if kw.lower() in greeting_words:
-                    return answer_template
-
-    # 3. Dynamic topic match against all indexed FAQ topics (prioritizing longer multi-word phrases)
-    sorted_faqs = sorted(FAQ_INDEX, key=lambda item: max(len(k) for k in item[0]), reverse=True)
-    ignored_single_words = {"what", "when", "will", "tell", "about", "your", "mine", "good", "more", "with"}
-    for keywords, answer_template in sorted_faqs:
-        for kw in keywords:
-            kw_clean = kw.lower().strip()
-            if len(kw_clean) < 4 or kw_clean in ignored_single_words:
-                continue
-            kw_norm = normalize_hinglish(kw_clean).casefold()
-            pattern_raw = r"\b" + re.escape(kw_clean) + r"\b"
-            pattern_norm = r"\b" + re.escape(kw_norm) + r"\b"
-            if (
-                re.search(pattern_raw, clean_raw)
-                or re.search(pattern_raw, clean_norm)
-                or re.search(pattern_norm, clean_norm)
-            ):
-                return answer_template
-
-    return None
+    """Return a local FAQ from the clean database for educational queries, saving LLM tokens."""
+    return match_educational_faq(user_query)
 
 
 def format_personalized_answer(
@@ -2775,11 +2753,9 @@ async def _handle_chat_response(request: ChatRequest, session_id: Optional[str] 
     sun_sign = ZODIAC_SIGNS[int(astro_features[1]) % 12] if len(astro_features) > 1 else "Taurus"
     moon_sign = ZODIAC_SIGNS[int(astro_features[2]) % 12] if len(astro_features) > 2 else "Gemini"
 
-    q_low = request.query.lower()
-    is_personal_chart_q = any(k in q_low for k in ["my chart", "my lagna", "my dasha", "my 10th", "my 7th", "my 2nd", "my 11th", "my house", "my career", "my marriage", "my financial", "my property", "my relationship", "in my chart", "from my chart", "my astrological", "should i", "move from", "transition", "switch", "explain my", "which career"])
-    faq_template = match_faq_only(request.query) if not is_personal_chart_q else None
+    # Proposal 3: Strict FAQ Eligibility Engine (Fast educational & definition lookup)
+    faq_template = match_educational_faq(request.query)
     if faq_template:
-
         answer = format_personalized_answer(
             faq_template,
             asc_sign,
@@ -2793,9 +2769,24 @@ async def _handle_chat_response(request: ChatRequest, session_id: Optional[str] 
         USER_SESSIONS[request.user_id]["history"].append({"role": "user", "content": request.query})
         USER_SESSIONS[request.user_id]["history"].append({"role": "assistant", "content": answer})
         follow_ups = generate_follow_up_questions(request.query, answer)
+        print_no_llm_call_report("FAQ_EDUCATIONAL", "Clean educational FAQ match (0 LLM tokens, 0 ephemeris calls)")
+        record_production_decision_trace(
+            question=request.query, domain="faq_educational", selected_model="FAQ_ENGINE",
+            domain_confidence=1.0, intent="educational_faq", resolved_intent="educational_faq",
+            complexity="faq", chart_required=False, chart_evidence=[], matched_rules=[],
+            evidence_score=1.0, evidence_status="faq_verified", answer_source="FAQ_EDUCATIONAL", gemini_calls=0,
+            llm_input_tokens=0, llm_output_tokens=0, llm_total_tokens=0, llm_call_details=[], latency_ms=1.0
+        )
         return JSONResponse(content={
             "answer": label_answer_source(answer, "Backend"),
+            "answer_mode": "FAQ",
+            "answer_source": "FAQ_EDUCATIONAL",
+            "intent": "educational_faq",
+            "evidence_complete": True,
+            "gemini_calls": 0,
+            "evidence_ids": [],
             "related_questions": follow_ups,
+            "source": "faq",
         })
 
     # Phase 4 Integration: ML Router -> API -> normalize.py -> Reasoning Engine -> Answerability
