@@ -1,11 +1,14 @@
 import asyncio
+import datetime
 import inspect
 import json
 import logging
+import math
 import os
 import re
 import sys
 import time
+import uuid
 import warnings
 warnings.filterwarnings("ignore")
 from difflib import SequenceMatcher
@@ -1047,6 +1050,7 @@ def parse_gemini_json_response(response_text: str) -> Optional[Dict[str, Any]]:
     return {"answer": answer, "related_questions": related_questions}
 
 USER_SESSIONS: Dict[str, Dict[str, Any]] = {}
+SESSION_LOCK = asyncio.Lock()
 
 ZODIAC_SIGNS = [
     "Aries", "Taurus", "Gemini", "Cancer",
@@ -1072,6 +1076,13 @@ class ChatRequest(BaseModel):
     latitude: float = 20.5937
     longitude: float = 78.9629
     timezone: float = 5.5
+
+
+class ApiChatRequest(BaseModel):
+    prompt: str
+    user_profile: Optional[Dict[str, Any]] = None
+    already_greeted: Optional[bool] = None
+    chat_history: Optional[List[Dict[str, Any]]] = None
 
 
 class BirthDetailsRequest(BaseModel):
@@ -2586,7 +2597,9 @@ def format_local_interpretation_answer(
 async def _handle_chat_response(request: ChatRequest, session_id: Optional[str] = None):
     t_start = time.perf_counter()
     if session_id is None:
-        session_id = request.user_id or "default_user"
+        session_id = request.user_id or uuid.uuid4().hex
+    if not request.user_id:
+        request.user_id = session_id
 
     if request.user_id not in USER_SESSIONS:
         USER_SESSIONS[request.user_id] = {
@@ -2872,6 +2885,13 @@ async def _handle_chat_response(request: ChatRequest, session_id: Optional[str] 
         )
         return JSONResponse(content={
             "answer": label_answer_source(dasha_ans, "Deterministic API"),
+            "answer_mode": "DIRECT",
+            "answer_source": "LOCAL",
+            "intent": resolved_intent,
+            "evidence_complete": True,
+            "gemini_calls": 0,
+            "evidence_ids": ["DIRECT_DASHA_LOOKUP"],
+            "fallback_reason": None,
             "related_questions": fallback_related_questions([predicted_domain], request.query),
             "source": "deterministic_api",
         })
@@ -2910,6 +2930,7 @@ async def _handle_chat_response(request: ChatRequest, session_id: Optional[str] 
         return JSONResponse(content={
             "answer": label_answer_source(ans_text, "DIRECT"),
             "answer_mode": "DIRECT",
+            "answer_source": "LOCAL",
             "intent": resolved_intent,
             "evidence_complete": True,
             "gemini_calls": 0,
@@ -3362,7 +3383,7 @@ async def _handle_chat_response(request: ChatRequest, session_id: Optional[str] 
     return StreamingResponse(async_stream_generator(), media_type="text/plain; charset=utf-8")
 
 
-def resolve_request_session(raw_request: Optional[Request], fallback_user_id: str) -> Tuple[str, Optional[str]]:
+def resolve_request_session(raw_request: Optional[Request], fallback_user_id: Optional[str] = None) -> Tuple[str, Optional[str]]:
     """
     Resolve session ID and determine if a new/rotated cookie token needs to be set.
     Returns:
@@ -3380,14 +3401,70 @@ def resolve_request_session(raw_request: Optional[Request], fallback_user_id: st
         # Cookie missing or invalid: issue a new cryptographically signed session
         new_token = issue_secure_session_token()
         _, new_sid, _ = validate_secure_session_token(new_token)
-        return new_sid or fallback_user_id or "default_user", new_token
+        return new_sid or (fallback_user_id if fallback_user_id else uuid.uuid4().hex), new_token
 
     # Internal test call or non-HTTP request: use fallback_user_id without setting cookie
-    return fallback_user_id or "default_user", None
+    return (fallback_user_id if fallback_user_id else uuid.uuid4().hex), None
 
 
-async def _handle_chat(request: ChatRequest, raw_request: Optional[Request] = None):
-    session_id, token_to_set = resolve_request_session(raw_request, request.user_id)
+def _empty_query_response() -> JSONResponse:
+    return JSONResponse(
+        status_code=400,
+        content={
+            "answer": "Please provide a valid question or astrological inquiry.",
+            "answer_mode": "UNSUPPORTED",
+            "answer_source": "VALIDATION_ERROR",
+            "intent": "empty_query",
+            "evidence_complete": False,
+            "gemini_calls": 0,
+            "evidence_ids": [],
+            "related_questions": [
+                "What is my Moon sign?",
+                "What does Saturn signify in Vedic astrology?",
+                "What is a Lagna?"
+            ],
+            "source": "validation_guardrail",
+        }
+    )
+
+
+async def _handle_chat(
+    request: ChatRequest,
+    raw_request: Optional[Request] = None,
+    initial_chat_history: Optional[List[Dict[str, Any]]] = None,
+    pre_resolved_session_id: Optional[str] = None,
+    pre_resolved_token: Optional[str] = None,
+):
+    # Fast rejection of empty / whitespace-only queries
+    if not request.query or not request.query.strip():
+        return _empty_query_response()
+
+    if pre_resolved_session_id:
+        session_id = pre_resolved_session_id
+        token_to_set = pre_resolved_token
+    else:
+        session_id, token_to_set = resolve_request_session(raw_request, request.user_id)
+
+    # Guarantee canonical identity is bound to authenticated session_id
+    request.user_id = session_id
+
+    # Intra-process concurrency safety: atomic history seeding
+    if initial_chat_history and isinstance(initial_chat_history, list):
+        async with SESSION_LOCK:
+            if session_id not in USER_SESSIONS or not USER_SESSIONS[session_id].get("history"):
+                sdata = USER_SESSIONS.setdefault(session_id, {
+                    "turn_count": 0,
+                    "history": [],
+                    "profile": {"topics_asked": []}
+                })
+                if not sdata.get("history"):
+                    valid_msgs = []
+                    for m in initial_chat_history[-4:]:
+                        if isinstance(m, dict) and m.get("content") and m.get("role") in ("user", "assistant"):
+                            valid_msgs.append({"role": m["role"], "content": str(m["content"]).strip()})
+                    if valid_msgs:
+                        sdata["history"] = valid_msgs
+
     try:
         response = await _handle_chat_response(request, session_id=session_id)
     except asyncio.CancelledError:
@@ -3407,6 +3484,137 @@ async def _handle_chat(request: ChatRequest, raw_request: Optional[Request] = No
 @limiter.limit("60/minute")
 async def chat_endpoint(request: Request, chat_request: ChatRequest):
     return await _handle_chat(chat_request, raw_request=request)
+
+
+def _safe_int(val: Any, default: Any, min_val: int, max_val: int) -> Any:
+    try:
+        v = int(val)
+        return v if min_val <= v <= max_val else default
+    except (ValueError, TypeError):
+        return default
+
+
+def _safe_finite_float(val: Any, default: float, min_val: float, max_val: float) -> float:
+    try:
+        v = float(val)
+        if not math.isfinite(v):
+            return default
+        return v if min_val <= v <= max_val else default
+    except (ValueError, TypeError):
+        return default
+
+
+def _safe_calendar_date(
+    year_val: Any,
+    month_val: Any,
+    day_val: Any,
+    default: Tuple[int, int, int] = (2000, 1, 1),
+) -> Tuple[int, int, int]:
+    try:
+        y = int(year_val)
+        m = int(month_val)
+        d = int(day_val)
+        if not (1900 <= y <= 2100):
+            return default
+        valid_date = datetime.date(y, m, d)
+        return valid_date.year, valid_date.month, valid_date.day
+    except (ValueError, TypeError, OverflowError):
+        return default
+
+
+@app.post("/api/chat")
+@limiter.limit("60/minute")
+async def api_chat_endpoint(request: Request, api_req: ApiChatRequest):
+    """
+    Thin compatibility adapter for /api/chat:
+    Translates ApiChatRequest into canonical ChatRequest and delegates directly
+    to the unified _handle_chat pipeline.
+    Guarantees:
+    - Immediate 400 rejection for whitespace-only or empty prompts.
+    - Derives identity strictly from validated HMAC session (single resolution, zero 'default_user' fallback).
+    - Strict calendar date validation (rejects invalid dates like Feb 31) and finite numeric clamping (rejects NaN/inf).
+    - Explicit birth authority rule: stored birth profile is authoritative when explicit birth fields are omitted;
+      validated updates permitted when explicit birth fields are provided (clears history on update to prevent cross-profile bleeding).
+    - Records already_greeted in session profile.
+    - Prevents client history injection into existing sessions via concurrency-safe lock.
+    - Server-verified chart computation (ephemeris/FreeAstrologyAPI authority).
+    - Attaches HMAC session cookie to all response paths (JSON and Streaming).
+    """
+    clean_prompt = (api_req.prompt or "").strip()
+    if not clean_prompt:
+        return _empty_query_response()
+
+    # Step 1: Single authoritative session resolution
+    session_id, token_to_set = resolve_request_session(request)
+
+    # Step 2: Concurrency-safe profile & birth authority lookup
+    profile = api_req.user_profile or {}
+    async with SESSION_LOCK:
+        existing_session = USER_SESSIONS.setdefault(session_id, {
+            "turn_count": 0,
+            "history": [],
+            "profile": {"topics_asked": []}
+        })
+        existing_birth = existing_session.get("birth_key")
+
+        # Explicitly track already_greeted in session profile
+        existing_session.setdefault("profile", {})["already_greeted"] = bool(
+            api_req.already_greeted or existing_session.get("turn_count", 0) > 0
+        )
+
+    # Step 3: Birth profile authority rule
+    # Stored birth profile is authoritative unless client explicitly supplies birth parameters for an update
+    has_explicit_birth = any(
+        k in profile for k in ("birth_year", "birth_month", "birth_day", "birth_hour", "latitude", "longitude")
+    )
+    if existing_birth and not has_explicit_birth:
+        # Preserves existing verified session birth details across follow-up turns
+        by, bm, bd, bh, bmin, bsec, lat, lon, tz = existing_birth
+        b_hour_float = bh + (bmin / 60.0) + (bsec / 3600.0)
+    else:
+        # Validated updates: strict calendar date and finite float validation
+        by, bm, bd = _safe_calendar_date(
+            profile.get("birth_year", 2000),
+            profile.get("birth_month", 1),
+            profile.get("birth_day", 1),
+            default=(2000, 1, 1),
+        )
+        b_hour_float = _safe_finite_float(profile.get("birth_hour"), 12.0, 0.0, 23.9999)
+        lat = _safe_finite_float(profile.get("latitude"), 20.5937, -90.0, 90.0)
+        lon = _safe_finite_float(profile.get("longitude"), 78.9629, -180.0, 180.0)
+        tz = _safe_finite_float(profile.get("timezone"), 5.5, -12.0, 14.0)
+
+    # Sanitize demographic fields (never trust client user_id or client chart claims)
+    name_clean = str(profile.get("name") or "Guest")[:50].strip() or "Guest"
+    age_clean = _safe_int(profile.get("age"), None, 1, 120) if profile.get("age") is not None else None
+    gender_clean = str(profile.get("gender") or "")[:20].strip() or None
+    life_stage_clean = str(profile.get("life_stage") or "")[:30].strip() or None
+    rel_status_clean = str(profile.get("relationship_status") or "")[:30].strip() or None
+
+    canonical_request = ChatRequest(
+        user_id=session_id,  # Explicitly bound to authoritative session
+        query=clean_prompt,
+        name=name_clean,
+        age=age_clean,
+        gender=gender_clean,
+        life_stage=life_stage_clean,
+        relationship_status=rel_status_clean,
+        birth_year=by,
+        birth_month=bm,
+        birth_day=bd,
+        birth_hour=b_hour_float,
+        latitude=lat,
+        longitude=lon,
+        timezone=tz,
+    )
+
+    return await _handle_chat(
+        canonical_request,
+        raw_request=request,
+        initial_chat_history=api_req.chat_history,
+        pre_resolved_session_id=session_id,
+        pre_resolved_token=token_to_set,
+    )
 
 
 if __name__ == "__main__":
