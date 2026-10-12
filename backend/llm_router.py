@@ -1292,7 +1292,7 @@ def format_career_rule_response(
             )
         else:
             p1 = (
-                f"**Astrological Insight:** {intro} for your {asc} Lagna, {lagna_lord} is your Lagna lord—its strengthening stone is {lagna_gem['stone_en']}. "
+                f"**Astrological Insight:** {intro} for your {asc} Lagna, {lagna_lord} is your Lagna lord—its strengthening gemstone is {lagna_gem['stone_en']}. "
                 f"Your 10th house ruler {h10_lord} governs career elevation and responds to {gem_info['stone_en']}, particularly potent during your active {dasha} period."
             )
             p2 = (
@@ -1401,7 +1401,7 @@ def format_career_rule_response(
         else:
             p1 = (
                 f"**Astrological Insight:** {intro} your 10th house falls in {h10_sign}, ruled by {h10_lord}, channeling natural aptitude for {sign_trait_en}. "
-                f"Under your active {dasha} Dasha, your highest-leverage career fields are {spec['fields_en']}."
+                f"Under your active {dasha} Dasha, your highest-leverage vocational career fields are {spec['fields_en']}."
             )
             p2 = (
                 f"**Actionable Advice:** Pursue deep specialization in {h10_lord}-governed domains ({spec['fields_en'].split(',')[0].strip()}) and build a track record of measurable, milestone-driven results. "
@@ -2022,9 +2022,13 @@ def format_local_qa_response(qa_data: dict, user_context: dict) -> str:
     # Substitution parameters for template markers
     subs: Dict[str, Any] = {
         "ascendant": ascendant,
+        "lagna": ascendant,
         "moon_sign": moon_sign,
         "active_dasha": active_dasha,
+        "dasha": active_dasha,
+        "current_dasha": active_dasha,
         "name": user_name or "Seeker",
+        "user_name": user_name or "Seeker",
         "birth_details": birth_details or "",
         "birth_place": birth_place or "",
     }
@@ -2041,9 +2045,8 @@ def format_local_qa_response(qa_data: dict, user_context: dict) -> str:
             subs[h_name] = str(h_val)
 
     # Core aliases for deterministic parameter injection
-    subs["lagna"] = ascendant
-    subs["dasha"] = active_dasha
-    subs["current_dasha"] = active_dasha
+    subs["lagna_lord"] = SIGN_LORDS.get(ascendant, "Venus")
+    subs["ascendant_lord"] = subs["lagna_lord"]
     subs["moon"] = moon_sign
     subs["rashi"] = moon_sign
     subs["sun"] = user_context.get("sun_sign", "")
@@ -2054,10 +2057,12 @@ def format_local_qa_response(qa_data: dict, user_context: dict) -> str:
             subs[f"house_{i}"] = subs[h_key]
             subs[f"house_{i}_lord"] = subs.get(f"{h_key}_lord", "")
             subs[f"house_{i}_sign"] = subs.get(f"{h_key}_sign", "")
+            subs[f"house_{i}_full"] = subs.get(f"{h_key}_full", "")
 
     class SafeDict(dict):
         def __missing__(self, k: str) -> str:
-            return f"{{{k}}}"
+            # Zero Hallucination: Missing astrological parameters are safely omitted
+            return ""
 
     safe_subs = SafeDict(**subs)
 
@@ -2170,29 +2175,56 @@ def get_local_qa_response(
             profile_params = user_profile.model_dump()
 
         lagna = user_natal_context.get("ascendant") or profile_params.get("lagna") or "Libra"
-        sun = profile_params.get("sun_sign") or profile_params.get("sun") or "Aries"
+        sun = profile_params.get("sun_sign") or profile_params.get("sun") or ""
         moon = user_natal_context.get("moon_sign") or profile_params.get("moon_sign") or "Gemini"
         dasha = user_natal_context.get("active_dasha") or profile_params.get("current_dasha") or "Rahu-Mars"
+        u_name = profile_params.get("name") or user_natal_context.get("name") or "Seeker"
+        if u_name.lower() in ("guest", "there", "friend"):
+            u_name = "Seeker"
 
+        rulerships = user_natal_context.get("house_rulerships") or calculate_house_rulerships(lagna)
         format_dict = {
-            "name": profile_params.get("name", "Seeker"),
+            "name": u_name,
+            "user_name": u_name,
             "lagna": lagna,
             "ascendant": lagna,
+            "lagna_lord": SIGN_LORDS.get(lagna, "Venus"),
+            "ascendant_lord": SIGN_LORDS.get(lagna, "Venus"),
             "moon_sign": moon,
             "moon": moon,
+            "rashi": moon,
             "sun_sign": sun,
             "sun": sun,
             "current_dasha": str(dasha),
             "dasha": str(dasha),
             "active_dasha": str(dasha),
-            "jupiter_house": profile_params.get("jupiter_house", "9th House"),
-            "jupiter": profile_params.get("jupiter_house", "9th House"),
+            "jupiter_house": profile_params.get("jupiter_house", ""),
+            "jupiter": profile_params.get("jupiter_house", ""),
+            "birth_details": user_natal_context.get("birth_details", ""),
+            "birth_place": user_natal_context.get("birth_place", ""),
         }
+        for i in range(1, 13):
+            h_key = f"{i}th_house"
+            h_val = rulerships.get(h_key, "")
+            m = re.match(r"^(\w+)\s*\(([^)]+)\)$", str(h_val).strip())
+            lord, sign = (m.group(1), m.group(2)) if m else ("", str(h_val))
+            format_dict[f"house_{i}"] = sign
+            format_dict[f"house_{i}_sign"] = sign
+            format_dict[f"house_{i}_lord"] = lord
+            format_dict[f"house_{i}_full"] = str(h_val)
+            format_dict[h_key] = sign
+            format_dict[f"{h_key}_sign"] = sign
+            format_dict[f"{h_key}_lord"] = lord
+            format_dict[f"{h_key}_full"] = str(h_val)
+
         class SafeDict(dict):
             def __missing__(self, k: str) -> str:
-                return f"{{{k}}}"
+                # Zero Hallucination: Missing parameters safely omitted
+                return ""
         try:
             formatted_answer = template.format_map(SafeDict(**format_dict))
+            formatted_answer = re.sub(r"\(\s*\)", "", formatted_answer)
+            formatted_answer = re.sub(r"\s{2,}", " ", formatted_answer).strip()
         except Exception:
             formatted_answer = template
         record_served_template(session_id, template_key)
@@ -2540,7 +2572,7 @@ def build_system_prompt(
                 f"   - The user is asking specifically about their life partner/spouse's physical, emotional, and professional nature.\n"
                 f"   - Your {_asc} Lagna chart places the 7th house in {_h7_sign} ruled by {_h7_lord}—describe partner personality directly from this sign's nature and {_h7_lord}'s qualities.\n"
                 f"   - Also reference Venus and Jupiter placements to shape emotional and physical partner traits.\n"
-                f"   - DO NOT mention marriage timing, wedding dates, or career path in this response.\n"
+                f"   - DO NOT answer about marriage timing, wedding dates, or career path in this response.\n"
             )
         elif m_intent == "marriage_timing":
             micro_directive = (

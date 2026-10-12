@@ -41,7 +41,7 @@ from urllib3.util import Retry
 
 try:
     from router import DOMAIN_KEYWORDS, IntentRouter, validate_astrology_domain, OUT_OF_SCOPE_RESPONSE
-    from qa_engine import intercept_qa, strip_greeting
+    from qa_engine import intercept_qa, strip_greeting, render_local_template
     from llm_router import (
         stream_chat_response,
         stream_cascading_router,
@@ -91,7 +91,7 @@ try:
     )
 except ImportError:
     from backend.router import DOMAIN_KEYWORDS, IntentRouter, validate_astrology_domain, OUT_OF_SCOPE_RESPONSE
-    from backend.qa_engine import intercept_qa, strip_greeting
+    from backend.qa_engine import intercept_qa, strip_greeting, render_local_template
     from backend.llm_router import (
         stream_chat_response,
         stream_cascading_router,
@@ -1696,19 +1696,13 @@ def check_qa_database(
         if re.search(rf"\b{re.escape(clean_key)}\b", clean_lower):
             if is_template_recently_served(session_id, key, chat_history=chat_history):
                 return None
-            params = profile.model_dump()
-            for src, dst in [("lagna", "ascendant"), ("moon_sign", "moon"), ("sun_sign", "sun"), ("current_dasha", "dasha"), ("jupiter_house", "jupiter")]:
-                if src in params and dst not in params:
-                    params[dst] = params[src]
-                if dst in params and src not in params:
-                    params[src] = params[dst]
-            try:
-                formatted_text = template.format(**params)
-            except Exception:
-                class SafeDict(dict):
-                    def __missing__(self, k):
-                        return f"{{{k}}}"
-                formatted_text = template.format_map(SafeDict(**params))
+            chart_context = user_natal_context if user_natal_context else profile
+            formatted_text = render_local_template(
+                template=template,
+                user_chart_data=chart_context,
+                already_greeted=already_greeted,
+                is_greeting_key=key in ("hello", "hi", "namaste", "hey", "greetings"),
+            )
             record_served_template(session_id, key)
             return formatted_text
 
