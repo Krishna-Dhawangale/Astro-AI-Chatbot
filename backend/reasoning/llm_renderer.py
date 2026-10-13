@@ -109,22 +109,28 @@ def select_relevant_rules(
 
 def compress_rule_conclusion(rule: Dict[str, Any]) -> str:
     """
-    Compresses a verified rule description into lean `Cause→Effect` notation.
-    E.g. '10th lord Mercury in 1st house connects professional identity with personal drive'
-         -> 'Mercury 10L@1H→career initiative & drive'
+    Compresses a verified rule description or its evidence into lean notation.
     """
     r_id = rule.get("rule_id", "").upper()
     r_desc = rule.get("description", "") or rule.get("interpretation_key", "")
-    
+
+    if r_id == "CAREER_10TH_LORD_PLACEMENT":
+        evidence = rule.get("evidence", {})
+        if isinstance(evidence, dict):
+            lord = evidence.get("lord")
+            house_sign = evidence.get("house_rashi")
+            lord_house = evidence.get("lord_natal_house")
+            lord_sign = evidence.get("lord_natal_rashi")
+            if isinstance(lord, str) and lord and isinstance(house_sign, str) and house_sign:
+                conclusion = f"{lord} rules the {house_sign} 10th house"
+                if lord_house is not None:
+                    conclusion += f"; placed in natal house {lord_house}"
+                    if isinstance(lord_sign, str) and lord_sign:
+                        conclusion += f" ({lord_sign})"
+                return conclusion
+
     # Known rule mappings to hyper-compact notation
     known_compact = {
-        "CAREER_10TH_LORD_PLACEMENT": "Mercury 10L@1H→career initiative & drive",
-        "CAREER_KARAKA_PRESENCE": "Mercury 10L→analytical & communication focus",
-        "CAREER_KARAKA_DIGNITY": "Mercury in 1st house→intellectual authority",
-        "CAREER_DASHA_ACTIVATION": "Mars-Rahu Dasha→ambition & professional drive",
-        "CAREER_TRANSIT_ACTIVATION": "Transits→career momentum",
-        "CAREER_DASHA_TRANSIT_COMBINATION": "Dasha+Transits→career growth phase",
-        "CAREER_MULTI_FACTOR_ACTIVATION": "Multi-factor→strong professional alignment",
         "MARRIAGE_7TH_LORD_PLACEMENT": "7L Venus@8H→transformative relationship dynamics",
         "FINANCE_2ND_LORD_PLACEMENT": "2L Jupiter@11H→wealth expansion & gains",
     }
@@ -137,18 +143,10 @@ def compress_rule_conclusion(rule: Dict[str, Any]) -> str:
         
     # Generic compression heuristics for unmapped rules
     desc_clean = r_desc
-    for prefix in [
-        "10th lord Mercury in 1st house connects ",
-        "Active Mars-Rahu period brings ",
-        "The placement of ",
-        "This placement indicates "
-    ]:
+    for prefix in ["The placement of ", "This placement indicates "]:
         if desc_clean.startswith(prefix):
             desc_clean = desc_clean[len(prefix):]
-            
-    desc_clean = desc_clean.replace(" connects professional identity with personal drive", "→career initiative & drive")
-    desc_clean = desc_clean.replace("brings high ambition and enterprise", "→ambition & enterprise")
-    
+
     if "->" not in desc_clean and "→" not in desc_clean:
         parts = desc_clean.split(" suggest")
         if len(parts) > 1:
@@ -200,10 +198,27 @@ def build_compact_evidence_package(
 
     # Domain specific essential facts
     if dom == "career" or "career" in q_low or "job" in q_low or "profession" in q_low:
-        merc_data = planets.get("Mercury", {})
-        h_pos = merc_data.get("house") if merc_data else 1
-        verified_facts["10H"] = "Gemini"
-        verified_facts["10L"] = f"Mercury@{h_pos}H"
+        tenth_lord_rule = next(
+            (
+                rule for rule in matched_rules
+                if rule.get("rule_id") == "CAREER_10TH_LORD_PLACEMENT"
+                and rule.get("matched", True)
+            ),
+            None,
+        )
+        rule_evidence = tenth_lord_rule.get("evidence", {}) if tenth_lord_rule else {}
+        if isinstance(rule_evidence, dict):
+            house_sign = rule_evidence.get("house_rashi")
+            lord = rule_evidence.get("lord")
+            if isinstance(house_sign, str) and house_sign and isinstance(lord, str) and lord:
+                verified_facts["10H"] = house_sign
+                verified_facts["10L"] = lord
+                lord_house = rule_evidence.get("lord_natal_house")
+                if lord_house is not None:
+                    verified_facts["10L_placement"] = f"{lord_house}H"
+                    lord_sign = rule_evidence.get("lord_natal_rashi")
+                    if isinstance(lord_sign, str) and lord_sign:
+                        verified_facts["10L_placement"] += f" ({lord_sign})"
     elif dom == "marriage" or "marriage" in q_low or "relationship" in q_low:
         ven_data = planets.get("Venus", {})
         h_pos = ven_data.get("house") if ven_data else 8
@@ -250,10 +265,10 @@ def format_llm_assisted_prompt(question: str, evidence_package: Dict[str, Any]) 
     rules = evidence_package.get("selected_rules", [])
 
     facts_parts = [f"{k}={v}" for k, v in facts.items()]
-    facts_str = "; ".join(facts_parts) if facts_parts else "Chart facts verified"
+    facts_str = "; ".join(facts_parts) if facts_parts else "No verified chart facts available"
 
     rule_parts = [compress_rule_conclusion(r) for r in rules]
-    rules_str = "; ".join(rule_parts) if rule_parts else "Standard astrological alignment"
+    rules_str = "; ".join(rule_parts) if rule_parts else "No matched rules available"
 
     prompt = (
         f"Q: {question}\n\n"

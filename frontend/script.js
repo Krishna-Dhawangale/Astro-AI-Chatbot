@@ -86,6 +86,42 @@ function appendSafeUserMessage(chatBox, text, doc = document) {
   return userMsgDiv;
 }
 
+/**
+ * Cleanly extracts display text by trimming [FOLLOW_UPS], [FOLLOW_UP], and [TOKEN_USAGE] markers,
+ * and ensures the text ends at a complete sentence boundary if truncated.
+ */
+function finalizeStreamedText(streamText) {
+  if (typeof streamText !== "string" || !streamText) {
+    return "";
+  }
+  const markers = ["[FOLLOW_UPS]:", "[FOLLOW_UP]:", "[TOKEN_USAGE]:"];
+  let cutIdx = -1;
+  for (const m of markers) {
+    const idx = streamText.indexOf(m);
+    if (idx !== -1 && (cutIdx === -1 || idx < cutIdx)) {
+      cutIdx = idx;
+    }
+  }
+  let displayText = cutIdx !== -1 ? streamText.slice(0, cutIdx).trim() : streamText.trim();
+
+  // If text is truncated mid-sentence, trim back to the last complete sentence punctuation
+  if (displayText && !/[.!?\]\)]$/.test(displayText)) {
+    const lastPunct = Math.max(
+      displayText.lastIndexOf("."),
+      displayText.lastIndexOf("!"),
+      displayText.lastIndexOf("?")
+    );
+    if (lastPunct > 20) {
+      let endIdx = lastPunct + 1;
+      while (endIdx < displayText.length && /[*_)'"\]]/.test(displayText[endIdx])) {
+        endIdx++;
+      }
+      displayText = displayText.slice(0, endIdx).trim();
+    }
+  }
+  return displayText;
+}
+
 async function sendChatMessage() {
   const queryInput = document.getElementById("user-query");
   const chatBox = document.getElementById("chat-box");
@@ -174,11 +210,21 @@ async function sendChatMessage() {
       const chunk = decoder.decode(value, { stream: true });
       streamText += chunk;
 
-      const markerIdx = streamText.indexOf("[FOLLOW_UPS]:");
-      const displayText = markerIdx !== -1 ? streamText.slice(0, markerIdx).trim() : streamText;
+      let cutIdx = -1;
+      for (const m of ["[FOLLOW_UPS]:", "[FOLLOW_UP]:", "[TOKEN_USAGE]:"]) {
+        const idx = streamText.indexOf(m);
+        if (idx !== -1 && (cutIdx === -1 || idx < cutIdx)) {
+          cutIdx = idx;
+        }
+      }
+      const displayText = cutIdx !== -1 ? streamText.slice(0, cutIdx).trim() : streamText;
       renderSafeBotMessage(botMsgDiv, displayText);
       chatBox.scrollTop = chatBox.scrollHeight;
     }
+
+    // Cleanly finalize streamed text so it never displays an incomplete sentence fragment
+    const finalCleanText = finalizeStreamedText(streamText);
+    renderSafeBotMessage(botMsgDiv, finalCleanText);
 
     // Parse follow-ups from stream or use default
     let followUps = null;
@@ -206,5 +252,6 @@ if (typeof module !== "undefined" && module.exports) {
     renderSafeBotMessage,
     appendSafeUserMessage,
     sendChatMessage,
+    finalizeStreamedText,
   };
 }

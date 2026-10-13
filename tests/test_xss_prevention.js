@@ -193,7 +193,8 @@ class MockDocument {
 const {
   parseSafeMarkdownToFragment,
   renderSafeBotMessage,
-  appendSafeUserMessage
+  appendSafeUserMessage,
+  finalizeStreamedText
 } = require("../frontend/script.js");
 
 const mockDoc = new MockDocument();
@@ -409,6 +410,63 @@ runTest("User message preserves consecutive messages without wiping DOM listener
   assert.strictEqual(chatBox.childNodes.length, 2);
   assert.strictEqual(chatBox.childNodes[0], msg1, "First message node identity preserved");
   assert.strictEqual(chatBox.childNodes[1], msg2, "Second message node identity preserved");
+});
+
+// -------------------------------------------------------------------
+// Category 5: Stream Finalizer and Token Usage Trimming (DOM Integration)
+// -------------------------------------------------------------------
+console.log("\n[Category 5: Stream Finalizer and Token Usage Trimming (DOM Integration)]");
+
+runTest("DOM rendering: Cut [TOKEN_USAGE] and [FOLLOW_UPS] markers without leaking to DOM", () => {
+  const rawStream = "Your **Mercury** placement indicates intellectual pursuits. [TOKEN_USAGE]: {\"prompt_tokens\": 120} [FOLLOW_UPS]: [\"What next?\"]";
+  const cleaned = finalizeStreamedText(rawStream);
+  const botMsgDiv = mockDoc.createElement("div");
+  renderSafeBotMessage(botMsgDiv, cleaned, mockDoc);
+
+  assert.strictEqual(botMsgDiv.textContent, "Bot: Your Mercury placement indicates intellectual pursuits.");
+  assert.strictEqual(botMsgDiv.getElementsByTagName("strong").length, 1);
+  assert.strictEqual(botMsgDiv.getElementsByTagName("strong")[0].textContent, "Mercury");
+  assert.strictEqual(botMsgDiv.textContent.includes("[TOKEN_USAGE]"), false);
+  assert.strictEqual(botMsgDiv.textContent.includes("[FOLLOW_UPS]"), false);
+});
+
+runTest("DOM rendering: Support [FOLLOW_UP]: marker variant cleanly", () => {
+  const rawStream = "Guidance confirmed. [FOLLOW_UP]: [\"Career question\"]";
+  const cleaned = finalizeStreamedText(rawStream);
+  const botMsgDiv = mockDoc.createElement("div");
+  renderSafeBotMessage(botMsgDiv, cleaned, mockDoc);
+
+  assert.strictEqual(botMsgDiv.textContent, "Bot: Guidance confirmed.");
+  assert.strictEqual(botMsgDiv.textContent.includes("[FOLLOW_UP]"), false);
+});
+
+runTest("DOM rendering: Trims mid-sentence cutoff across multiple sentences and strips unsafe tags", () => {
+  const truncatedStream = "Sentence one. **Sentence two.** Incomplete sentence with <script>alert(1)</script>";
+  const cleaned = finalizeStreamedText(truncatedStream);
+  const botMsgDiv = mockDoc.createElement("div");
+  renderSafeBotMessage(botMsgDiv, cleaned, mockDoc);
+
+  assert.strictEqual(botMsgDiv.getElementsByTagName("script").length, 0);
+  assert.strictEqual(botMsgDiv.getElementsByTagName("strong").length, 1);
+  assert.strictEqual(botMsgDiv.textContent, "Bot: Sentence one. Sentence two.");
+});
+
+runTest("DOM rendering: Preserves streams with no terminal punctuation without wiping content", () => {
+  const noPunctStream = "Your Jupiter indicates strong career momentum";
+  const cleaned = finalizeStreamedText(noPunctStream);
+  const botMsgDiv = mockDoc.createElement("div");
+  renderSafeBotMessage(botMsgDiv, cleaned, mockDoc);
+
+  assert.strictEqual(botMsgDiv.textContent, "Bot: Your Jupiter indicates strong career momentum");
+});
+
+runTest("DOM rendering: Legitimate text containing 'follow up' or 'token' is NOT truncated", () => {
+  const legitText = "Please follow up with your mentor regarding this career token.";
+  const cleaned = finalizeStreamedText(legitText);
+  const botMsgDiv = mockDoc.createElement("div");
+  renderSafeBotMessage(botMsgDiv, cleaned, mockDoc);
+
+  assert.strictEqual(botMsgDiv.textContent, "Bot: Please follow up with your mentor regarding this career token.");
 });
 
 // -------------------------------------------------------------------

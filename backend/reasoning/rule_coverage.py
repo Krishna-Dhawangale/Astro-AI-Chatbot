@@ -43,14 +43,29 @@ EXACT_LOCAL_RULE_INTENTS = {
     "dasha_career_interaction",
     "dasha_marriage_interaction",
     "career_suitability",
+    "career_general",
+    "career_business",
+    "career_job",
+    "career_timing",
     "10th_lord_placement",
     "career_indicators",
+    "marriage_general",
     "7th_lord_placement",
     "marriage_timing",
     "relationship_stability",
     "financial_potential",
+    "finance_general",
+    "financial_stability",
+    "wealth",
+    "income",
     "2nd_lord_placement",
     "11th_lord_placement",
+    "education_general",
+    "education_suitability",
+    "education_higher",
+    "5th_house_learning",
+    "4th_lord_education",
+    "5th_lord_education",
     "direct_fact",
     "lagna_sign",
     "moon_sign",
@@ -129,8 +144,14 @@ def evaluate_rule_coverage(
     health_kws = ["health", "wellbeing", "vitality", "energy", "fatigue", "tired", "sleep", "routine", "overthink", "stress", "rest", "physical strength", "weakness", "emotional stability", "relaxing my mind", "moon placement", "sun placement", "self-care", "mahadasha", "antardasha"]
     is_health_query = dom == "health" or ent.startswith("health") or any(k in q_low for k in health_kws)
 
-    intent_match = ent in EXACT_LOCAL_RULE_INTENTS or is_health_query or any(
-        k in q_low for k in ["dasha", "mahadasha", "lagna", "10th lord", "7th lord", "moon sign", "which career"]
+    edu_kws = ["education", "study", "learning", "college", "degree", "higher education", "technical education", "school", "academic", "5th house", "4th house"]
+    is_edu_query = dom == "education" or ent.startswith("education") or any(k in q_low for k in edu_kws)
+
+    intent_match = (
+        ent in EXACT_LOCAL_RULE_INTENTS
+        or is_health_query
+        or is_edu_query
+        or any(k in q_low for k in ["dasha", "mahadasha", "lagna", "10th lord", "7th lord", "2nd lord", "5th house", "10th house", "moon sign", "which career", "technical education", "higher education"])
     )
 
     # 3. Exact Rule Match Evaluation
@@ -155,6 +176,8 @@ def evaluate_rule_coverage(
         rules_assigned = active_rule_ids
         if is_health_query and not rules_assigned:
             rules_assigned = ["HEALTH_LAGNA_VITALITY", "HEALTH_6TH_LORD_WELLNESS", "HEALTH_12TH_HOUSE_REST", "HEALTH_DASHA_ENERGY"]
+        elif is_edu_query and not rules_assigned:
+            rules_assigned = ["EDUCATION_4TH_LORD_PLACEMENT", "EDUCATION_5TH_LORD_PLACEMENT", "EDUCATION_KARAKA_PRESENCE"]
         return {
             "domain_match": domain_match,
             "intent_match": True,

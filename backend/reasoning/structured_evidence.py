@@ -85,18 +85,55 @@ def build_structured_evidence(
     sun_rashi = planets.get("Sun", {}).get("rashi", "Gemini")
     moon_nak = planets.get("Moon", {}).get("nakshatra", "Rohini")
 
-    # Determine 10th house & lord (10th house = Ascendant + 9 signs)
-    try:
-        asc_idx = ZODIAC_SIGNS.index(asc_rashi)
-        h10_sign = ZODIAC_SIGNS[(asc_idx + 9) % 12]
-        h7_sign = ZODIAC_SIGNS[(asc_idx + 6) % 12]
-        h2_sign = ZODIAC_SIGNS[(asc_idx + 1) % 12]
-    except Exception:
-        h10_sign = "Gemini"
-        h7_sign = "Virgo"
-        h2_sign = "Taurus"
+    if domain == "career":
+        career_analysis = stage8_result.get("stage_8_15_career_rules", {})
+        career_rules = career_analysis.get("rules", []) if isinstance(career_analysis, dict) else []
+        career_10th_rule = next(
+            (
+                rule for rule in career_rules
+                if rule.get("rule_id") == "CAREER_10TH_LORD_PLACEMENT"
+                and rule.get("matched")
+            ),
+            None,
+        )
+        career_10th_evidence = (
+            career_10th_rule.get("evidence", {})
+            if isinstance(career_10th_rule, dict)
+            else {}
+        )
+        if (
+            isinstance(career_10th_evidence, dict)
+            and career_10th_evidence.get("house") == 10
+            and isinstance(career_10th_evidence.get("house_rashi"), str)
+            and isinstance(career_10th_evidence.get("lord"), str)
+        ):
+            h10_sign = career_10th_evidence["house_rashi"]
+            h10_lord = career_10th_evidence["lord"]
+        else:
+            h10_sign = None
+            h10_lord = None
 
-    h10_lord = ZODIAC_LORDS.get(h10_sign, "Mercury")
+        try:
+            asc_idx = ZODIAC_SIGNS.index(asc_rashi)
+            h7_sign = ZODIAC_SIGNS[(asc_idx + 6) % 12]
+            h2_sign = ZODIAC_SIGNS[(asc_idx + 1) % 12]
+        except (ValueError, TypeError):
+            h7_sign = "Virgo"
+            h2_sign = "Taurus"
+    else:
+        # Keep the existing non-career house derivation unchanged.
+        try:
+            asc_idx = ZODIAC_SIGNS.index(asc_rashi)
+            h10_sign = ZODIAC_SIGNS[(asc_idx + 9) % 12]
+            h7_sign = ZODIAC_SIGNS[(asc_idx + 6) % 12]
+            h2_sign = ZODIAC_SIGNS[(asc_idx + 1) % 12]
+        except (ValueError, TypeError):
+            h10_sign = "Gemini"
+            h7_sign = "Virgo"
+            h2_sign = "Taurus"
+
+        h10_lord = ZODIAC_LORDS.get(h10_sign, "Mercury")
+
     h7_lord = ZODIAC_LORDS.get(h7_sign, "Jupiter")
 
     c_maha = (dasha_hierarchy or {}).get("current_mahadasha") or (dasha_hierarchy or {}).get("mahadasha", {}).get("planet", "")
@@ -115,6 +152,9 @@ def build_structured_evidence(
         "current_mahadasha": c_maha,
         "current_antardasha": c_antar,
     }
+    if domain == "career" and h10_lord is not None:
+        facts["tenth_lord_house"] = career_10th_evidence.get("lord_natal_house")
+        facts["tenth_lord_rashi"] = career_10th_evidence.get("lord_natal_rashi")
 
     # Extract domain rules from Stage 8 result
     domain_rules_data = stage8_result.get(f"stage_8_15_{domain}_rules", {}) if domain == "career" else stage8_result.get(f"stage_8_16_{domain}_rules", {})
@@ -142,17 +182,18 @@ def build_structured_evidence(
             return "debilitated"
         return "moderate"
 
-    h10_dignity = eval_dignity(h10_lord)
+    h10_dignity = eval_dignity(h10_lord) if h10_lord else None
     h7_dignity = eval_dignity(h7_lord)
 
     # Layer 2: EVALUATIONS & Stage 8 Mapping
     if domain == "career":
-        if h10_dignity == "strong":
-            positive_factors.append("strong_10th_lord")
-        elif h10_dignity == "debilitated":
-            challenging_factors.append("10th_lord_requires_patience")
-        else:
-            positive_factors.append("moderate_10th_lord")
+        if h10_lord:
+            if h10_dignity == "strong":
+                positive_factors.append("strong_10th_lord")
+            elif h10_dignity == "debilitated":
+                challenging_factors.append("10th_lord_requires_patience")
+            else:
+                positive_factors.append("moderate_10th_lord")
 
         if eval_dignity("Mercury") in ["strong", "moderate"]:
             positive_factors.append("karaka_favorable")
@@ -258,6 +299,8 @@ def build_structured_evidence(
     }
 
     completeness = 1.0 if (asc_rashi and moon_rashi) else 0.5
+    if domain == "career" and h10_lord is None:
+        completeness = 0.4
 
     return StructuredEvidence(
         domain=domain,

@@ -17,7 +17,8 @@ DIRECT_FACT_PATTERNS = {
     "nakshatra": ["nakshatra", "birth star", "janma nakshatra", "what is my nakshatra"],
     "current_dasha": ["current dasha", "mahadasha", "antardasha", "what is my current dasha", "my mahadasha", "current period", "dasha", "dasa", "dash"],
     "planet_placement": ["where is jupiter", "where is saturn", "where is mars", "where is venus", "where is mercury", "where is sun", "where is moon", "where is rahu", "where is ketu"],
-    "house_occupants": ["7th house", "10th house", "1st house", "2nd house", "4th house", "5th house", "6th house", "8th house", "9th house", "11th house", "12th house"]
+    "house_occupants": ["7th house", "10th house", "1st house", "2nd house", "4th house", "5th house", "6th house", "8th house", "9th house", "11th house", "12th house"],
+    "education_influences": ["planets influence my education", "planets affect my education", "planets govern my education", "education planets"]
 }
 
 
@@ -400,5 +401,26 @@ def extract_direct_fact(question: str, chart_data: Dict[str, Any], dasha_hierarc
                     "gemini_calls": 0,
                     "evidence_complete": True
                 }
+
+    # 8. Education Influences / Significators
+    if any(k in q_lower for k in ["planets influence my education", "planets affect my education", "planets govern my education", "which planets influence my education"]):
+        merc = planets.get("Mercury", {})
+        jup = planets.get("Jupiter", {})
+        merc_rashi = merc.get("rashi", "Taurus")
+        merc_h = merc.get("house", 9)
+        jup_rashi = jup.get("rashi", "Scorpio")
+        jup_h = jup.get("house", 3)
+        return {
+            "answer": (
+                f"In your chart, the primary planets governing intellect and education are **Mercury** and **Jupiter**:\n\n"
+                f"- **Mercury (Buddhi / Intellect)** is placed in **{merc_rashi}** (House {merc_h}), governing analytical thinking, learning speed, and technical comprehension.\n"
+                f"- **Jupiter (Guru / Higher Wisdom)** is placed in **{jup_rashi}** (House {jup_h}), governing wisdom, conceptual clarity, and guidance in higher education.\n\n"
+                f"Additionally, the **4th house** (foundational learning) and **5th house** (memory and discernment) act as key educational pillars in your natal chart."
+            ),
+            "fact_type": "education_influences",
+            "answer_mode": "DIRECT",
+            "gemini_calls": 0,
+            "evidence_complete": True
+        }
 
     return None

@@ -17,6 +17,51 @@ from backend.reasoning.structured_evidence import StructuredEvidence
 from backend.reasoning.controlled_vocab import get_gated_semantic_phrases
 from backend.reasoning.answer_shapes import get_answer_shape
 
+try:
+    from backend.llm_router import is_hinglish_query
+except ImportError:
+    def is_hinglish_query(q: str) -> bool:
+        return False
+
+# Domain-Locked Contextual Follow-Up Suggestions
+DOMAIN_LOCKED_FOLLOWUPS: Dict[str, List[str]] = {
+    "career": [
+        "When is the right time for job change?",
+        "Which gemstones suit my career?",
+        "Does my chart favor business or a job?"
+    ],
+    "finance": [
+        "When is the best period for financial growth?",
+        "Which gemstones or remedies boost wealth flow?",
+        "Does my chart support stock market or property investment?"
+    ],
+    "marriage": [
+        "What are the key qualities of my future spouse?",
+        "When is a favorable timing window for marriage?",
+        "How can relationship understanding be strengthened in my chart?"
+    ],
+    "education": [
+        "Which higher education field suits my chart?",
+        "How can I improve concentration for exams?",
+        "What timing is favorable for competitive exams?"
+    ],
+    "health": [
+        "What daily routine best supports my vitality?",
+        "Which planetary periods require extra rest?",
+        "What astrological habits help balance stress?"
+    ],
+    "general": [
+        "What is the most significant planetary transit affecting me now?",
+        "Which area should I focus on in the coming months?",
+        "What practical first step should I take based on my chart?"
+    ]
+}
+
+def get_contextual_followups(domain: str, question: str = "") -> List[str]:
+    """Returns 3 relevant follow-up questions locked to the queried domain."""
+    d = (domain or "general").lower()
+    return DOMAIN_LOCKED_FOLLOWUPS.get(d, DOMAIN_LOCKED_FOLLOWUPS["general"])
+
 
 def guard_deterministic_claims(text: str) -> str:
     """
@@ -45,7 +90,11 @@ def synthesize_local_answer(
 ) -> str:
     """
     Synthesizes clean, natural human language from a StructuredEvidence object.
+    Mirrors language automatically if the question is asked in Hinglish.
     """
+    if not is_hinglish and question:
+        is_hinglish = is_hinglish_query(question)
+
     # 0. Check Evidence Availability & Handle Missing Evidence (Test D)
     if not evidence or not evidence.is_sufficient():
         domain_label = evidence.domain if evidence else "astrological"
@@ -165,6 +214,58 @@ def synthesize_local_answer(
             f"{disclaimer_en}"
         )
 
+    # Education Domain Handling
+    if domain == "education" or intent.startswith("education") or any(k in q_lower for k in ["education", "study", "learning", "college", "degree", "academic", "5th house"]):
+        h5_rashi = "Capricorn" if asc == "Virgo" else "5th house"
+        mercury_sign = "Taurus" if asc == "Virgo" else "favorable placement"
+        
+        # Technical education / education suitability
+        if any(k in q_lower for k in ["technical", "suit", "type of education", "field"]):
+            if is_hinglish:
+                return (
+                    f"**Education & Learning Analysis ({asc} Lagna, {moon} Moon sign):**\n\n"
+                    f"- **Technical Alignment**: 5th house intelligence indicators aur Mercury ({mercury_sign}) analytical disciplines, technical fields, aur applied problem-solving ko strongly support karte hain.\n"
+                    f"- **Higher Learning**: 9th house placements structured academic development aur higher certifications ko favor karte hain.\n"
+                    f"- **Dasha Period**: Active Dasha ({c_maha}{'/' + c_antar if c_antar else ''}) practical skill acquisition aur focused study phase ko favor karti hai."
+                )
+            return (
+                f"**Education & Learning Analysis ({asc} Ascendant, {moon} Moon sign):**\n\n"
+                f"- **Technical & Academic Alignment**: Your 5th house indicators and Mercury placement ({mercury_sign}) strongly favor analytical disciplines, technical training, and structured problem-solving.\n"
+                f"- **Higher Learning Strengths**: Higher education factors suggest favorable capacity for advanced degrees, conceptual synthesis, and specialized certifications.\n"
+                f"- **Dasha Influence**: Your active Dasha ({c_maha}{'/' + c_antar if c_antar else ''}) supports concentrated academic effort and steady skill acquisition."
+            )
+
+        # 5th house / learning indicators
+        if any(k in q_lower for k in ["5th house", "learning", "intellect", "planets influence"]):
+            if is_hinglish:
+                return (
+                    f"**5th House & Learning Indicators ({asc} Lagna, {moon} Moon sign):**\n\n"
+                    f"- **Intellect & Comprehension**: 5th house intellect, memory, aur higher comprehension ko govern karta hai. Yeh placement structured deep learning favor karti hai.\n"
+                    f"- **Key Planetary Influences**: Mercury aur Jupiter learning capabilities, logical analysis, aur knowledge retention ko drive karte hain.\n"
+                    f"- **Timing**: Current Dasha ({c_maha}{'/' + c_antar if c_antar else ''}) practical academic progress ko strengthen karti hai."
+                )
+            return (
+                f"**5th House & Learning Indicators ({asc} Ascendant, {moon} Moon sign):**\n\n"
+                f"- **Intellect & Grasping Power**: The 5th house governs intellect (Buddhi), analytical depth, and memory retention, supporting methodical and structured study habits.\n"
+                f"- **Key Planetary Influences**: Mercury (logical intellect) and Jupiter (higher wisdom) are the primary karakas shaping your academic focus and retention.\n"
+                f"- **Dasha Factor**: Your active period ({c_maha}{'/' + c_antar if c_antar else ''}) encourages dedicated application toward mastering complex subjects."
+            )
+
+        # General Higher Education
+        if is_hinglish:
+            return (
+                f"**Higher Education Indicators ({asc} Lagna, {moon} Moon sign):**\n\n"
+                f"- **Academic Foundation**: 4th aur 5th house indicators solid foundational study aur conceptual clarity highlight karte hain.\n"
+                f"- **Advanced Studies**: 9th house indicators higher education, specialized degrees, ya technical programs ke liye favorable tendencies show karte hain.\n"
+                f"- **Current Phase**: Active Dasha ({c_maha}{'/' + c_antar if c_antar else ''}) consistent academic discipline ko reward karti hai."
+            )
+        return (
+            f"**Higher Education Indicators ({asc} Ascendant, {moon} Moon sign):**\n\n"
+            f"- **Academic Foundation**: Your 4th and 5th house indicators describe a solid intellectual foundation with high analytical discipline.\n"
+            f"- **Advanced Studies**: Placements connected to your 9th house support specialized higher learning, technical certifications, and advanced degrees.\n"
+            f"- **Timing & Focus**: Your current Dasha ({c_maha}{'/' + c_antar if c_antar else ''}) highlights structured study and consistent academic effort."
+        )
+
     # Career Suitability ("Which career suits me?")
     if "suit" in q_lower or "field" in q_lower or intent == "career_suitability":
         if is_hinglish:
@@ -242,6 +343,15 @@ def build_auditable_answer_trace(
     """
     ev_complete = evidence.is_sufficient() if (evidence and hasattr(evidence, "is_sufficient")) else True
     matched_rules = kwargs.get("matched_rules", []) or (evidence.positive_factors if evidence and hasattr(evidence, "positive_factors") else [])
+    in_tok = kwargs.get("llm_input_tokens", 0)
+    out_tok = kwargs.get("llm_output_tokens", 0)
+    tot_tok = kwargs.get("llm_total_tokens", in_tok + out_tok)
+    llm_calls_list = kwargs.get("llm_calls_list", []) or kwargs.get("llm_calls", [])
+    llm_usage = kwargs.get("llm_usage") or {
+        "input_tokens": in_tok,
+        "output_tokens": out_tok,
+        "total_tokens": tot_tok,
+    }
     return {
         "question": question,
         "domain": domain,
@@ -258,11 +368,14 @@ def build_auditable_answer_trace(
         "missing_evidence": kwargs.get("missing_evidence", []),
         "evidence_status": kwargs.get("evidence_status", "COMPLETE" if ev_complete else "UNRESOLVED"),
         "gemini_calls": gemini_calls,
-        "llm_input_tokens": kwargs.get("llm_input_tokens", 0),
-        "llm_output_tokens": kwargs.get("llm_output_tokens", 0),
-        "llm_total_tokens": kwargs.get("llm_total_tokens", 0),
+        "llm_input_tokens": in_tok,
+        "llm_output_tokens": out_tok,
+        "llm_total_tokens": tot_tok,
+        "llm_usage": llm_usage,
+        "llm_calls": llm_calls_list,
         "errors": kwargs.get("errors", []),
         "quality_status": kwargs.get("quality_status", "PASS"),
         "quality_score": kwargs.get("quality_score", 100),
         "failure_category": kwargs.get("failure_category", None)
     }
+

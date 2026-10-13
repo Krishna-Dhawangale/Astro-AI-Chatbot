@@ -620,3 +620,438 @@ async def stream_cascading_router(
         "status": "fallback",
         "attempts": execution_attempts,
     })
+
+
+# ===========================================================================
+# MULTI-DOMAIN DETECTION & HYBRID MODULAR RAG (Krishna Integration)
+# ===========================================================================
+
+_QA_DB_CACHE: Optional[Dict[str, str]] = None
+
+DOMAIN_KEYWORD_SIGNALS: Dict[str, List[str]] = {
+    "career": [
+        "career", "careers", "job", "jobs", "profession", "work", "promotion",
+        "business", "boss", "colleague", "office", "workplace", "company",
+        "interview", "corporate", "employment", "freelance"
+    ],
+    "finance": [
+        "finance", "finances", "money", "wealth", "investment", "investments",
+        "savings", "income", "debt", "loan", "share market", "stock", "stocks",
+        "shares", "trading", "lottery", "cash", "bank balance", "earning", "earnings"
+    ],
+    "marriage": [
+        "marriage", "wedding", "love", "spouse", "partner", "relationship",
+        "relationships", "husband", "wife", "marital", "divorce", "separation",
+        "manglik", "mangal dosha", "compatibility"
+    ],
+    "health": [
+        "health", "disease", "illness", "fitness", "stress", "burnout", "anxiety",
+        "mental stress", "mental peace", "recovery", "medicine", "wellness", "sleep",
+        "chronic", "healing", "vitality"
+    ],
+    "gemstones": [
+        "gemstone", "gemstones", "ratna", "ruby", "pearl", "emerald",
+        "yellow sapphire", "blue sapphire", "diamond", "coral", "gomed",
+        "cat's eye", "stone", "stones", "crystal", "crystals"
+    ],
+    "education": [
+        "education", "study", "studies", "exam", "exams", "college", "degree",
+        "university", "school", "learning", "academic", "student"
+    ],
+    "travel": [
+        "travel", "travels", "journey", "abroad", "foreign", "visa",
+        "relocation", "relocate", "migration", "overseas", "settlement"
+    ],
+    "spirituality": [
+        "mantra", "puja", "pooja", "temple", "pitra dosha", "kaal sarp",
+        "sade sati", "shani shanti", "spiritual", "spirituality", "ishta devata",
+        "moksha", "dharma", "meditation"
+    ]
+}
+
+DOMAIN_QA_KEYS: Dict[str, List[str]] = {
+    "career": [
+        "career_timing", "career_probability", "career_domain_fit",
+        "career house", "10th house", "career prediction", "job change",
+        "promotion", "business vs job", "government job", "government job yoga", "6th house"
+    ],
+    "finance": [
+        "finance_timing", "finance_risk", "wealth_accumulation",
+        "financial stability", "dhan yoga", "lakshmi yoga", "share market",
+        "lottery or windfall", "debt remedies", "remedies for debt", "2nd house", "11th house"
+    ],
+    "marriage": [
+        "marriage_timing", "partner_profile", "relationship_compatibility", "relationship_mitigation",
+        "remedies for marriage delay", "which astrological remedies can resolve relationship delays?",
+        "marriage house", "love marriage", "arranged marriage",
+        "mangal dosha", "divorce or separation",
+        "kundali milan", "7th house", "navamsha"
+    ],
+    "health": [
+        "health_timing", "health_mitigation",
+        "health house", "health remedies", "mental stress", "remedies for mental peace",
+        "chronic illness", "1st house", "6th house", "8th house", "maha mrityunjaya mantra"
+    ],
+    "gemstones": [
+        "gemstone_recommendation", "gemstone_wearing_rules",
+        "gemstones for career"
+    ],
+    "education": [
+        "education_field_fit", "exam_timing_success", "study_abroad",
+        "education house", "higher education", "competitive exams",
+        "mercury for education", "5th house", "4th house"
+    ],
+    "travel": [
+        "foreign_travel_timing", "foreign_settlement_fit", "travel_obstacle_mitigation",
+        "foreign settlement", "foreign travel", "travel abroad",
+        "can astrology predict foreign travel", "will i travel abroad", "rahu foreign travel",
+        "9th house", "12th house"
+    ],
+    "spirituality": [
+        "ishta_devata_guidance", "karmic_dosha_mitigation", "spiritual_growth_dharma",
+        "ishta devata", "gayatri mantra", "maha mrityunjaya mantra",
+        "kaal sarp dosha", "pitra dosha", "sade sati", "jupiter remedies"
+    ]
+}
+
+
+def load_qa_database() -> Dict[str, str]:
+    """Loads and caches the local QA database."""
+    global _QA_DB_CACHE
+    if _QA_DB_CACHE is not None:
+        return _QA_DB_CACHE
+
+    candidate_paths = [
+        os.path.join(BASE_DIR, "qa_database.json"),
+        os.path.join(BASE_DIR, "..", "qa_database.json"),
+        os.path.join(os.getcwd(), "qa_database.json"),
+    ]
+    for p in candidate_paths:
+        if os.path.isfile(p):
+            try:
+                with open(p, "r", encoding="utf-8") as f:
+                    _QA_DB_CACHE = json.load(f)
+                    return _QA_DB_CACHE
+            except Exception as e:
+                logger.warning("Failed to parse QA database at %s: %s", p, e)
+
+    _QA_DB_CACHE = {}
+    return _QA_DB_CACHE
+
+
+def is_hinglish_query(text: str) -> bool:
+    """Detects if a query is in Hinglish."""
+    if not text:
+        return False
+    if re.search(r"[\u0900-\u097F]", text):
+        return True
+
+    text_lower = text.lower().strip()
+    hindi_phrases = [
+        "kab milegi", "kab milega", "kab hogi", "kab hoga", "kaisa rahega", "kaisi rahegi",
+        "kaisa hoga", "kaisi hogi", "bata do", "bataiye na", "theek hai", "thik hai",
+        "paise aayenge", "paisa aayega", "job milegi", "naukri kab", "shaadi kab", "shadi kab",
+        "ke baare me", "ke bare me", "ke baare mein", "ke bare mein", "kya hai", "kya hoga",
+        "kya ho", "kaise kare", "kaise karein", "kya karu", "kya karun", "kya karna",
+        "kaun sa", "kaun si", "kon sa", "kon si"
+    ]
+    for phrase in hindi_phrases:
+        if phrase in text_lower:
+            return True
+
+    hindi_grammar_markers = {
+        "aap", "aapka", "aapki", "aapke", "apka", "apki", "apke",
+        "mera", "meri", "mere", "mujhe", "mujhko", "hum", "humara", "humari", "humare",
+        "tum", "tumhara", "tumhari", "tumhare", "tera", "teri", "tere", "apna", "apni", "apne",
+        "hai", "hain", "hein", "hoon", "hun", "tha", "thi",
+        "hoga", "hogi", "hoge", "honge", "rahega", "rahegi", "rahenge",
+        "raha", "rahi", "rahe", "karo", "kare", "karein", "karna", "karta", "karti", "karte",
+        "batao", "bataiye", "bataye", "bata", "btao", "btaye", "boliye", "bolo",
+        "dekh", "dekho", "dekhiye", "chahiye", "chaiye", "sakta", "sakti", "sakte",
+        "milega", "milegi", "milege", "badhega", "badhegi", "lagta", "lagti", "lagte",
+        "aayega", "aayegi", "kya", "kyaa", "kab", "kabb", "kaise", "kaisa", "kaisi",
+        "kyun", "kyu", "kyon", "kaha", "kahan", "kitna", "kitni", "kitne"
+    }
+    words = re.findall(r"\b[a-zA-Z]+\b", text_lower)
+    return any(w in hindi_grammar_markers for w in words)
+
+
+def detect_query_domains(query: str) -> List[str]:
+    """Scans the query for domain signals and returns all matching domains."""
+    if not query:
+        return []
+    normalized = query.lower()
+    matched_domains: List[str] = []
+
+    for domain, keywords in DOMAIN_KEYWORD_SIGNALS.items():
+        for kw in keywords:
+            pattern = r"\b" + re.escape(kw) + r"\b"
+            if re.search(pattern, normalized):
+                if domain not in matched_domains:
+                    matched_domains.append(domain)
+                break
+
+    return matched_domains
+
+
+def is_multi_domain_query(query: str) -> bool:
+    """Returns True if the query explicitly spans 2 or more life domains."""
+    return len(detect_query_domains(query)) >= 2
+
+
+def extract_modular_domain_evidence(
+    query: str,
+    detected_domains: Optional[List[str]] = None,
+    qa_db: Optional[Dict[str, str]] = None
+) -> Dict[str, List[str]]:
+    """Extracts verified rules from qa_database.json modularly for each detected domain."""
+    qa = qa_db or load_qa_database()
+    if not detected_domains:
+        detected_domains = detect_query_domains(query)
+
+    q_lower = query.lower() if query else ""
+    modular_evidence: Dict[str, List[str]] = {}
+
+    stop_words = {
+        "for", "in", "the", "a", "an", "of", "to", "or", "and", "is", "my",
+        "your", "what", "which", "are", "remedy", "remedies", "house", "can",
+        "any", "how", "does", "do", "tell", "me", "about", "best", "give", "please"
+    }
+
+    for domain in detected_domains:
+        domain_rules: List[str] = []
+        target_keys = DOMAIN_QA_KEYS.get(domain, [])
+
+        # Priority 1: Specific sub-phrase / keyword match
+        for key in target_keys:
+            if key in qa:
+                sig_words = [w for w in key.split() if w not in stop_words]
+                is_match = (key in q_lower) or (bool(sig_words) and all(w in q_lower for w in sig_words))
+                if is_match:
+                    rule_text = qa[key].strip()
+                    if rule_text not in domain_rules:
+                        domain_rules.append(rule_text)
+
+        # Priority 2: Domain base rule fallback
+        if not domain_rules:
+            for key in target_keys:
+                if len(domain_rules) >= 1:
+                    break
+                if key in qa:
+                    rule_text = qa[key].strip()
+                    if rule_text not in domain_rules:
+                        domain_rules.append(rule_text)
+
+        if domain_rules:
+            modular_evidence[domain] = domain_rules[:2]
+
+    return modular_evidence
+
+
+def format_multidomain_evidence_context(domain_evidence: Dict[str, List[str]]) -> str:
+    """Formats modular domain evidence into clean Markdown context for LLM prompt."""
+    lines = []
+    for domain, rules in domain_evidence.items():
+        lines.append(f"### Domain: {domain.upper()}")
+        for idx, r in enumerate(rules, 1):
+            lines.append(f"{idx}. {r}")
+        lines.append("")
+    return "\n".join(lines).strip()
+
+
+def get_hybrid_multidomain_system_instruction(is_hinglish: bool = False) -> str:
+    """Returns the system instruction for Hybrid Multi-Domain RAG with strict language mirroring."""
+    if is_hinglish:
+        lang_rule = (
+            "5. LANGUAGE REQUIREMENT (CRITICAL): The user asked in Hinglish.\n"
+            "   You MUST respond entirely in conversational, natural Hinglish.\n"
+            "   Keep section labels in English bold: **Astrological Insight:** and **Actionable Advice:**.\n"
+            "   Do NOT respond in pure English."
+        )
+    else:
+        lang_rule = (
+            "5. LANGUAGE REQUIREMENT (CRITICAL): The user asked in English.\n"
+            "   You MUST respond entirely in professional English.\n"
+            "   Keep section labels in English bold: **Astrological Insight:** and **Actionable Advice:**.\n"
+            "   Do NOT use Hindi or Hinglish words."
+        )
+
+    return f"""You are a seasoned Vedic Astrologer providing a multi-domain consultation in a warm, empathetic, professional 'AstroTalk-style' tone.
+You are given verified astrological rules and principles extracted modularly from our local database for each queried domain.
+
+STRICT INSTRUCTIONS:
+1. Grounding: You must strictly ground your synthesis in the provided modular domain evidence. Never invent imaginary planetary degrees or unverified external claims.
+2. Cohesive Synthesis: Weave the disparate domains into a single, seamless, harmonious reading.
+3. Strict 5-7 Line Layout: You MUST format your response into exactly these two sections:
+**Astrological Insight:** [Synthesized multi-domain insight explaining how the queried domains interact and align]
+**Actionable Advice:** [Grounded next steps and practical guidance across the queried areas]
+4. Brevity: Keep the total output to 5-7 lines (~55-80 words). Do NOT add extra chit-chat, conversational filler, or trailing notes.
+{lang_rule}
+"""
+
+
+async def synthesize_hybrid_multidomain_rag(
+    query: str,
+    detected_domains: Optional[List[str]] = None,
+    qa_db: Optional[Dict[str, str]] = None,
+    custom_httpx_client: Optional[httpx.AsyncClient] = None,
+    custom_gemini_client: Optional[Any] = None,
+    is_hinglish: Optional[bool] = None,
+) -> Tuple[str, Dict[str, Any]]:
+    """
+    Synthesizes a cohesive multi-domain response using local database facts + cascading LLM.
+    """
+    if is_hinglish is None:
+        is_hinglish = is_hinglish_query(query)
+
+    domains = detected_domains or detect_query_domains(query)
+    if not domains:
+        domains = ["career"]
+
+    modular_evidence = extract_modular_domain_evidence(query, domains, qa_db)
+    evidence_context = format_multidomain_evidence_context(modular_evidence)
+
+    if is_hinglish:
+        synthesis_req = "Please synthesize these verified domain rules into a cohesive 5-7 line reading in conversational Hinglish."
+    else:
+        synthesis_req = "Please synthesize these verified domain rules into a cohesive 5-7 line reading in English."
+
+    llm_prompt = f"""USER QUERY:
+{query}
+
+MODULAR ASTROLOGICAL RULES & FACTS (GROUND TRUTH):
+{evidence_context}
+
+{synthesis_req}"""
+
+    fallback_insight_parts = []
+    fallback_advice_parts = []
+    for d in domains:
+        if d == "career":
+            fallback_insight_parts.append("your 10th-house career alignment supports professional growth")
+            fallback_advice_parts.append("focus on structured career milestones")
+        elif d == "finance":
+            fallback_insight_parts.append("wealth indicators show steady financial stability")
+            fallback_advice_parts.append("maintain disciplined savings")
+        elif d == "health":
+            fallback_insight_parts.append("vitality remains balanced with proper routine")
+            fallback_advice_parts.append("prioritize morning wellness and mental peace")
+        elif d == "gemstones":
+            fallback_insight_parts.append("benefic gemstones can energize key house lords")
+            fallback_advice_parts.append("seek suitable energization timing")
+        elif d == "marriage":
+            fallback_insight_parts.append("relationship houses encourage mutual trust")
+            fallback_advice_parts.append("foster open communication")
+        else:
+            fallback_insight_parts.append(f"{d} indicators show steady harmony")
+
+    local_fallback_reading = (
+        f"**Astrological Insight:** Based on your birth chart, {', and '.join(fallback_insight_parts)}.\n"
+        f"**Actionable Advice:** {'; '.join(fallback_advice_parts).capitalize()}."
+    )
+
+    active_model = "local_rules"
+    raw_response_chunks = []
+    decision_meta: Dict[str, Any] = {}
+
+    system_inst = get_hybrid_multidomain_system_instruction(is_hinglish=is_hinglish)
+
+    router_gen = stream_cascading_router(
+        prompt=llm_prompt,
+        system_prompt=system_inst,
+        max_output_tokens=180,
+        temperature=0.3,
+        custom_httpx_client=custom_httpx_client,
+        custom_gemini_client=custom_gemini_client,
+        local_fallback_text=local_fallback_reading,
+    )
+
+    async for chunk_text, meta in router_gen:
+        if meta:
+            decision_meta = meta
+            if meta.get("model"):
+                active_model = meta.get("model")
+        if chunk_text:
+            raw_response_chunks.append(chunk_text)
+
+    assembled_text = "".join(raw_response_chunks).strip()
+    cleaned_body = trim_to_last_sentence(assembled_text)
+    hybrid_badge = f"[Local Database + LLM - {active_model}]"
+    final_output = f"{cleaned_body}\n\n{hybrid_badge}"
+
+    result_meta = {
+        "status": "success",
+        "domains_detected": domains,
+        "primary_domain": domains[0] if domains else "career",
+        "modular_evidence_count": sum(len(v) for v in modular_evidence.values()),
+        "active_model": active_model,
+        "hybrid_badge": hybrid_badge,
+        "decision_meta": decision_meta,
+        "is_hinglish": is_hinglish,
+    }
+
+    return final_output, result_meta
+
+
+async def stream_hybrid_multidomain_rag(
+    query: str,
+    detected_domains: Optional[List[str]] = None,
+    qa_db: Optional[Dict[str, str]] = None,
+    custom_httpx_client: Optional[httpx.AsyncClient] = None,
+    custom_gemini_client: Optional[Any] = None,
+    is_hinglish: Optional[bool] = None,
+) -> AsyncGenerator[Tuple[str, Dict[str, Any]], None]:
+    """Streaming generator for hybrid multi-domain RAG."""
+    if is_hinglish is None:
+        is_hinglish = is_hinglish_query(query)
+
+    domains = detected_domains or detect_query_domains(query)
+    if not domains:
+        domains = ["career"]
+
+    modular_evidence = extract_modular_domain_evidence(query, domains, qa_db)
+    evidence_context = format_multidomain_evidence_context(modular_evidence)
+
+    if is_hinglish:
+        synthesis_req = "Please synthesize these verified domain rules into a cohesive 5-7 line reading in conversational Hinglish."
+    else:
+        synthesis_req = "Please synthesize these verified domain rules into a cohesive 5-7 line reading in English."
+
+    llm_prompt = f"""USER QUERY:
+{query}
+
+MODULAR ASTROLOGICAL RULES & FACTS (GROUND TRUTH):
+{evidence_context}
+
+{synthesis_req}"""
+
+    active_model = "deterministic_synthesis"
+    emitted_chunks: List[str] = []
+
+    system_inst = get_hybrid_multidomain_system_instruction(is_hinglish=is_hinglish)
+
+    router_gen = stream_cascading_router(
+        prompt=llm_prompt,
+        system_prompt=system_inst,
+        max_output_tokens=180,
+        temperature=0.3,
+        custom_httpx_client=custom_httpx_client,
+        custom_gemini_client=custom_gemini_client,
+    )
+
+    async for chunk_text, meta in router_gen:
+        if meta and meta.get("model"):
+            active_model = meta.get("model")
+        if chunk_text:
+            emitted_chunks.append(chunk_text)
+            yield (chunk_text, {"status": "streaming", "model": active_model, "domains": domains, "is_hinglish": is_hinglish})
+
+    hybrid_badge = f"\n\n[Local Database + LLM - {active_model}]"
+    yield (hybrid_badge, {
+        "status": "completed",
+        "model": active_model,
+        "domains": domains,
+        "hybrid_badge": hybrid_badge.strip(),
+        "is_hinglish": is_hinglish,
+        "full_text": "".join(emitted_chunks).strip() + hybrid_badge
+    })

@@ -47,8 +47,8 @@ def test_node_xss_suite():
     if result.stderr:
         print(result.stderr, file=sys.stderr)
     assert result.returncode == 0, f"Node XSS test suite failed with code {result.returncode}"
-    assert "TOTAL TESTS: 15 | PASSED: 15 | FAILED: 0" in result.stdout
-    print("  [OK] All 15 frontend XSS and streaming security tests passed successfully!")
+    assert "TOTAL TESTS: 20 | PASSED: 20 | FAILED: 0" in result.stdout
+    print("  [OK] All 20 frontend XSS and streaming security tests passed successfully!")
 
 
 if __name__ == "__main__":
