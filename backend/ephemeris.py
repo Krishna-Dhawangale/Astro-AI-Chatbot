@@ -85,10 +85,51 @@ def get_astronomical_features(year: int, month: int, day: int, hour: float, lat:
     return _approximate_planetary_signs(year, month, day, hour)
 
 
+NAKSHATRAS = [
+    "Ashwini", "Bharani", "Krittika", "Rohini", "Mrigashira", "Ardra",
+    "Punarvasu", "Pushya", "Ashlesha", "Magha", "Purva Phalguni", "Uttara Phalguni",
+    "Hasta", "Chitra", "Swati", "Vishakha", "Anuradha", "Jyeshtha",
+    "Mula", "Purva Ashadha", "Uttara Ashadha", "Shravana", "Dhanishta", "Shatabhisha",
+    "Purva Bhadrapada", "Uttara Bhadrapada", "Revati"
+]
+
 NAKSHATRA_LORDS = [
     "Ketu", "Venus", "Sun", "Moon", "Mars",
     "Rahu", "Jupiter", "Saturn", "Mercury"
 ]
+
+
+def calculate_offline_moon_nakshatra(year: int, month: int, day: int, hour: float, lat: float = 20.5937, lon: float = 78.9629) -> dict:
+    """
+    Offline calculation of Moon's Sidereal Nakshatra, Pada, and Lord
+    derived from Moon longitude using Swiss Ephemeris or astronomical math.
+    """
+    moon_deg = 60.0
+    if HAS_SWISSEPH and swe is not None:
+        try:
+            swe.set_sid_mode(swe.SIDM_LAHIRI)
+            julian_day = swe.julday(year, month, day, hour)
+            res = swe.calc_ut(julian_day, swe.MOON, swe.FLG_SIDEREAL)
+            moon_deg = res[0][0] if isinstance(res[0], (list, tuple)) else res[0]
+        except Exception:
+            pass
+    else:
+        signs = _approximate_planetary_signs(year, month, day, hour)
+        moon_sign_idx = signs[2] if len(signs) > 2 else 1
+        moon_deg = (moon_sign_idx * 30.0) + 15.0
+
+    nak_span = 360.0 / 27.0
+    nak_idx = int(moon_deg // nak_span) % 27
+    nak_name = NAKSHATRAS[nak_idx]
+    pada = int((moon_deg % nak_span) // (nak_span / 4.0)) + 1
+    lord = NAKSHATRA_LORDS[nak_idx % 9]
+    return {
+        "nakshatra": nak_name,
+        "nakshatra_pada": f"Pada {pada}",
+        "nakshatra_lord": lord,
+        "longitude": round(moon_deg, 2)
+    }
+
 
 
 def calculate_vimshottari_dasha_offline(year: int, month: int, day: int, hour: float, lat: float, lon: float) -> dict:

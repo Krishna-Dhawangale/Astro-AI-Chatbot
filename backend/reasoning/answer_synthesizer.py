@@ -183,9 +183,41 @@ def synthesize_local_answer(
             f"- **Core Indicator & Strengths**: " + (positives[0] if positives else "Your placements support steady skill consolidation and structured execution.")
         )
 
-    # Dasha & Timing Interaction ("How does my Dasha affect my career?")
-    if any(k in q_lower for k in ["dasha", "period", "timing", "when"]) or "dasha" in intent:
-        if domain == "marriage":
+    # Marriage Decision / Suitability ("mai shadi karu ya nahi", "should i marry")
+    if domain == "marriage" and (any(k in q_lower for k in ["karu", "karun", "decision", "single", "chahiye"]) or intent in ["marriage_decision", "marriage_suitability"]):
+        if is_hinglish:
+            return (
+                f"**Marriage Suitability & Decision ({asc} Lagna, {moon} Moon sign):**\n\n"
+                f"- **Partnership vs Autonomy**: Aapka 1st house (self) aur 7th-house alignment batata hai ki marriage aapke liye grounding aur maturity la sakti hai.\n"
+                f"- **Emotional Harmony**: {moon} Moon placement ke according ek sensible aur supportive life partner aapki emotional stability ko enrich karega.\n"
+                f"- **Astrological Recommendation**: Chart marriage ko favor karta hai ba-sharte aap mutual understanding aur intellectual wavelength match hone ke baad decision lein."
+            )
+        return (
+            f"**Marriage Suitability & Decision ({asc} Ascendant, {moon} Moon sign):**\n\n"
+            f"- **Partnership vs Autonomy**: Your 1st house self-indicators and 7th-house partnership axis suggest marriage provides grounding and emotional maturity.\n"
+            f"- **Emotional Harmony**: With your Moon in {moon}, selecting a partner who shares your intellectual values supports long-term harmony.\n"
+            f"- **Astrological Guidance**: Your chart favors formal union over remaining single, provided you prioritize mutual respect and emotional patience."
+        )
+
+    # Marriage Probability / Vivah Yoga ("mere shadi hone ke asar hai ya nahi", "chances of marriage")
+    if domain == "marriage" and (any(k in q_lower for k in ["asar", "chance", "probability", "yog", "hogi ya nahi", "hoga ya nahi"]) or intent in ["marriage_probability"]):
+        if is_hinglish:
+            return (
+                f"**Marriage Probability & Vivah Yoga ({asc} Lagna, {moon} Moon sign):**\n\n"
+                f"- **Vivah Yoga Presence**: Aapki birth chart mein 7th-house aur benefic planetary influences strong Vivah Yoga create karte hain; lifelong denial ke koi indicators nahi hain.\n"
+                f"- **Obstacles & Delay Mitigation**: Agar delay ho raha hai, toh yeh transit testing phase hai jo 7th lord ko strengthen karne aur Jupiter/Venus ke favorable transit aane par dissolve ho jata hai.\n"
+                f"- **Likelihood**: Chart marriage ke high positive probability ko support karta hai."
+            )
+        return (
+            f"**Marriage Probability & Vivah Yoga ({asc} Ascendant, {moon} Moon sign):**\n\n"
+            f"- **Vivah Yoga Formation**: Your chart exhibits supportive Vivah Yoga through your 7th house and benefic relationship karakas; there is no indication of lifelong denial.\n"
+            f"- **Mitigating Delays**: Any temporary obstacles stem from transit testing phases, which resolve as favorable Dasha sub-periods activate your partnership axis.\n"
+            f"- **Overall Probability**: Your chart maintains strong, positive probability for a fulfilling marriage."
+        )
+
+    # Dasha & Timing Interaction ("How does my Dasha affect my career?", "meri shadi kab hogi")
+    if any(k in q_lower for k in ["dasha", "period", "timing", "when", "kab", "timeline"]) or "dasha" in intent or "timing" in intent:
+        if domain == "marriage" or any(k in q_lower for k in ["shadi", "shaadi", "vivah", "marriage", "wedding"]):
             if is_hinglish:
                 return (
                     f"**Marriage Timing & Dasha:** Aapki active Dasha ({c_maha}{'/' + c_antar if c_antar else ''}) relationship house factors ko highlight karti hai. "

@@ -31,6 +31,22 @@ def resolve_intent_overlay(question: str, raw_intent: str, raw_confidence: float
     """
     q_lower = question.lower().strip()
 
+    # 0. Fine-grained Multi-Domain Micro-Intent Classification
+    try:
+        from ..qa_router import classify_micro_intent
+    except (ImportError, ValueError):
+        try:
+            from qa_router import classify_micro_intent
+        except ImportError:
+            classify_micro_intent = None
+
+    if classify_micro_intent:
+        micro_res = classify_micro_intent(question)
+        if micro_res.get("is_ambiguous"):
+            return "multi_domain", f"ambiguous_micro_intents ({'+'.join(micro_res.get('candidate_intents', []))})"
+        if micro_res.get("confidence", 0.0) >= 0.40 and micro_res.get("micro_intent") != "general":
+            return micro_res["micro_intent"], f"micro_intent_nlp_engine ({micro_res['micro_intent']}, conf={micro_res['confidence']})"
+
     # 1. Multi-domain & Temporal signal detection
     dasha_signal = any(k in q_lower for k in ["dasha", "mahadasha", "antardasha", "dasas"])
     timing_signal = any(k in q_lower for k in ["right now", "now", "currently", "this year", "presently", "current period", "near future"])

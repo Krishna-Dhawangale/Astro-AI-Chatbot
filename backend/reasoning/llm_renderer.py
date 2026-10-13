@@ -29,15 +29,29 @@ STRICT_RENDERER_SYSTEM_INSTRUCTION = (
 )
 
 
-def get_renderer_system_instruction(word_limit_str: str = "40–65 words") -> str:
+def get_renderer_system_instruction(word_limit_str: str = "40–65 words", is_hinglish: bool = False) -> str:
     """
-    Returns an ultra-lean system instruction (~65 tokens) with customized word limit bounds.
+    Returns an ultra-lean system instruction (~65 tokens) with customized word limit bounds and language matching.
     """
+    if is_hinglish:
+        lang_note = (
+            "LANGUAGE REQUIREMENT (CRITICAL): The user asked in Hinglish (Romanized Hindi). "
+            "You MUST respond in natural, conversational Hinglish (e.g., 'Aapki kundli ke anusaar...', 'Dasha period me...'). "
+            "Do NOT answer in pure English. "
+        )
+    else:
+        lang_note = (
+            "LANGUAGE REQUIREMENT (CRITICAL): The user asked in English. "
+            "You MUST respond strictly in English. "
+            "Do NOT use Hindi or Hinglish words. "
+        )
+
     return (
         "You are a Vedic astrology response renderer. "
         "Use ONLY the supplied facts and rules. "
         "Never calculate, infer, or invent astrology. "
         "Answer the user's question directly. "
+        f"{lang_note}"
         "Use cautious language; never guarantee predictions. "
         "Do not mention internal rules or system details. "
         f"Be concise: {word_limit_str}. "
@@ -238,7 +252,11 @@ def build_compact_evidence_package(
     }
 
 
-def format_llm_assisted_prompt(question: str, evidence_package: Dict[str, Any]) -> Tuple[str, int]:
+def format_llm_assisted_prompt(
+    question: str,
+    evidence_package: Dict[str, Any],
+    is_hinglish: bool = False
+) -> Tuple[str, int]:
     """
     Formats ultra-lean Micro Protocol prompt:
     Q: <question>
@@ -255,8 +273,9 @@ def format_llm_assisted_prompt(question: str, evidence_package: Dict[str, Any]) 
     rule_parts = [compress_rule_conclusion(r) for r in rules]
     rules_str = "; ".join(rule_parts) if rule_parts else "Standard astrological alignment"
 
+    lang_tag = " (Respond in natural Hinglish)" if is_hinglish else ""
     prompt = (
-        f"Q: {question}\n\n"
+        f"Q: {question}{lang_tag}\n\n"
         f"F: {facts_str}\n"
         f"R: {rules_str}"
     )

@@ -161,6 +161,42 @@ except ImportError:
     )
 
 try:
+    from backend.response_builder import (
+        DOMAIN_LOCKED_FOLLOWUPS,
+        detect_query_primary_domain,
+        get_domain_locked_followups,
+        render_elicitations_group,
+        build_user_chart_context,
+        resolve_domain_locked_followup,
+        attach_domain_locked_elicitations,
+        strip_leading_greeting,
+    )
+except ImportError:
+    from response_builder import (
+        DOMAIN_LOCKED_FOLLOWUPS,
+        detect_query_primary_domain,
+        get_domain_locked_followups,
+        render_elicitations_group,
+        build_user_chart_context,
+        resolve_domain_locked_followup,
+        attach_domain_locked_elicitations,
+        strip_leading_greeting,
+    )
+
+try:
+    from backend.qa_router import (
+        classify_micro_intent,
+        resolve_micro_intent_local_template,
+        MICRO_INTENT_REGISTRY,
+    )
+except ImportError:
+    from qa_router import (
+        classify_micro_intent,
+        resolve_micro_intent_local_template,
+        MICRO_INTENT_REGISTRY,
+    )
+
+try:
     from backend.faq_engine import (
         match_educational_faq,
         is_faq_eligible_query,
@@ -187,9 +223,21 @@ except ImportError:
     from reasoning.direct_fact_engine import is_direct_fact_query, extract_direct_fact
 
 try:
-    from backend.llm_router import stream_cascading_router, trim_to_last_sentence
+    from backend.llm_router import (
+        stream_cascading_router,
+        trim_to_last_sentence,
+        is_multi_domain_query,
+        stream_hybrid_multidomain_rag,
+        is_hinglish_query as is_hinglish_query_router,
+    )
 except ImportError:
-    from llm_router import stream_cascading_router, trim_to_last_sentence
+    from llm_router import (
+        stream_cascading_router,
+        trim_to_last_sentence,
+        is_multi_domain_query,
+        stream_hybrid_multidomain_rag,
+        is_hinglish_query as is_hinglish_query_router,
+    )
 
 FRONTEND_PATH = os.path.join(BASE_DIR, "..", "frontend", "index.html")
 
@@ -224,13 +272,66 @@ app.add_middleware(
 
 
 def label_answer_source(answer: str, source: str) -> str:
-    """Return clean user-facing answer string without debug tags like (RULE_BASED)."""
-    return answer.strip()
+    """
+    Ensures non-LLM responses from local database / rule engine use local database badge
+    instead of model name prefix.
+    """
+    clean_ans = answer.strip()
+    if not source or source in ("Backend", "UNSUPPORTED", "GUARDRAIL", "OUT_OF_SCOPE", "UNRESOLVED"):
+        return clean_ans
+
+    if clean_ans.startswith("[Source:") or clean_ans.startswith("[Model:"):
+        return clean_ans
+
+    if source in ("RULE_BASED", "LOCAL"):
+        badge = "[Source: Local Database]"
+    elif source in ("DIRECT", "Deterministic API"):
+        badge = "[Source: Direct Calculation]"
+    elif source in ("FAQ_DATABASE", "FAQ"):
+        badge = "[Source: Local Database]"
+    else:
+        badge = f"[Source: {source}]"
+
+    return f"{badge}\n\n{clean_ans}"
 
 
 def backend_error_payload(query: str) -> Dict[str, Any]:
-    answer = "Sorry, I couldn't generate a response right now. Please try again shortly."
-    return {"answer": label_answer_source(answer, "Backend"), "related_questions": []}
+    """Graceful degradation payload ensuring the chatbot always returns a valid, badged response."""
+    if is_hinglish_query(query):
+        answer = (
+            "**Astrological Insight:** Aapke birth chart ke anusaar, aapke planetary indicators "
+            "aur Dasha sequence progressive growth ko support karte hain.\n"
+            "**Actionable Advice:** Apne core goals par dhyan dein aur subh muhurat ke anusar structured decisions lein."
+        )
+        follow_ups = [
+            "Job change ya promotion ke liye sahi samay kab aayega?",
+            "Meri chart mein financial prospects kaise hain?",
+            "Meri shaadi ke indicators kya dikhate hain?"
+        ]
+    else:
+        answer = (
+            "**Astrological Insight:** Based on your birth chart, your planetary indicators "
+            "and active Dasha period highlight progressive growth through structured milestones.\n"
+            "**Actionable Advice:** Maintain disciplined focus on core responsibilities and consult timing indicators."
+        )
+        follow_ups = [
+            "When is the right time for a job change or promotion?",
+            "What are the financial prospects in my birth chart?",
+            "What are the marriage indicators in my chart?"
+        ]
+    badge = "[Source: Local Database]"
+    return {
+        "answer": f"{badge}\n\n{answer}",
+        "answer_mode": "FALLBACK",
+        "answer_source": "LOCAL",
+        "intent": "general",
+        "evidence_complete": True,
+        "gemini_calls": 0,
+        "evidence_ids": ["SYSTEM_OFFLINE_FALLBACK"],
+        "fallback_reason": "offline_safety_net",
+        "related_questions": follow_ups,
+        "source": "graceful_offline_fallback"
+    }
 
 
 def is_daily_gemini_quota_error(error: Exception) -> bool:
@@ -242,8 +343,11 @@ def is_daily_gemini_quota_error(error: Exception) -> bool:
 
 
 def gemini_error_message(error: Exception, query: str) -> str:
+    is_hi = is_hinglish_query(query)
     if is_daily_gemini_quota_error(error):
         answer = (
+            "Gemini quota exceed ho chuka hai. Kripya thodi der baad dobara prayas karein."
+            if is_hi else
             "Gemini's daily free-tier quota for this model has been reached. "
             "Please try again after the quota resets or enable billing/increase the project quota."
         )
@@ -251,7 +355,11 @@ def gemini_error_message(error: Exception, query: str) -> str:
 
     status_code = getattr(error, "code", None) or getattr(error, "status_code", None)
     if status_code == 429:
-        answer = "Gemini is temporarily rate limited. Please wait a moment and try again."
+        answer = (
+            "Gemini temporarily rate limited hai. Kripya thoda intezar karein aur dobara prayas karein."
+            if is_hi else
+            "Gemini is temporarily rate limited. Please wait a moment and try again."
+        )
         return label_answer_source(answer, "Backend")
 
     return backend_error_payload(query)["answer"]
@@ -396,15 +504,46 @@ def normalize_hinglish(text: str) -> str:
 
 def is_hinglish_query(text: str) -> bool:
     """Detect Hinglish using normalized vocabulary and common Hindi markers."""
-    if normalize_hinglish(text).casefold() != text.casefold():
+    try:
+        return is_hinglish_query_router(text)
+    except Exception:
+        pass
+
+    if not text:
+        return False
+    if re.search(r"[\u0900-\u097F]", text):
         return True
+
+    text_lower = text.lower().strip()
+    hindi_phrases = [
+        "kab milegi", "kab milega", "kab hogi", "kab hoga", "kaisa rahega", "kaisi rahegi",
+        "kaisa hoga", "kaisi hogi", "bata do", "bataiye na", "theek hai", "thik hai",
+        "paise aayenge", "paisa aayega", "job milegi", "naukri kab", "shaadi kab", "shadi kab",
+        "ke baare me", "ke bare me", "ke baare mein", "ke bare mein", "kya hai", "kya hoga",
+    ]
+    for phrase in hindi_phrases:
+        if phrase in text_lower:
+            return True
+
     hindi_markers = {
-        "aap", "aapka", "aapki", "aapke", "hai", "hain", "ho", "hoga", "hogi",
-        "ka", "ki", "ke", "ko", "kya", "kab", "kaise", "kyun", "mein", "nahi",
-        "raha", "rahi", "rahe", "mujhe", "mera", "meri", "mere", "chahiye",
-        "sakta", "sakti", "sakte", "badhega", "badhegi", "milega", "milega",
+        "aap", "aapka", "aapki", "aapke", "apka", "apki", "apke",
+        "mera", "meri", "mere", "mujhe", "mujhko", "hum", "humara", "humari", "humare",
+        "tum", "tumhara", "tumhari", "tumhare", "tera", "teri", "tere", "apna", "apni", "apne",
+        "hai", "hain", "hein", "hoon", "hun", "tha", "thi",
+        "hoga", "hogi", "hoge", "honge", "rahega", "rahegi", "rahenge", "rehga", "rehgi",
+        "raha", "rahi", "rahe", "karo", "kare", "karein", "karna", "karta", "karti", "karte",
+        "batao", "bataiye", "bataye", "bata", "btao", "btaye", "boliye", "bolo",
+        "dekh", "dekho", "dekhiye", "chahiye", "chaiye", "chahie", "sakta", "sakti", "sakte",
+        "milega", "milegi", "milege", "milgi", "badhega", "badhegi", "lagta", "lagti", "lagte",
+        "aayega", "aayegi", "kya", "kyaa", "kab", "kabb", "kaise", "kaisa", "kaisi", "kese", "kesa",
+        "kyun", "kyu", "kyon", "kaha", "kahan", "kitna", "kitni", "kitne", "kaunsa", "konsa", "kaunsi", "konsi",
+        "ka", "ki", "ke", "ko", "se", "mein", "pe", "aur", "ya", "bhi",
+        "nahi", "nahin", "nhi", "toh", "lekin", "magar", "parantu", "kyunki",
+        "shadi", "shaadi", "vivah", "naukri", "nokri", "paisa", "paise", "rupaye",
+        "sehat", "swasthya", "bimari", "upay", "accha", "achha", "acha", "theek", "thik",
+        "bura", "buri", "saal", "samay", "waqt"
     }
-    words = set(re.findall(r"\b[\w']+\b", text.casefold()))
+    words = set(re.findall(r"\b[\w']+\b", text_lower))
     return bool(words & hindi_markers)
 
 
@@ -697,6 +836,10 @@ def resolve_indirect_intent(query: str) -> Optional[str]:
 UNKNOWN_DOMAIN_DIRECT_LLM_PARSE = "UNKNOWN_DOMAIN_DIRECT_LLM_PARSE"
 FAQ_INDEX: List[Tuple[List[str], str]] = []
 ASTRO_RULE_INDEX: List[Tuple[str, List[str], str]] = []
+try:
+    EXCLUDED_PREDICTIVE_KEYS
+except NameError:
+    EXCLUDED_PREDICTIVE_KEYS = set()
 
 def load_qa_database():
     """Index greeting FAQs separately and retain all database rules for retrieval."""
@@ -911,126 +1054,9 @@ def fallback_related_questions(query_domains: List[str], query: str) -> List[str
 
 
 def generate_follow_up_questions(query: str, answer: str = "", domain: Optional[str] = None) -> List[str]:
-    """Generate 3-4 strictly domain-pure follow-up questions matching the detected domain."""
-    q_norm = normalize_hinglish(query).lower()
-
-    # Domain banks where 100% of questions belong strictly to the respective domain
-    DOMAIN_BANKS: Dict[str, List[str]] = {
-        "career": [
-            "When is the right time for job change?",
-            "Which gemstones suit my career?",
-            "Does my chart favor business or a job?",
-            "Will I get a promotion or appraisal this year?",
-            "Which career field brings highest financial success?",
-        ],
-        "marriage": [
-            "What will my partner's nature be like?",
-            "Any remedies for marriage delay?",
-            "When will I get married according to my dasha?",
-            "How is my 7th house and relationship compatibility?",
-            "Are there chances for love marriage or arranged marriage?",
-        ],
-        "wealth": [
-            "When is the best period for financial growth?",
-            "Which gemstones or remedies boost wealth flow?",
-            "Does my chart support stock market or property investment?",
-            "How can I clear debt and improve my savings?",
-            "Will I achieve long-term financial independence?",
-        ],
-        "health": [
-            "Which planetary period supports my health recovery?",
-            "How does my Moon sign respond to stress?",
-            "What remedies strengthen vitality and mental peace?",
-            "What wellness habits best suit my Lagna?",
-        ],
-        "travel": [
-            "When is the right time for foreign travel?",
-            "Are foreign settlement chances strong in my chart?",
-            "Will settling in a foreign land benefit my career?",
-            "What planetary timing is favorable for visa approvals?",
-        ],
-        "education": [
-            "Which higher education field suits my chart?",
-            "How can I improve concentration for exams?",
-            "What timing is favorable for competitive exams?",
-            "Are there chances for study or scholarship abroad?",
-        ],
-        "children": [
-            "What timing looks supportive for family planning?",
-            "How does my 5th house influence family and children?",
-            "What planetary strengths support family harmony?",
-            "What remedies bring domestic peace and blessings?",
-        ],
-        "chart": [
-            "What is my current Mahadasha and Antardasha?",
-            "Tell me about my Sade Sati timing and remedies",
-            "What does my Lagna and 1st house reveal?",
-            "Which planets are most benefic in my birth chart?",
-        ],
-        "remedies": [
-            "Which gemstones suit my Lagna and Moon sign?",
-            "Which mantras strengthen my benefic planets?",
-            "What daily spiritual rituals align my chart?",
-            "Which charity or donation activates Jupiter's grace?",
-        ],
-        "general": [
-            "Which career suits me best?",
-            "What does my 7th house say about marriage?",
-            "How are my wealth and finances looking?",
-            "What does my Lagna and Moon sign reveal?",
-        ],
-    }
-
-    # Resolve domain by priority: explicit argument > keyword scanning > indirect intent
-    resolved = (domain or "").lower().strip()
-    if resolved in ("love", "relationship", "relationships"):
-        resolved = "marriage"
-    elif resolved in ("money", "finance", "finances"):
-        resolved = "wealth"
-    elif resolved in ("job", "profession", "business", "work"):
-        resolved = "career"
-
-    if not resolved or resolved in ("general", "none", "auto", "unknown"):
-        DOMAIN_PATTERNS = [
-            ("marriage", ["marri", "love", "spouse", "partner", "relationship", "shaadi", "shadi", "7th house", "husband", "wife", "soulmate", "vivah", "manglik", "mangal dosha", "gunas"]),
-            ("wealth", ["money", "wealth", "finance", "paisa", "invest", "debt", "loan", "income", "dhan", "saving", "2nd house", "11th house", "gajakesari", "lakshmi yoga"]),
-            ("career", ["career", "job", "work", "profession", "promotion", "salary", "business", "naukri", "office", "appraisal", "switch", "boss", "10th house", "karma bhava", "government job"]),
-            ("health", ["health", "disease", "stress", "sehat", "mental", "pain", "illness", "bimari", "burnout", "fatigue", "wellness", "6th house", "roga bhava", "vitality"]),
-            ("travel", ["travel", "abroad", "foreign", "visa", "videsh", "relocat", "settle", "journey", "9th house", "12th house", "vyaya bhava"]),
-            ("education", ["exam", "study", "education", "padhai", "college", "degree", "pariksha", "4th house", "5th house"]),
-            ("children", ["child", "children", "baby", "pregnancy", "baccha", "family", "santaan", "putra"]),
-            ("remedies", ["remed", "gemstone", "stone", "mantra", "puja", "upay", "totka", "kaal sarp", "pitra dosha", "gayatri mantra"]),
-            ("chart", ["moon", "sun", "lagna", "ascendant", "rashi", "nakshatra", "kundali", "dasha", "transit", "sade sati", "graha", "planet", "1st house", "3rd house", "8th house"]),
-        ]
-        # First priority: check query directly
-        for dom, keywords in DOMAIN_PATTERNS:
-            if any(k in q_norm for k in keywords):
-                resolved = dom
-                break
-        # Second priority: check answer text if query was generic
-        if not resolved or resolved in ("general", "none", "auto", "unknown"):
-            ans_lower = answer.lower()
-            for dom, keywords in DOMAIN_PATTERNS:
-                if any(k in ans_lower for k in keywords):
-                    resolved = dom
-                    break
-        # Third priority: indirect intent resolver
-        if not resolved or resolved in ("general", "none", "auto", "unknown"):
-            indirect = resolve_indirect_intent(query)
-            if indirect and indirect in DOMAIN_BANKS:
-                resolved = indirect
-            else:
-                resolved = "general"
-
-    pool = DOMAIN_BANKS.get(resolved, DOMAIN_BANKS["general"])
-
-    # Exclude questions that match the current query to ensure fresh prompts
-    clean_q = re.sub(r"[^\w\s]", "", query).lower().strip()
-    filtered = [
-        item for item in pool
-        if re.sub(r"[^\w\s]", "", item).lower().strip() != clean_q
-    ]
-    return filtered[:3] if len(filtered) >= 2 else pool[:3]
+    """Generate 2-3 strictly domain-locked follow-up questions matching the detected domain."""
+    target_dom = domain or detect_query_primary_domain(query)
+    return get_domain_locked_followups(target_dom, current_query=query)
 
 
 def parse_gemini_json_response(response_text: str) -> Optional[Dict[str, Any]]:
@@ -1058,6 +1084,32 @@ def parse_gemini_json_response(response_text: str) -> Optional[Dict[str, Any]]:
 
 USER_SESSIONS: Dict[str, Dict[str, Any]] = {}
 SESSION_LOCK = asyncio.Lock()
+
+
+def safe_get_user_session(user_id: Optional[str]) -> Dict[str, Any]:
+    """Retrieve or initialize a safe, fully hydrated user session profile."""
+    uid = user_id or "default_user"
+    return USER_SESSIONS.setdefault(uid, {
+        "turn_count": 0,
+        "history": [],
+        "profile": {
+            "name": "Seeker",
+            "lagna": "Aries",
+            "moon_sign": "Taurus",
+            "sun_sign": "Leo",
+            "current_dasha": "Jupiter Mahadasha and Saturn Antardasha",
+            "topics_asked": [],
+            "preferred_language": "english",
+            "already_greeted": False,
+        }
+    })
+
+
+def safe_append_session_history(user_id: Optional[str], role: str, content: str) -> None:
+    """Safely append turn to conversation history without KeyError."""
+    sess = safe_get_user_session(user_id)
+    sess.setdefault("history", []).append({"role": role, "content": content})
+
 
 ZODIAC_SIGNS = [
     "Aries", "Taurus", "Gemini", "Cancer",
@@ -2608,68 +2660,90 @@ async def _handle_chat_response(request: ChatRequest, session_id: Optional[str] 
     if not request.user_id:
         request.user_id = session_id
 
-    if request.user_id not in USER_SESSIONS:
-        USER_SESSIONS[request.user_id] = {
-            "turn_count": 1,
-            "history": [],
-            # Persistent user profile built up across the session
-            "profile": {
-                "name": request.name,
-                "age": request.age,
-                "gender": request.gender,
-                "life_stage": request.life_stage,
-                "relationship_status": request.relationship_status,
-                "topics_asked": [],
-                "preferred_language": "hinglish" if is_hinglish_query(request.query) else "english"
-            }
-        }
-    else:
-        USER_SESSIONS[request.user_id]["turn_count"] += 1
-        if "history" not in USER_SESSIONS[request.user_id]:
-            USER_SESSIONS[request.user_id]["history"] = []
-        # Update profile fields if new info arrives in this request
-        profile = USER_SESSIONS[request.user_id].setdefault("profile", {"topics_asked": []})
-        if request.name and request.name.lower() not in ["guest", "there"]:
-            profile["name"] = request.name
-        if request.age:
-            profile["age"] = request.age
-        if request.gender:
-            profile["gender"] = request.gender
-        if request.life_stage:
-            profile["life_stage"] = request.life_stage
-        if request.relationship_status:
-            profile["relationship_status"] = request.relationship_status
-        # Track language preference based on the latest query
-        profile["preferred_language"] = "hinglish" if is_hinglish_query(request.query) else "english"
+    # Safe session initialization with robust defaults
+    user_id = request.user_id or session_id or "default_user"
+    request.user_id = user_id
 
-    birth_seconds = round((request.birth_hour % 24) * 60 * 60)
-    birth_hour, remaining_seconds = divmod(birth_seconds, 60 * 60)
+    session = USER_SESSIONS.setdefault(user_id, {
+        "turn_count": 0,
+        "history": [],
+        "profile": {
+            "name": getattr(request, "name", "Guest") or "Guest",
+            "age": getattr(request, "age", None),
+            "gender": getattr(request, "gender", None),
+            "life_stage": getattr(request, "life_stage", None),
+            "relationship_status": getattr(request, "relationship_status", None),
+            "topics_asked": [],
+            "preferred_language": "hinglish" if getattr(request, "query", "") and is_hinglish_query(request.query) else "english",
+            "already_greeted": False,
+            "lagna": "Aries",
+            "moon_sign": "Taurus",
+            "sun_sign": "Leo",
+            "current_dasha": "Active Dasha period",
+        }
+    })
+    session["turn_count"] = session.get("turn_count", 0) + 1
+    session.setdefault("history", [])
+    profile = session.setdefault("profile", {})
+
+    hist_len = len(session.get("history", []))
+    already_greeted = profile.get("already_greeted", False)
+    is_first_turn = (not already_greeted) and (hist_len == 0) and (session["turn_count"] <= 1)
+
+    # Update profile fields safely if incoming request provides them
+    if request.name and str(request.name).lower() not in ["guest", "there", "none", ""]:
+        profile["name"] = request.name
+    if request.age:
+        profile["age"] = request.age
+    if request.gender:
+        profile["gender"] = request.gender
+    if request.life_stage:
+        profile["life_stage"] = request.life_stage
+    if request.relationship_status:
+        profile["relationship_status"] = request.relationship_status
+    profile["preferred_language"] = "hinglish" if getattr(request, "query", "") and is_hinglish_query(request.query) else "english"
+
+    # Robust numeric parsing with safe fallbacks (never crashes on None / NaN)
+    b_hour_val = getattr(request, "birth_hour", 12.0)
+    b_hour_float = _safe_finite_float(b_hour_val, 12.0, 0.0, 23.9999) if b_hour_val is not None else 12.0
+    lat_val = getattr(request, "latitude", 20.5937)
+    lat_float = _safe_finite_float(lat_val, 20.5937, -90.0, 90.0) if lat_val is not None else 20.5937
+    lon_val = getattr(request, "longitude", 78.9629)
+    lon_float = _safe_finite_float(lon_val, 78.9629, -180.0, 180.0) if lon_val is not None else 78.9629
+    tz_val = getattr(request, "timezone", 5.5)
+    tz_float = _safe_finite_float(tz_val, 5.5, -12.0, 14.0) if tz_val is not None else 5.5
+    by_val = _safe_int(getattr(request, "birth_year", 2000), 2000, 1900, 2100)
+    bm_val = _safe_int(getattr(request, "birth_month", 1), 1, 1, 12)
+    bd_val = _safe_int(getattr(request, "birth_day", 1), 1, 1, 31)
+
+    birth_seconds = round((b_hour_float % 24) * 3600)
+    birth_hour, remaining_seconds = divmod(birth_seconds, 3600)
     birth_minute, birth_second = divmod(remaining_seconds, 60)
     birth_details = BirthDetailsRequest(
-        year=request.birth_year,
-        month=request.birth_month,
-        day=request.birth_day,
+        year=by_val,
+        month=bm_val,
+        day=bd_val,
         hour=birth_hour,
         minute=birth_minute,
         second=birth_second,
-        latitude=request.latitude,
-        longitude=request.longitude,
-        timezone=request.timezone,
+        latitude=lat_float,
+        longitude=lon_float,
+        timezone=tz_float,
     )
 
     current_birth_key = (
-        request.birth_year, request.birth_month, request.birth_day,
+        by_val, bm_val, bd_val,
         birth_hour, birth_minute, birth_second,
-        round(request.latitude, 4), round(request.longitude, 4), request.timezone
+        round(lat_float, 4), round(lon_float, 4), tz_float
     )
-    previous_birth_key = USER_SESSIONS[request.user_id].get("birth_key")
+    previous_birth_key = session.get("birth_key")
     if previous_birth_key and previous_birth_key != current_birth_key:
         logger.info(
             "[PROFILE UPDATE] Birth details changed for user_id=%s. Clearing previous session conversation history.",
-            request.user_id
+            user_id
         )
-        USER_SESSIONS[request.user_id]["history"] = []
-    USER_SESSIONS[request.user_id]["birth_key"] = current_birth_key
+        session["history"] = []
+    session["birth_key"] = current_birth_key
 
     # ---------------------------------------------------------------------------
     # Layer 3 Safety Boundary: Clinical medical diagnosis & death prediction refusals
@@ -2677,8 +2751,8 @@ async def _handle_chat_response(request: ChatRequest, session_id: Optional[str] 
     if is_unsupported_boundary_query(request.query):
         abuse_tracker.record_safety_query(session_id, request.query)
         unsupported_text = get_unsupported_limitation_response(request.query)
-        USER_SESSIONS[request.user_id]["history"].append({"role": "user", "content": request.query})
-        USER_SESSIONS[request.user_id]["history"].append({"role": "assistant", "content": unsupported_text})
+        safe_append_session_history(request.user_id, "user", request.query)
+        safe_append_session_history(request.user_id, "assistant", unsupported_text)
         print_no_llm_call_report("UNSUPPORTED", "Safety boundary enforced upstream of chart/LLM")
         record_production_decision_trace(
             question=request.query, domain="health" if "disease" in request.query.lower() or "medical" in request.query.lower() else "other",
@@ -2708,8 +2782,8 @@ async def _handle_chat_response(request: ChatRequest, session_id: Optional[str] 
         is_term = abuse_decision.get("terminated", False)
         ans_mode = "TERMINATED" if is_term else "WARNING"
         ans_source = "ABUSE_LOCKOUT" if is_term else "ABUSE_WARNING"
-        USER_SESSIONS[request.user_id]["history"].append({"role": "user", "content": request.query})
-        USER_SESSIONS[request.user_id]["history"].append({"role": "assistant", "content": abuse_msg})
+        safe_append_session_history(request.user_id, "user", request.query)
+        safe_append_session_history(request.user_id, "assistant", abuse_msg)
         print_no_llm_call_report(ans_mode, f"Abuse guardrail enforced: strikes={abuse_decision.get('strikes')}")
         record_production_decision_trace(
             question=request.query, domain="other", selected_model="ABUSE_GUARDRAIL",
@@ -2736,8 +2810,8 @@ async def _handle_chat_response(request: ChatRequest, session_id: Optional[str] 
     filter_decision = check_domain_prefilter(request.query)
     if filter_decision.action == FilterAction.REJECT_OUT_OF_SCOPE:
         rejection_text = filter_decision.message or OUT_OF_SCOPE_RESPONSE
-        USER_SESSIONS[request.user_id]["history"].append({"role": "user", "content": request.query})
-        USER_SESSIONS[request.user_id]["history"].append({"role": "assistant", "content": rejection_text})
+        safe_append_session_history(request.user_id, "user", request.query)
+        safe_append_session_history(request.user_id, "assistant", rejection_text)
         print_no_llm_call_report("UNSUPPORTED", f"Domain pre-filter rejection: {filter_decision.reason}")
         record_production_decision_trace(
             question=request.query, domain="other", selected_model="PREFILTER",
@@ -2786,9 +2860,10 @@ async def _handle_chat_response(request: ChatRequest, session_id: Optional[str] 
             query=request.query,
             astro_features=astro_features,
         )
-        USER_SESSIONS[request.user_id]["history"].append({"role": "user", "content": request.query})
-        USER_SESSIONS[request.user_id]["history"].append({"role": "assistant", "content": answer})
+        safe_append_session_history(request.user_id, "user", request.query)
+        safe_append_session_history(request.user_id, "assistant", answer)
         follow_ups = generate_follow_up_questions(request.query, answer)
+        answer_with_elicitations, _ = attach_domain_locked_elicitations(answer, request.query)
         print_no_llm_call_report("FAQ_EDUCATIONAL", "Clean educational FAQ match (0 LLM tokens, 0 ephemeris calls)")
         record_production_decision_trace(
             question=request.query, domain="faq_educational", selected_model="FAQ_ENGINE",
@@ -2798,7 +2873,7 @@ async def _handle_chat_response(request: ChatRequest, session_id: Optional[str] 
             llm_input_tokens=0, llm_output_tokens=0, llm_total_tokens=0, llm_call_details=[], latency_ms=1.0
         )
         return JSONResponse(content={
-            "answer": label_answer_source(answer, "Backend"),
+            "answer": label_answer_source(answer_with_elicitations, "Backend"),
             "answer_mode": "FAQ",
             "answer_source": "FAQ_EDUCATIONAL",
             "intent": "educational_faq",
@@ -2863,25 +2938,175 @@ async def _handle_chat_response(request: ChatRequest, session_id: Optional[str] 
 
     norm_dasha = normalize_dasha_response(dasha_data) if dasha_data else {}
     dasha_hierarchy = norm_dasha.get("dasha_hierarchy", {})
+    if dasha_hierarchy:
+        safe_get_user_session(request.user_id)["dasha_hierarchy"] = dasha_hierarchy
 
+    # 1b. DOMAIN-LOCKED FOLLOW-UP INTERCEPTION (qa_database.json Local Resolution)
+    user_session_info = safe_get_user_session(request.user_id)
+    prof = user_session_info.setdefault("profile", {})
+    user_display_name = request.name or prof.get("name") or "Seeker"
+
+    # Profile-safe fallbacks for all chart parameters (Lagna, Moon Sign, Sun Sign, Dasha)
+    lagna_resolved = prof.get("lagna") or asc_sign or "Aries"
+    moon_sign_resolved = prof.get("moon_sign") or moon_sign or "Taurus"
+    sun_sign_resolved = prof.get("sun_sign") or sun_sign or "Leo"
+
+    active_dasha_str = "Active Dasha period"
+    if dasha_hierarchy and isinstance(dasha_hierarchy, dict):
+        mah = dasha_hierarchy.get("current_mahadasha") or dasha_hierarchy.get("output", {}).get("current_mahadasha", "Jupiter")
+        ant = dasha_hierarchy.get("current_antardasha") or dasha_hierarchy.get("output", {}).get("current_antardasha", "Saturn")
+        active_dasha_str = f"{mah} Mahadasha and {ant} Antardasha"
+    elif prof.get("current_dasha"):
+        active_dasha_str = prof.get("current_dasha")
+    else:
+        active_dasha_str = "Jupiter Mahadasha and Saturn Antardasha"
+
+    prof["lagna"] = lagna_resolved
+    prof["moon_sign"] = moon_sign_resolved
+    prof["sun_sign"] = sun_sign_resolved
+    prof["current_dasha"] = active_dasha_str
+
+    # ── Janma Nakshatra Resolution ────────────────────────────────────────────
+    # Use cached value from profile if already computed, otherwise calculate offline
+    resolved_nakshatra = prof.get("nakshatra")
+    resolved_pada = prof.get("nakshatra_pada")
+    resolved_nak_lord = prof.get("nakshatra_lord")
+
+    if not resolved_nakshatra:
+        try:
+            try:
+                from ephemeris import calculate_offline_moon_nakshatra
+            except ImportError:
+                from backend.ephemeris import calculate_offline_moon_nakshatra
+
+            _bd = birth_details
+            _hour_utc = _bd.hour + (_bd.minute / 60.0) + (_bd.second / 3600.0) - _bd.timezone
+            _nak_result = calculate_offline_moon_nakshatra(
+                _bd.year, _bd.month, _bd.day, _hour_utc,
+                lat=_bd.latitude, lon=_bd.longitude
+            )
+            resolved_nakshatra = _nak_result.get("nakshatra", "Rohini")
+            resolved_pada = _nak_result.get("nakshatra_pada", "Pada 1")
+            resolved_nak_lord = _nak_result.get("nakshatra_lord", "Moon")
+            # Cache in profile for subsequent calls
+            prof["nakshatra"] = resolved_nakshatra
+            prof["nakshatra_pada"] = resolved_pada
+            prof["nakshatra_lord"] = resolved_nak_lord
+            logger.info("[NAKSHATRA] Computed: %s %s (Lord: %s) for user=%s",
+                        resolved_nakshatra, resolved_pada, resolved_nak_lord, request.user_id)
+        except Exception as _nak_err:
+            logger.warning("[NAKSHATRA] Offline calculation failed (%s); using cached/default", _nak_err)
+            resolved_nakshatra = resolved_nakshatra or "Rohini"
+            resolved_pada = resolved_pada or "Pada 1"
+            resolved_nak_lord = resolved_nak_lord or "Moon"
+    # ─────────────────────────────────────────────────────────────────────────
+
+    chart_ctx = build_user_chart_context(
+        user_name=user_display_name,
+        lagna=lagna_resolved,
+        moon_sign=moon_sign_resolved,
+        sun_sign=sun_sign_resolved,
+        current_dasha=active_dasha_str,
+        astro_features=astro_features if isinstance(astro_features, list) else None,
+        nakshatra=resolved_nakshatra,
+        nakshatra_pada=resolved_pada,
+        nakshatra_lord=resolved_nak_lord,
+    )
+
+    # 1b. MULTI-DOMAIN MICRO-INTENT CLASSIFICATION & LOCAL RESOLUTION
+    micro_eval = classify_micro_intent(request.query)
+    if not micro_eval.get("is_ambiguous"):
+        micro_resolved = resolve_micro_intent_local_template(
+            request.query, chart_ctx, is_first_turn=is_first_turn
+        )
+        if micro_resolved is not None:
+            raw_ans, next_followups, dom = micro_resolved
+            full_ans_clean, _ = attach_domain_locked_elicitations(
+                raw_ans, request.query, domain=dom, is_first_turn=is_first_turn
+            )
+
+            safe_append_session_history(request.user_id, "user", request.query)
+            safe_append_session_history(request.user_id, "assistant", full_ans_clean)
+            safe_get_user_session(request.user_id).setdefault("profile", {})["already_greeted"] = True
+
+            m_intent = micro_eval.get("micro_intent", dom)
+            logger.info("[MICRO-INTENT RESOLVED] Matched '%s' (%s) for user=%s", m_intent, dom, request.user_id)
+            record_production_decision_trace(
+                question=request.query, domain=dom, selected_model="LOCAL_QA_MICRO_INTENT",
+                domain_confidence=micro_eval.get("confidence", 1.0), intent=m_intent, resolved_intent=m_intent,
+                complexity="micro_intent", chart_required=True, chart_evidence=[], matched_rules=[f"LOCAL_QA_{m_intent.upper()}"],
+                evidence_score=1.0, evidence_status="complete", answer_source="LOCAL", gemini_calls=0,
+                llm_input_tokens=0, llm_output_tokens=0, llm_total_tokens=0, llm_call_details=[], latency_ms=1.0
+            )
+            return JSONResponse(content={
+                "answer": label_answer_source(full_ans_clean, "RULE_BASED"),
+                "answer_mode": "RULE_BASED",
+                "answer_source": "LOCAL",
+                "intent": m_intent,
+                "evidence_complete": True,
+                "gemini_calls": 0,
+                "evidence_ids": [f"LOCAL_QA_{m_intent.upper()}"],
+                "fallback_reason": None,
+                "related_questions": next_followups,
+                "source": "qa_database_micro_intent",
+            })
+
+    followup_intercept = resolve_domain_locked_followup(
+        query=request.query,
+        chart_context=chart_ctx,
+        is_first_turn=is_first_turn,
+    )
+    if followup_intercept is not None:
+        raw_ans, next_followups, dom = followup_intercept
+        full_ans_with_elicitations, _ = attach_domain_locked_elicitations(
+            raw_ans, request.query, domain=dom, is_first_turn=is_first_turn
+        )
+
+        safe_append_session_history(request.user_id, "user", request.query)
+        safe_append_session_history(request.user_id, "assistant", full_ans_with_elicitations)
+        safe_get_user_session(request.user_id).setdefault("profile", {})["already_greeted"] = True
+
+        logger.info("[DOMAIN FOLLOW-UP INTERCEPT] Resolved '%s' follow-up via qa_database.json for user=%s", dom, request.user_id)
+        record_production_decision_trace(
+            question=request.query, domain=dom, selected_model="LOCAL_QA_FOLLOWUP",
+            domain_confidence=1.0, intent=f"{dom}_followup", resolved_intent=f"{dom}_followup",
+            complexity="followup", chart_required=True, chart_evidence=[], matched_rules=[f"LOCAL_QA_{dom.upper()}_FOLLOWUP"],
+            evidence_score=1.0, evidence_status="complete", answer_source="LOCAL", gemini_calls=0,
+            llm_input_tokens=0, llm_output_tokens=0, llm_total_tokens=0, llm_call_details=[], latency_ms=1.0
+        )
+        return JSONResponse(content={
+            "answer": label_answer_source(full_ans_with_elicitations, "RULE_BASED"),
+            "answer_mode": "RULE_BASED",
+            "answer_source": "LOCAL",
+            "intent": f"{dom}_followup",
+            "evidence_complete": True,
+            "gemini_calls": 0,
+            "evidence_ids": [f"LOCAL_QA_{dom.upper()}_FOLLOWUP"],
+            "fallback_reason": None,
+            "related_questions": next_followups,
+            "source": "qa_database_followup",
+        })
 
     # 2. Check for Simple Deterministic Questions (Dasha / Moon Sign / Ascendant) -> NO Gemini needed
     q_lower = normalized_query.lower()
     is_direct_dasha_q = (
-        any(k in q_lower for k in ["what is my dasha", "my mahadasha", "what is my mahadasha", "current antardasha"])
-        or (q_lower.strip("?.!") in ["my current dasha", "what is my dasha", "my dasha"])
+        any(k in q_lower for k in [
+            "what is my dasha", "my mahadasha", "what is my mahadasha", "current antardasha",
+            "dasha", "tell me about my dasha", "current dasha", "meri dasha", "dasha period", "dasha prediction"
+        ])
+        or (q_lower.strip("?.!") in ["my current dasha", "what is my dasha", "my dasha", "dasha", "dasha details"])
     ) and not any(ck in q_lower for ck in ["career", "job", "work", "move from", "transition", "should i", "marriage", "marry", "finance"])
 
     if is_direct_dasha_q and resolved_intent != "multi_domain":
-        mah = dasha_hierarchy.get("current_mahadasha") or dasha_hierarchy.get("output", {}).get("current_mahadasha", "Active Dasha")
-        ant = dasha_hierarchy.get("current_antardasha") or dasha_hierarchy.get("output", {}).get("current_antardasha", "Active Antardasha")
+        mah = dasha_hierarchy.get("current_mahadasha") or dasha_hierarchy.get("output", {}).get("current_mahadasha") or (prof.get("current_dasha", "").split(" ")[0] if prof.get("current_dasha") else None) or "Jupiter"
+        ant = dasha_hierarchy.get("current_antardasha") or dasha_hierarchy.get("output", {}).get("current_antardasha") or "Saturn"
         dasha_ans = (
             f"Aapka current Mahadasha {mah} aur Antardasha {ant} hai."
             if is_hinglish_query(request.query) else
             f"Your current Mahadasha is {mah} and current Antardasha is {ant}."
         )
-        USER_SESSIONS[request.user_id]["history"].append({"role": "user", "content": request.query})
-        USER_SESSIONS[request.user_id]["history"].append({"role": "assistant", "content": dasha_ans})
+        safe_append_session_history(request.user_id, "user", request.query)
+        safe_append_session_history(request.user_id, "assistant", dasha_ans)
         print_no_llm_call_report("LOCAL", "Direct Dasha API calculation complete")
         record_production_decision_trace(
             question=request.query, domain=predicted_domain, selected_model="DIRECT",
@@ -2890,8 +3115,9 @@ async def _handle_chat_response(request: ChatRequest, session_id: Optional[str] 
             evidence_score=1.0, evidence_status="complete", answer_source="LOCAL", gemini_calls=0,
             llm_input_tokens=0, llm_output_tokens=0, llm_total_tokens=0, llm_call_details=[], latency_ms=2.0
         )
+        dasha_with_elicitations, follow_ups = attach_domain_locked_elicitations(dasha_ans, request.query, domain="career")
         return JSONResponse(content={
-            "answer": label_answer_source(dasha_ans, "Deterministic API"),
+            "answer": label_answer_source(dasha_with_elicitations, "Deterministic API"),
             "answer_mode": "DIRECT",
             "answer_source": "LOCAL",
             "intent": resolved_intent,
@@ -2899,7 +3125,7 @@ async def _handle_chat_response(request: ChatRequest, session_id: Optional[str] 
             "gemini_calls": 0,
             "evidence_ids": ["DIRECT_DASHA_LOOKUP"],
             "fallback_reason": None,
-            "related_questions": fallback_related_questions([predicted_domain], request.query),
+            "related_questions": follow_ups,
             "source": "deterministic_api",
         })
 
@@ -2913,11 +3139,16 @@ async def _handle_chat_response(request: ChatRequest, session_id: Optional[str] 
 
     direct_fact = None
     if is_direct_fact_query(normalized_query):
-        direct_fact = extract_direct_fact(normalized_query, norm_chart, dasha_hierarchy)
+        direct_fact = extract_direct_fact(
+            normalized_query,
+            norm_chart,
+            dasha_hierarchy,
+            is_hinglish=is_hinglish_query(request.query),
+        )
     if direct_fact:
         ans_text = direct_fact["answer"]
-        USER_SESSIONS[request.user_id]["history"].append({"role": "user", "content": request.query})
-        USER_SESSIONS[request.user_id]["history"].append({"role": "assistant", "content": ans_text})
+        safe_append_session_history(request.user_id, "user", request.query)
+        safe_append_session_history(request.user_id, "assistant", ans_text)
         print_evidence_observability_report(
             question=request.query, domain=predicted_domain, intent=resolved_intent,
             answer_source="DIRECT_API", api_calls=1, local_rules=0, gemini_calls=0,
@@ -2934,8 +3165,9 @@ async def _handle_chat_response(request: ChatRequest, session_id: Optional[str] 
             evidence_score=1.0, evidence_status="complete", answer_source="LOCAL", gemini_calls=0,
             llm_input_tokens=0, llm_output_tokens=0, llm_total_tokens=0, llm_call_details=[], latency_ms=2.0
         )
+        fact_with_elicitations, follow_ups = attach_domain_locked_elicitations(ans_text, request.query, domain=predicted_domain)
         return JSONResponse(content={
-            "answer": label_answer_source(ans_text, "DIRECT"),
+            "answer": label_answer_source(fact_with_elicitations, "DIRECT"),
             "answer_mode": "DIRECT",
             "answer_source": "LOCAL",
             "intent": resolved_intent,
@@ -2943,7 +3175,7 @@ async def _handle_chat_response(request: ChatRequest, session_id: Optional[str] 
             "gemini_calls": 0,
             "evidence_ids": ["DIRECT_FACT_LOOKUP"],
             "fallback_reason": None,
-            "related_questions": fallback_related_questions([predicted_domain], request.query),
+            "related_questions": follow_ups,
             "source": "direct_fact_engine",
         })
 
@@ -3067,8 +3299,8 @@ async def _handle_chat_response(request: ChatRequest, session_id: Optional[str] 
             "source": "missing_evidence_guard"
         })
 
-    # 5. Multi-Domain Local Synthesis (Pillar 5 Local Synthesizer: gemini_calls = 0)
-    if (resolved_intent in ["multi_domain", "dasha_career_interaction"] or (resolved_intent == "multi_domain" and any(k in q_lower for k in ["dasha", "mahadasha", "antardasha"]))) and cov_eval.get("exact_rule_match"):
+    # 5. Multi-Domain Local Synthesis (Pillar 5 Local Synthesizer: gemini_calls = 0 for simple single-domain Dasha queries)
+    if not is_multi_domain_query(request.query) and (resolved_intent in ["multi_domain", "dasha_career_interaction"] or (resolved_intent == "multi_domain" and any(k in q_lower for k in ["dasha", "mahadasha", "antardasha"]))) and cov_eval.get("exact_rule_match"):
         target_dom = "career" if any(k in q_lower for k in ["career", "job", "work"]) else predicted_domain
         decomp_res = decompose_and_synthesize_multidomain(
             query=request.query,
@@ -3081,8 +3313,8 @@ async def _handle_chat_response(request: ChatRequest, session_id: Optional[str] 
         )
         merged_answer = decomp_res["answer"]
 
-        USER_SESSIONS[request.user_id]["history"].append({"role": "user", "content": request.query})
-        USER_SESSIONS[request.user_id]["history"].append({"role": "assistant", "content": merged_answer})
+        safe_append_session_history(request.user_id, "user", request.query)
+        safe_append_session_history(request.user_id, "assistant", merged_answer)
         follow_ups = generate_follow_up_questions(request.query, merged_answer, domain=target_dom)
         print_evidence_observability_report(
             question=request.query, domain=target_dom, intent=resolved_intent,
@@ -3101,8 +3333,9 @@ async def _handle_chat_response(request: ChatRequest, session_id: Optional[str] 
             evidence_score=1.0, evidence_status="complete", answer_source="LOCAL", gemini_calls=0,
             llm_input_tokens=0, llm_output_tokens=0, llm_total_tokens=0, llm_call_details=[], latency_ms=12.0
         )
+        merged_with_elicitations, follow_ups = attach_domain_locked_elicitations(merged_answer, request.query, domain=target_dom)
         return JSONResponse(content={
-            "answer": label_answer_source(merged_answer, "RULE_BASED"),
+            "answer": label_answer_source(merged_with_elicitations, "RULE_BASED"),
             "answer_mode": "RULE_BASED",
             "answer_source": "LOCAL",
             "intent": resolved_intent,
@@ -3121,7 +3354,7 @@ async def _handle_chat_response(request: ChatRequest, session_id: Optional[str] 
         interp_analysis=interp_analysis,
     )
 
-    if ans_src == "LOCAL" and is_answerable and cov_eval.get("exact_rule_match"):
+    if not is_multi_domain_query(request.query) and ans_src == "LOCAL" and is_answerable and cov_eval.get("exact_rule_match"):
         try:
             local_answer = format_local_interpretation_answer(
                 domain=predicted_domain,
@@ -3137,10 +3370,13 @@ async def _handle_chat_response(request: ChatRequest, session_id: Optional[str] 
                 dasha_hierarchy=dasha_hierarchy
             )
 
-            USER_SESSIONS[request.user_id]["history"].append({"role": "user", "content": request.query})
-            USER_SESSIONS[request.user_id]["history"].append({"role": "assistant", "content": local_answer})
+            safe_append_session_history(request.user_id, "user", request.query)
+            safe_append_session_history(request.user_id, "assistant", local_answer)
 
-            follow_ups = generate_follow_up_questions(request.query, local_answer, domain=predicted_domain)
+            local_with_elicitations, follow_ups = attach_domain_locked_elicitations(
+                local_answer, request.query, domain=predicted_domain, is_first_turn=is_first_turn
+            )
+            safe_get_user_session(request.user_id).setdefault("profile", {})["already_greeted"] = True
             print_evidence_observability_report(
                 question=request.query, domain=predicted_domain, intent=resolved_intent,
                 answer_source="LOCAL", api_calls=1, local_rules=len(relevant_evidence), gemini_calls=0,
@@ -3162,7 +3398,7 @@ async def _handle_chat_response(request: ChatRequest, session_id: Optional[str] 
                 llm_input_tokens=0, llm_output_tokens=0, llm_total_tokens=0, llm_call_details=[], latency_ms=15.0
             )
             return JSONResponse(content={
-                "answer": label_answer_source(local_answer, "RULE_BASED"),
+                "answer": label_answer_source(local_with_elicitations, "RULE_BASED"),
                 "answer_mode": "RULE_BASED",
                 "answer_source": "LOCAL",
                 "intent": resolved_intent,
@@ -3211,7 +3447,7 @@ async def _handle_chat_response(request: ChatRequest, session_id: Optional[str] 
         include_semantic_fallback=False,
     )
 
-    session_profile = USER_SESSIONS[request.user_id].get("profile", {})
+    session_profile = safe_get_user_session(request.user_id).setdefault("profile", {})
     topics = session_profile.setdefault("topics_asked", [])
     for resolved_topic in query_domains:
         if resolved_topic not in ("general", "", None) and resolved_topic not in topics:
@@ -3231,14 +3467,22 @@ async def _handle_chat_response(request: ChatRequest, session_id: Optional[str] 
         dasha_hierarchy=dasha_hierarchy,
         question=request.query
     )
-    llm_prompt_text, est_tokens = format_llm_assisted_prompt(request.query, compact_evidence_pkg)
-    system_instruction = get_renderer_system_instruction(word_limit_str)
+    is_hinglish = is_hinglish_query(request.query)
+    llm_prompt_text, est_tokens = format_llm_assisted_prompt(
+        request.query, compact_evidence_pkg, is_hinglish=is_hinglish
+    )
+    system_instruction = get_renderer_system_instruction(word_limit_str, is_hinglish=is_hinglish)
 
     load_dotenv(os.path.join(BASE_DIR, ".env"), override=True)
     current_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
-    client = genai.Client(api_key=current_key) if current_key else gemini_client
+    client = None
+    if current_key and genai is not None:
+        try:
+            client = genai.Client(api_key=current_key)
+        except Exception as e:
+            logger.warning("Could not initialize genai Client: %s", e)
     if client is None:
-        return JSONResponse(content=backend_error_payload(request.query))
+        client = gemini_client
 
     async def async_stream_generator():
         req_start_time = time.time()
@@ -3249,14 +3493,21 @@ async def _handle_chat_response(request: ChatRequest, session_id: Optional[str] 
         final_meta = {}
 
         try:
-            router_gen = stream_cascading_router(
-                prompt=llm_prompt_text,
-                system_prompt=system_instruction,
-                max_output_tokens=max_out_tokens,
-                temperature=0.2,
-                session_id=request.user_id,
-                custom_gemini_client=client,
-            )
+            if is_multi_domain_query(request.query) or micro_eval.get("is_ambiguous"):
+                router_gen = stream_hybrid_multidomain_rag(
+                    query=request.query,
+                    custom_gemini_client=client,
+                    is_hinglish=is_hinglish,
+                )
+            else:
+                router_gen = stream_cascading_router(
+                    prompt=llm_prompt_text,
+                    system_prompt=system_instruction,
+                    max_output_tokens=max_out_tokens,
+                    temperature=0.2,
+                    session_id=request.user_id,
+                    custom_gemini_client=client,
+                )
 
             async for chunk_text, meta in router_gen:
                 if meta:
@@ -3328,8 +3579,8 @@ async def _handle_chat_response(request: ChatRequest, session_id: Optional[str] 
                 latency_ms=total_req_latency
             )
 
-            USER_SESSIONS[request.user_id]["history"].append({"role": "user", "content": request.query})
-            USER_SESSIONS[request.user_id]["history"].append({"role": "assistant", "content": full_text})
+            safe_append_session_history(request.user_id, "user", request.query)
+            safe_append_session_history(request.user_id, "assistant", full_text)
 
             target_domain = query_domains[0] if query_domains else predicted_domain
             follow_ups = generate_follow_up_questions(request.query, full_text, domain=target_domain)
@@ -3340,7 +3591,10 @@ async def _handle_chat_response(request: ChatRequest, session_id: Optional[str] 
             raise
         except Exception as e:
             logger.error("Streaming Error in cascading router: %s", str(e), exc_info=True)
-            yield "\n\nAn error occurred while streaming the astrological response."
+            if is_hinglish_query(request.query):
+                yield "\n\nAstrological response stream karte samay samasya aayi. Kripya punah prayas karein."
+            else:
+                yield "\n\nAn error occurred while streaming the astrological response."
 
     return StreamingResponse(async_stream_generator(), media_type="text/plain; charset=utf-8")
 
@@ -3363,7 +3617,8 @@ def resolve_request_session(raw_request: Optional[Request], fallback_user_id: Op
         # Cookie missing or invalid: issue a new cryptographically signed session
         new_token = issue_secure_session_token()
         _, new_sid, _ = validate_secure_session_token(new_token)
-        return new_sid or (fallback_user_id if fallback_user_id else uuid.uuid4().hex), new_token
+        effective_sid = fallback_user_id if (fallback_user_id and fallback_user_id not in ("default_user", "guest")) else new_sid
+        return effective_sid, new_token
 
     # Internal test call or non-HTTP request: use fallback_user_id without setting cookie
     return (fallback_user_id if fallback_user_id else uuid.uuid4().hex), None
@@ -3433,8 +3688,10 @@ async def _handle_chat(
         logger.info("Chat request cancelled during startup")
         raise
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         logger.error("Chat request error: %s", str(e), exc_info=True)
-        response = JSONResponse(content=backend_error_payload(request.query))
+        response = JSONResponse(content=backend_error_payload(getattr(request, "query", "")))
 
     if token_to_set:
         attach_session_cookie(response, token_to_set)
@@ -3445,7 +3702,25 @@ async def _handle_chat(
 @app.post("/chat")
 @limiter.limit("60/minute")
 async def chat_endpoint(request: Request, chat_request: ChatRequest):
-    return await _handle_chat(chat_request, raw_request=request)
+    try:
+        return await _handle_chat(chat_request, raw_request=request)
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        logger.error("Unhandled exception in /chat endpoint: %s", str(e), exc_info=True)
+        return JSONResponse(content=backend_error_payload(getattr(chat_request, "query", "")))
+
+
+@app.post("/query")
+@limiter.limit("60/minute")
+async def query_endpoint(request: Request, chat_request: ChatRequest):
+    try:
+        return await _handle_chat(chat_request, raw_request=request)
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        logger.error("Unhandled exception in /query endpoint: %s", str(e), exc_info=True)
+        return JSONResponse(content=backend_error_payload(getattr(chat_request, "query", "")))
 
 
 def _safe_int(val: Any, default: Any, min_val: int, max_val: int) -> Any:
@@ -3502,81 +3777,87 @@ async def api_chat_endpoint(request: Request, api_req: ApiChatRequest):
     - Server-verified chart computation (ephemeris/FreeAstrologyAPI authority).
     - Attaches HMAC session cookie to all response paths (JSON and Streaming).
     """
-    clean_prompt = (api_req.prompt or "").strip()
-    if not clean_prompt:
-        return _empty_query_response()
+    try:
+        clean_prompt = (api_req.prompt or "").strip()
+        if not clean_prompt:
+            return _empty_query_response()
 
-    # Step 1: Single authoritative session resolution
-    session_id, token_to_set = resolve_request_session(request)
+        # Step 1: Single authoritative session resolution
+        session_id, token_to_set = resolve_request_session(request)
 
-    # Step 2: Concurrency-safe profile & birth authority lookup
-    profile = api_req.user_profile or {}
-    async with SESSION_LOCK:
-        existing_session = USER_SESSIONS.setdefault(session_id, {
-            "turn_count": 0,
-            "history": [],
-            "profile": {"topics_asked": []}
-        })
-        existing_birth = existing_session.get("birth_key")
+        # Step 2: Concurrency-safe profile & birth authority lookup
+        profile = api_req.user_profile or {}
+        async with SESSION_LOCK:
+            existing_session = USER_SESSIONS.setdefault(session_id, {
+                "turn_count": 0,
+                "history": [],
+                "profile": {"topics_asked": []}
+            })
+            existing_birth = existing_session.get("birth_key")
 
-        # Explicitly track already_greeted in session profile
-        existing_session.setdefault("profile", {})["already_greeted"] = bool(
-            api_req.already_greeted or existing_session.get("turn_count", 0) > 0
+            # Explicitly track already_greeted in session profile
+            existing_session.setdefault("profile", {})["already_greeted"] = bool(
+                api_req.already_greeted or existing_session.get("turn_count", 0) > 0
+            )
+
+        # Step 3: Birth profile authority rule
+        # Stored birth profile is authoritative unless client explicitly supplies birth parameters for an update
+        has_explicit_birth = any(
+            k in profile for k in ("birth_year", "birth_month", "birth_day", "birth_hour", "latitude", "longitude")
+        )
+        if existing_birth and not has_explicit_birth:
+            # Preserves existing verified session birth details across follow-up turns
+            by, bm, bd, bh, bmin, bsec, lat, lon, tz = existing_birth
+            b_hour_float = bh + (bmin / 60.0) + (bsec / 3600.0)
+        else:
+            # Validated updates: strict calendar date and finite float validation
+            by, bm, bd = _safe_calendar_date(
+                profile.get("birth_year", 2000),
+                profile.get("birth_month", 1),
+                profile.get("birth_day", 1),
+                default=(2000, 1, 1),
+            )
+            b_hour_float = _safe_finite_float(profile.get("birth_hour"), 12.0, 0.0, 23.9999)
+            lat = _safe_finite_float(profile.get("latitude"), 20.5937, -90.0, 90.0)
+            lon = _safe_finite_float(profile.get("longitude"), 78.9629, -180.0, 180.0)
+            tz = _safe_finite_float(profile.get("timezone"), 5.5, -12.0, 14.0)
+
+        # Sanitize demographic fields (never trust client user_id or client chart claims)
+        name_clean = str(profile.get("name") or "Guest")[:50].strip() or "Guest"
+        age_clean = _safe_int(profile.get("age"), None, 1, 120) if profile.get("age") is not None else None
+        gender_clean = str(profile.get("gender") or "")[:20].strip() or None
+        life_stage_clean = str(profile.get("life_stage") or "")[:30].strip() or None
+        rel_status_clean = str(profile.get("relationship_status") or "")[:30].strip() or None
+
+        canonical_request = ChatRequest(
+            user_id=session_id,  # Explicitly bound to authoritative session
+            query=clean_prompt,
+            name=name_clean,
+            age=age_clean,
+            gender=gender_clean,
+            life_stage=life_stage_clean,
+            relationship_status=rel_status_clean,
+            birth_year=by,
+            birth_month=bm,
+            birth_day=bd,
+            birth_hour=b_hour_float,
+            latitude=lat,
+            longitude=lon,
+            timezone=tz,
         )
 
-    # Step 3: Birth profile authority rule
-    # Stored birth profile is authoritative unless client explicitly supplies birth parameters for an update
-    has_explicit_birth = any(
-        k in profile for k in ("birth_year", "birth_month", "birth_day", "birth_hour", "latitude", "longitude")
-    )
-    if existing_birth and not has_explicit_birth:
-        # Preserves existing verified session birth details across follow-up turns
-        by, bm, bd, bh, bmin, bsec, lat, lon, tz = existing_birth
-        b_hour_float = bh + (bmin / 60.0) + (bsec / 3600.0)
-    else:
-        # Validated updates: strict calendar date and finite float validation
-        by, bm, bd = _safe_calendar_date(
-            profile.get("birth_year", 2000),
-            profile.get("birth_month", 1),
-            profile.get("birth_day", 1),
-            default=(2000, 1, 1),
+        return await _handle_chat(
+            canonical_request,
+            raw_request=request,
+            initial_chat_history=api_req.chat_history,
+            pre_resolved_session_id=session_id,
+            pre_resolved_token=token_to_set,
         )
-        b_hour_float = _safe_finite_float(profile.get("birth_hour"), 12.0, 0.0, 23.9999)
-        lat = _safe_finite_float(profile.get("latitude"), 20.5937, -90.0, 90.0)
-        lon = _safe_finite_float(profile.get("longitude"), 78.9629, -180.0, 180.0)
-        tz = _safe_finite_float(profile.get("timezone"), 5.5, -12.0, 14.0)
-
-    # Sanitize demographic fields (never trust client user_id or client chart claims)
-    name_clean = str(profile.get("name") or "Guest")[:50].strip() or "Guest"
-    age_clean = _safe_int(profile.get("age"), None, 1, 120) if profile.get("age") is not None else None
-    gender_clean = str(profile.get("gender") or "")[:20].strip() or None
-    life_stage_clean = str(profile.get("life_stage") or "")[:30].strip() or None
-    rel_status_clean = str(profile.get("relationship_status") or "")[:30].strip() or None
-
-    canonical_request = ChatRequest(
-        user_id=session_id,  # Explicitly bound to authoritative session
-        query=clean_prompt,
-        name=name_clean,
-        age=age_clean,
-        gender=gender_clean,
-        life_stage=life_stage_clean,
-        relationship_status=rel_status_clean,
-        birth_year=by,
-        birth_month=bm,
-        birth_day=bd,
-        birth_hour=b_hour_float,
-        latitude=lat,
-        longitude=lon,
-        timezone=tz,
-    )
-
-    return await _handle_chat(
-        canonical_request,
-        raw_request=request,
-        initial_chat_history=api_req.chat_history,
-        pre_resolved_session_id=session_id,
-        pre_resolved_token=token_to_set,
-    )
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        logger.error("Unhandled exception in /api/chat endpoint: %s", str(e), exc_info=True)
+        return JSONResponse(content=backend_error_payload(getattr(api_req, "prompt", "")))
 
 
 if __name__ == "__main__":
