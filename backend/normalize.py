@@ -104,15 +104,17 @@ def normalize_dasha_response(dasha_response: Dict[str, Any]) -> Dict[str, Any]:
         except Exception:
             output = {}
 
-    current_mahadasha = None
-    current_antardasha = None
-    start_date = None
-    end_date = None
+    current_mahadasha = dasha_response.get("current_mahadasha") or (output.get("current_mahadasha") if isinstance(output, dict) else None)
+    current_antardasha = dasha_response.get("current_antardasha") or (output.get("current_antardasha") if isinstance(output, dict) else None)
+    start_date = dasha_response.get("start_date") or (output.get("start_date") if isinstance(output, dict) else None)
+    end_date = dasha_response.get("end_date") or (output.get("end_date") if isinstance(output, dict) else None)
 
-    if isinstance(output, dict):
+    hierarchy_dict = output.get("dasha_hierarchy", output) if isinstance(output, dict) else output
+
+    if isinstance(hierarchy_dict, dict) and not (current_mahadasha and current_antardasha):
         from datetime import datetime
         now = datetime.now()
-        for maha, antars in output.items():
+        for maha, antars in hierarchy_dict.items():
             if isinstance(antars, dict):
                 for antar, dates in antars.items():
                     if isinstance(dates, dict):
@@ -133,12 +135,23 @@ def normalize_dasha_response(dasha_response: Dict[str, Any]) -> Dict[str, Any]:
                 if current_mahadasha:
                     break
 
+    res_hierarchy = hierarchy_dict if isinstance(hierarchy_dict, (dict, list)) else (output if isinstance(output, (dict, list)) else {})
+    if isinstance(res_hierarchy, dict):
+        if current_mahadasha and "current_mahadasha" not in res_hierarchy:
+            res_hierarchy["current_mahadasha"] = current_mahadasha
+        if current_antardasha and "current_antardasha" not in res_hierarchy:
+            res_hierarchy["current_antardasha"] = current_antardasha
+        if start_date and "start_date" not in res_hierarchy:
+            res_hierarchy["start_date"] = start_date
+        if end_date and "end_date" not in res_hierarchy:
+            res_hierarchy["end_date"] = end_date
+
     return {
         "current_mahadasha": current_mahadasha,
         "current_antardasha": current_antardasha,
         "start_date": start_date,
         "end_date": end_date,
-        "dasha_hierarchy": output if isinstance(output, (dict, list)) else {},
+        "dasha_hierarchy": res_hierarchy,
         "raw_source": "FreeAstrologyAPI"
     }
 

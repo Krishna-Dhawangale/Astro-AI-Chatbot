@@ -58,10 +58,17 @@ logger = logging.getLogger(__name__)
 # Provider & Model Configuration
 # ---------------------------------------------------------------------------
 GROQ_BASE_URL: str = os.getenv("GROQ_BASE_URL", "https://api.groq.com/openai/v1/chat/completions")
+PRIMARY_GROQ_MODEL: str = os.getenv("GROQ_MODEL", "qwen/qwen3.8-27b")
 GROQ_MODELS: List[str] = [
+    PRIMARY_GROQ_MODEL,
+    "qwen/qwen3.8-27b",
     "llama-3.3-70b-versatile",
     "llama-3.1-8b-instant",
+    "openai/gpt-oss-120b",
 ]
+# Remove duplicates while preserving priority order
+_seen_groq = set()
+GROQ_MODELS = [m for m in GROQ_MODELS if not (m in _seen_groq or _seen_groq.add(m))]
 
 OPENROUTER_BASE_URL: str = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1/chat/completions")
 OPENROUTER_MODELS: List[str] = [
@@ -72,9 +79,46 @@ OPENROUTER_MODELS: List[str] = [
 
 # Verified active models for Google Gemini
 GEMINI_SAFETY_MODELS: List[str] = [
+    os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite"),
     "gemini-3.5-flash-lite",
     "gemini-3.8-flash",
+    "gemini-2.5-flash",
 ]
+_seen_gem = set()
+GEMINI_SAFETY_MODELS = [m for m in GEMINI_SAFETY_MODELS if not (m in _seen_gem or _seen_gem.add(m))]
+
+# Rate Limit Cooldown & Tracking
+_ACCOUNT_COOLDOWNS: Dict[str, float] = {}
+
+
+def record_account_cooldown(account_id: str, cooldown_seconds: float = 60.0) -> None:
+    """Marks an account as in cooldown due to hitting rate limits / quota limits."""
+    _ACCOUNT_COOLDOWNS[account_id] = time.time() + cooldown_seconds
+    logger.warning("[RATE LIMIT] Account %s hit rate limit; cooldown active for %.1fs", account_id, cooldown_seconds)
+
+
+def is_account_in_cooldown(account_id: str) -> bool:
+    """Checks if an account is currently cooling down after hitting rate limits."""
+    exp = _ACCOUNT_COOLDOWNS.get(account_id, 0.0)
+    if time.time() < exp:
+        return True
+    if account_id in _ACCOUNT_COOLDOWNS:
+        del _ACCOUNT_COOLDOWNS[account_id]
+    return False
+
+
+def is_rate_limit_error(error: Exception) -> bool:
+    """Detects HTTP 429, 403, 401 or quota exhaustion errors."""
+    if isinstance(error, httpx.HTTPStatusError):
+        if error.response.status_code in (429, 403, 401):
+            return True
+    err_str = str(error).lower()
+    return any(k in err_str for k in [
+        "429", "rate limit", "rate_limit", "quota", "resource_exhausted",
+        "tokens per minute", "requests per minute", "tpm", "rpm", "tpd",
+        "insufficient_quota", "daily limit", "model_not_found"
+    ])
+
 
 # Shared HTTPX Client (Singleton with connection pooling)
 _SHARED_HTTPX_CLIENT: Optional[httpx.AsyncClient] = None
@@ -101,7 +145,7 @@ async def close_shared_httpx_client() -> None:
 # Provider Account Resolvers
 # ---------------------------------------------------------------------------
 def get_groq_accounts() -> List[Dict[str, str]]:
-    """Returns active Groq accounts with valid non-empty API keys."""
+    """Returns active Groq accounts in strict priority order: Account 1 (Primary) then Account 2 (Failover)."""
     accounts = []
     key1 = (
         os.getenv("GROQ_API_KEY_1")
@@ -110,7 +154,7 @@ def get_groq_accounts() -> List[Dict[str, str]]:
         or os.getenv("GROQ_API_KEY")
     )
     if key1 and key1.strip():
-        accounts.append({"account_id": "Groq-1", "api_key": key1.strip()})
+        accounts.append({"account_id": "Groq-Account-1", "api_key": key1.strip()})
 
     key2 = (
         os.getenv("GROQ_API_KEY_2")
@@ -118,7 +162,7 @@ def get_groq_accounts() -> List[Dict[str, str]]:
         or os.getenv("GROQ_API_KEY_ACC2")
     )
     if key2 and key2.strip() and key2.strip() != (key1 or "").strip():
-        accounts.append({"account_id": "Groq-2", "api_key": key2.strip()})
+        accounts.append({"account_id": "Groq-Account-2", "api_key": key2.strip()})
 
     return accounts
 
@@ -133,6 +177,7 @@ def get_gemini_key() -> Optional[str]:
     """Returns active Google Gemini API key if present and non-empty."""
     k = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
     return k.strip() if k and k.strip() else None
+
 
 
 # ---------------------------------------------------------------------------
@@ -408,8 +453,20 @@ async def stream_cascading_router(
 
     candidate_providers: List[Dict[str, Any]] = []
 
-    # Tier 1 & 2: Active Groq Accounts
-    for acc in groq_accounts:
+    # Partition accounts: Groq Account 1 (Primary) vs Groq Account 2 (Failover)
+    acc1 = next((a for a in groq_accounts if "1" in a["account_id"]), None)
+    acc2 = next((a for a in groq_accounts if "2" in a["account_id"]), None)
+
+    active_groq_accounts = []
+    # Tier 1: If Account 1 is not in cooldown, it is PRIMARY
+    if acc1 and not is_account_in_cooldown(acc1["account_id"]):
+        active_groq_accounts.append(acc1)
+    # Tier 2: Account 2 comes into service immediately if Account 1 is rate-limited
+    if acc2 and not is_account_in_cooldown(acc2["account_id"]):
+        active_groq_accounts.append(acc2)
+
+    # 1. Tier 1: Groq Account 1 (Primary) -> Tier 2: Groq Account 2 (Millisecond Failover)
+    for acc in active_groq_accounts:
         for model in GROQ_MODELS:
             candidate_providers.append({
                 "type": "groq",
@@ -420,7 +477,25 @@ async def stream_cascading_router(
                 "timeout": 4.0,
             })
 
-    # Tier 3: OpenRouter Tier
+    # 2. Tier 3: Backup Google Gemini LLM (used if both Groq Account 1 and Account 2 reach limits)
+    gemini_client = custom_gemini_client
+    if gemini_client is None and gemini_key and genai is not None:
+        try:
+            gemini_client = genai.Client(api_key=gemini_key)
+        except Exception as e:
+            logger.warning("Failed to initialize Gemini client: %s", e)
+
+    if gemini_client is not None or gemini_key:
+        for model in GEMINI_SAFETY_MODELS:
+            candidate_providers.append({
+                "type": "gemini",
+                "account_id": "Google-Gemini",
+                "api_key": gemini_key or "configured",
+                "model": model,
+                "timeout": 8.0,
+            })
+
+    # 3. Tertiary fallback: OpenRouter Tier (if key configured)
     if openrouter_key:
         for model in OPENROUTER_MODELS:
             candidate_providers.append({
@@ -432,32 +507,18 @@ async def stream_cascading_router(
                 "timeout": 6.0,
             })
 
-    # Tier 4: Google Gemini Safety Net
-    gemini_client = custom_gemini_client
-    if gemini_client is None and gemini_key and genai is not None:
-        try:
-            gemini_client = genai.Client(api_key=gemini_key)
-        except Exception as e:
-            logger.warning("Failed to initialize Gemini client: %s", e)
-
-    if gemini_client is not None:
-        for model in GEMINI_SAFETY_MODELS:
-            candidate_providers.append({
-                "type": "gemini",
-                "account_id": "Google-Gemini",
-                "api_key": gemini_key or "configured",
-                "model": model,
-                "timeout": 8.0,
-            })
-
     execution_attempts = []
     stream_started = False
     full_emitted_text = []
+    skipped_accounts = set()
 
     for provider in candidate_providers:
+        p_acc = provider["account_id"]
+        if p_acc in skipped_accounts:
+            continue
+
         p_type = provider["type"]
         p_model = provider["model"]
-        p_acc = provider["account_id"]
         call_start = time.time()
         sanitizer = StreamingTagSanitizer()
 
@@ -562,6 +623,8 @@ async def stream_cascading_router(
                     "[ROUTER SUCCESS] %s (%s) generated %d words in %.1f ms.",
                     p_type, p_model, word_eval["word_count"], latency_ms
                 )
+                inp_tok = max(1, (len(prompt) + len(system_prompt)) // 4)
+                out_tok = max(1, len(total_text) // 4)
                 yield ("", {
                     "provider": p_type,
                     "account": p_acc,
@@ -570,6 +633,9 @@ async def stream_cascading_router(
                     "latency_ms": latency_ms,
                     "word_eval": word_eval,
                     "full_text": total_text,
+                    "input_tokens": inp_tok,
+                    "output_tokens": out_tok,
+                    "total_tokens": inp_tok + out_tok,
                 })
                 return  # Single-model completion: terminate cascade immediately
 
@@ -579,12 +645,23 @@ async def stream_cascading_router(
         except Exception as e:
             latency_ms = (time.time() - call_start) * 1000
             err_msg = str(e)
-            logger.warning(
-                "[PROVIDER FAILOVER] %s (%s) failed in %.1f ms: %s",
-                p_type, p_model, latency_ms, err_msg
-            )
+
+            if is_rate_limit_error(e):
+                record_account_cooldown(p_acc, cooldown_seconds=60.0)
+                skipped_accounts.add(p_acc)
+                logger.warning(
+                    "[FAILOVER: MILLISECONDS] %s limit reached in %.1f ms (%s). Instantly activating next provider...",
+                    p_acc, latency_ms, err_msg
+                )
+            else:
+                logger.warning(
+                    "[PROVIDER FAILOVER] %s (%s) failed in %.1f ms: %s",
+                    p_type, p_model, latency_ms, err_msg
+                )
+
             execution_attempts.append({
                 "provider": p_type,
+                "account": p_acc,
                 "model": p_model,
                 "error": err_msg,
                 "latency_ms": latency_ms,

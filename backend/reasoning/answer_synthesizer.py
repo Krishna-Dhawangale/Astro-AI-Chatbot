@@ -70,17 +70,344 @@ def guard_deterministic_claims(text: str) -> str:
     """
     if not text:
         return ""
+    import re
     replacements = {
-        "guaranteed": "supportive",
-        "will definitely": "tends to support",
-        "exact date": "favorable window",
-        "100% certainty": "high likelihood",
+        r"\bguaranteed\b": "supportive",
+        r"\bwill definitely\b": "tends to support",
+        r"\bdefinitely\b": "likely",
+        r"\bexact date\b": "favorable window",
+        r"\b100% certainty\b": "high likelihood",
+        r"\bcertain to\b": "tends to",
     }
     cleaned = text
-    for old, new in replacements.items():
-        cleaned = cleaned.replace(old, new)
+    for pattern, new in replacements.items():
+        cleaned = re.sub(pattern, new, cleaned, flags=re.IGNORECASE)
     return cleaned
 
+
+def _extract_features(question: str) -> Dict[str, Any]:
+    try:
+        from backend.router.intent import extract_context_features
+        return extract_context_features(question)
+    except Exception:
+        try:
+            from router.intent import extract_context_features
+            return extract_context_features(question)
+        except Exception:
+            return {}
+
+
+def classify_question_type(
+    question: str,
+    intent: str = "",
+    features: Optional[Dict[str, Any]] = None
+) -> str:
+    """
+    Classifies a user query into one of five structured conversational question types:
+    - 'comparison': comparing two choices (e.g. job vs business, property vs stocks)
+    - 'feasibility_advisory': should I, can I, is it safe to, kya karna chahiye
+    - 'timing': timing window, timeframe, or horizon
+    - 'direct_placement': asking about a specific lord, house, or planetary placement
+    - 'growth_outlook': general progress, advancement, long-term trajectory
+    """
+    import re
+    q_low = (question or "").lower().strip()
+    intent_low = (intent or "").lower().strip()
+    feat = features or {}
+
+    # 1. Comparison
+    if feat.get("is_comparison") or any(k in q_low for k in ["business vs job", "job vs business", "business or job", "job or business", "vs", "versus", " ya "]):
+        return "comparison"
+
+    # 2. Feasibility / Advisory (Should I..., Can I..., Is it safe...)
+    # Queries like "Should I switch jobs right now?" are feasibility questions with a temporal context.
+    if (
+        any(q_low.startswith(p) for p in ["should i", "can i", "is it safe", "is it good", "is it advisable", "kya mujhe"])
+        or any(k in q_low for k in ["safe to invest", "should i switch", "should i take", "karna chahiye", "favorable to"])
+        or feat.get("is_feasibility")
+    ):
+        if not any(k in q_low for k in ["when", "kab", "which year", "which month"]):
+            return "feasibility_advisory"
+
+    # 3. Timing
+    if (
+        feat.get("has_timing_signal")
+        or "timing" in intent_low
+        or any(k in q_low for k in ["when", "kab", "timing", "timeline", "which year", "which month", "date", "window", "kab tak"])
+    ):
+        return "timing"
+
+    # 4. Direct Placement
+    if (
+        re.search(r"\b(?:\d+(?:st|nd|rd|th)?|first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth)\s+(?:house|lord)\b", q_low)
+        or re.search(r"\b(?:sun|moon|mars|mercury|jupiter|venus|saturn|rahu|ketu)\s+in\s+[a-z]+\b", q_low)
+        or "placement" in intent_low
+        or "10th_lord" in intent_low
+    ):
+        return "direct_placement"
+
+    # 5. Growth Outlook & General Trajectory
+    return "growth_outlook"
+
+
+def _connect_evidence_phrases(positives: List[str], challenges: List[str], is_hinglish: bool = False) -> str:
+    """
+    Connects positive and challenging evidence phrases using natural discourse connectors
+    without deleting distinct or conflicting evidence, while eliminating exact duplicate phrases.
+    """
+    if not positives and not challenges:
+        return ""
+
+    # Deduplicate repeated evidence phrases while preserving order
+    seen = set()
+    deduped_pos = []
+    for p in positives:
+        p_clean = p.strip()
+        p_norm = p_clean.lower()
+        if p_norm and p_norm not in seen:
+            seen.add(p_norm)
+            deduped_pos.append(p_clean)
+
+    seen_chal = set()
+    deduped_chal = []
+    for c in challenges:
+        c_clean = c.strip()
+        c_norm = c_clean.lower()
+        if c_norm and c_norm not in seen_chal and c_norm not in seen:
+            seen_chal.add(c_norm)
+            deduped_chal.append(c_clean)
+
+    if not deduped_pos and not deduped_chal:
+        return ""
+
+    if is_hinglish:
+        parts = []
+        if deduped_pos:
+            parts.append(deduped_pos[0].capitalize())
+            hi_pos_conn = ["Iske saath hi", "Saath hi", "Iske alawa"]
+            for i, p in enumerate(deduped_pos[1:]):
+                conn = hi_pos_conn[min(i, len(hi_pos_conn) - 1)]
+                parts.append(f"{conn}, {p}")
+        if deduped_chal:
+            if deduped_pos:
+                parts.append(f"Dusri taraf, {deduped_chal[0]}")
+            else:
+                parts.append(deduped_chal[0].capitalize())
+            hi_chal_conn = ["Saath hi", "Iske sath", "Dhyan rahe"]
+            for i, c in enumerate(deduped_chal[1:]):
+                conn = hi_chal_conn[min(i, len(hi_chal_conn) - 1)]
+                parts.append(f"{conn}, {c}")
+        return ". ".join(parts) + "."
+    else:
+        parts = []
+        if deduped_pos:
+            parts.append(deduped_pos[0].capitalize())
+            en_pos_conn = ["Furthermore", "Additionally", "Moreover"]
+            for i, p in enumerate(deduped_pos[1:]):
+                conn = en_pos_conn[min(i, len(en_pos_conn) - 1)]
+                parts.append(f"{conn}, {p}")
+        if deduped_chal:
+            if deduped_pos:
+                parts.append(f"While these foundational placements are supportive, conversely, {deduped_chal[0]}")
+            else:
+                parts.append(deduped_chal[0].capitalize())
+            en_chal_conn = ["In addition", "Concurrently", "Simultaneously"]
+            for i, c in enumerate(deduped_chal[1:]):
+                conn = en_chal_conn[min(i, len(en_chal_conn) - 1)]
+                parts.append(f"{conn}, {c}")
+        return ". ".join(parts) + "."
+
+
+def _resolve_house_and_lord(asc: str, house_offset: int) -> tuple[str, str]:
+    """Helper to dynamically calculate house sign and lord from ascendant."""
+    signs = [
+        "Aries", "Taurus", "Gemini", "Cancer", "Leo", "Virgo",
+        "Libra", "Scorpio", "Sagittarius", "Capricorn", "Aquarius", "Pisces"
+    ]
+    lords = {
+        "Aries": "Mars", "Taurus": "Venus", "Gemini": "Mercury", "Cancer": "Moon",
+        "Leo": "Sun", "Virgo": "Mercury", "Libra": "Venus", "Scorpio": "Mars",
+        "Sagittarius": "Jupiter", "Capricorn": "Saturn", "Aquarius": "Saturn", "Pisces": "Jupiter"
+    }
+    if asc in signs:
+        sign = signs[(signs.index(asc) + house_offset - 1) % 12]
+        return sign, lords[sign]
+    return "Gemini", "Mercury"
+
+
+def _synthesize_timing_answer(
+    domain: str,
+    asc: str,
+    moon: str,
+    c_maha: str,
+    c_antar: str,
+    h_sign: Optional[str],
+    h_lord: Optional[str],
+    positives: List[str],
+    challenges: List[str],
+    explicit_horizon: Optional[str] = None,
+    timing_window: Optional[str] = None,
+    is_hinglish: bool = False
+) -> str:
+    has_timing_evidence = bool(c_maha)
+    dasha_str = f"{c_maha}{'/' + c_antar if c_antar else ''}" if c_maha else ""
+
+    if not has_timing_evidence:
+        if is_hinglish:
+            return (
+                f"Aapki birth chart ({asc} Lagna, {moon} Moon sign) {domain} ke liye foundational baseline indicators show karti hai, "
+                "lekin exact timing window confirm karne ke liye active Dasha aur transit evidence ki requirement hai. "
+                "System bina verify hue Dasha facts ke koi artificial date generate nahi karta.\n\n"
+                "**Foundational Context**: Natal placements steady capability highlight karte hain. "
+                "Current Dasha verify hote hi exact timing period clearly calculate ho jayega."
+            )
+        return (
+            f"While your birth chart indicates general foundational tendencies for your {domain}, "
+            "specific timing windows cannot be confirmed without verified active Dasha and transit data. "
+            "The system avoids generating ungrounded calendar dates when timing evidence is uninitialized.\n\n"
+            "**Foundational Alignment**: Your natal indicators show steady long-term capability. "
+            "Confirming your active Dasha timeline will allow precise calculation of your favorable activation window."
+        )
+
+    if is_hinglish:
+        if explicit_horizon:
+            opening = f"Aapke stated timeline ({explicit_horizon}) ke context mein, aapki active {dasha_str} Dasha {domain} ke liye ek supportive phase create karti hai."
+        elif timing_window:
+            opening = f"Aapki birth chart ke according active {dasha_str} Dasha ({timing_window}) {domain} ke liye favorable timing window highlight karti hai."
+        else:
+            opening = f"Aapki birth chart ke according active {dasha_str} Dasha operating period ke dauran {domain} ke liye supportive activation window indicate hoti hai."
+
+        body = _connect_evidence_phrases(positives, challenges, is_hinglish=True)
+        conclusion = "Yeh phase preparatory skill consolidation aur methodical execution ke liye sabse best hai."
+        return f"{opening}\n\n**Astrological Context ({asc} Lagna, {moon} Moon)**:\n{body}\n\n**Conclusion**: {conclusion}"
+    else:
+        if explicit_horizon:
+            opening = f"Regarding your query for the {explicit_horizon}, your active {dasha_str} Dasha indicates a supportive timing window for steady {domain} progress during this period."
+        elif timing_window:
+            opening = f"Your birth chart indicates a supportive timing window ({timing_window}) for {domain} milestones under active {dasha_str} Dasha dynamics."
+        else:
+            opening = f"Your birth chart indicates favorable timing activation for {domain} during the active {dasha_str} Dasha operating period as supportive planetary influences align."
+
+        body = _connect_evidence_phrases(positives, challenges, is_hinglish=False)
+        conclusion = "Focusing on systematic skill building and disciplined pacing during this preparatory window positions you to maximize upcoming planetary momentum."
+        return f"{opening}\n\n**Astrological Evidence ({asc} Ascendant, {moon} Moon sign)**:\n{body}\n\n**Actionable Conclusion**: {conclusion}"
+
+
+def _synthesize_feasibility_answer(
+    domain: str,
+    asc: str,
+    moon: str,
+    c_maha: str,
+    c_antar: str,
+    h_sign: Optional[str],
+    h_lord: Optional[str],
+    positives: List[str],
+    challenges: List[str],
+    is_hinglish: bool = False
+) -> str:
+    if is_hinglish:
+        if domain in ["finance", "wealth"]:
+            opening = "Haan, aapka chart prudent aur long-term investments ko favor karta hai, lekin bina due diligence ke speculative risks lene ki recommendation nahi hai."
+        else:
+            opening = "Haan, aapka birth chart independent initiatives aur naye avenues ko support karta hai, lekin shuruat mein structured experience aur financial cushion maintain karna sabse safe path hai."
+
+        body = _connect_evidence_phrases(positives, challenges, is_hinglish=True)
+        conclusion = "Ek phased approach—pehle capital aur skills consolidate karna, phir calculated move lena—aapke chart ke saath best align karta hai."
+        return f"{opening}\n\n**Chart Indicators ({asc} Lagna, {moon} Moon)**:\n{body}\n\n**Key Advisory**: {conclusion}"
+    else:
+        if domain in ["finance", "wealth"]:
+            opening = "Yes, your birth chart supports prudent, long-term investments, whereas speculative or unhedged financial risks are not advised under current planetary conditions."
+        else:
+            opening = "Yes, your birth chart supports exploring new professional avenues, but establishing domain mastery and capital reserves in structured employment first provides the lowest risk path."
+
+        body = _connect_evidence_phrases(positives, challenges, is_hinglish=False)
+        conclusion = "A phased transition—validating practical feasibility before committing substantial capital—aligns best with your astrological indicators."
+        return f"{opening}\n\n**Astrological Analysis ({asc} Ascendant, {moon} Moon sign)**:\n{body}\n\n**Key Recommendation**: {conclusion}"
+
+
+def _synthesize_comparison_answer(
+    domain: str,
+    asc: str,
+    moon: str,
+    h10_sign: Optional[str],
+    h10_lord: Optional[str],
+    h7_sign: Optional[str],
+    h7_lord: Optional[str],
+    c_maha: str,
+    positives: List[str],
+    challenges: List[str],
+    is_hinglish: bool = False
+) -> str:
+    if not h10_sign or not h10_lord:
+        h10_sign, h10_lord = _resolve_house_and_lord(asc, 10)
+    if not h7_sign or not h7_lord:
+        h7_sign, h7_lord = _resolve_house_and_lord(asc, 7)
+
+    if is_hinglish:
+        opening = "Job aur business ke comparison mein, aapka chart shuruat mein structured employment (Job) ko favor karta hai, jabki aage chalkar independent enterprise (Business) ke liye bhi strong capacity hold karta hai."
+        comp_job = f"- **Job / Structured Employment**: 10th house ({h10_sign}, lord {h10_lord}) analytical execution, reliable financial income, aur stable progression ko support karta hai."
+        comp_biz = f"- **Business / Independent Venture**: 7th house ({h7_sign}, lord {h7_lord}) aur 11th house commercial partnerships ko favor karte hain jab Dasha periods commercially active hon."
+        conclusion = "Pehle Job se solid domain expertise aur capital reserve build karein; yeh foundation future business launch ko secure aur profitable banayegi."
+        return f"{opening}\n\n**Comparative Breakdown ({asc} Lagna, {moon} Moon)**:\n{comp_job}\n{comp_biz}\n\n**Strategic Conclusion**: {conclusion}"
+    else:
+        opening = "Between structured employment and an independent business, your chart initially favors organizational roles for stability and capital building, while holding strong entrepreneurial capability for later phases."
+        comp_job = f"- **Structured Employment**: Your 10th house in {h10_sign} ruled by {h10_lord} emphasizes methodical organizational execution, predictable financial security, and cumulative authority."
+        comp_biz = f"- **Independent Business**: Meanwhile, commercial indicators in your 7th house ({h7_sign}, lord {h7_lord}) and 11th house demonstrate robust enterprise potential as supportive Dashas activate."
+        conclusion = "Building domain mastery and financial capital in a structured role first will establish the ideal launchpad for an independent venture later."
+        return f"{opening}\n\n**Comparative Analysis ({asc} Ascendant, {moon} Moon sign)**:\n{comp_job}\n{comp_biz}\n\n**Strategic Recommendation**: {conclusion}"
+
+
+def _synthesize_growth_outlook_answer(
+    domain: str,
+    asc: str,
+    moon: str,
+    themes: List[str],
+    c_maha: str,
+    c_antar: str,
+    positives: List[str],
+    challenges: List[str],
+    is_hinglish: bool = False
+) -> str:
+    theme_str = ", ".join(themes[:3]) if themes else ("analytical leadership, structured execution" if domain == "career" else "stability, gradual consolidation")
+
+    if is_hinglish:
+        opening = f"Aapka overall {domain} outlook steady compounding advancement aur structural mastery se define hota hai, na ki sudden volatile shifts se."
+        body = _connect_evidence_phrases(positives, challenges, is_hinglish=True)
+        conclusion = f"Agle 12–18 mahino mein {theme_str} par focus maintain karna aapki long-term authority aur growth ko consolidate karega."
+        return f"{opening}\n\n**Core Indications ({asc} Lagna, {moon} Moon)**:\n{body}\n\n**Outlook Summary**: {conclusion}"
+    else:
+        opening = f"Your overall {domain} outlook is characterized by steady, compounding advancement and structural mastery rather than sudden volatile shifts."
+        body = _connect_evidence_phrases(positives, challenges, is_hinglish=False)
+        conclusion = f"Consolidating expertise in {theme_str} over the next 12 to 18 months positions you favorably for substantive long-term elevation."
+        return f"{opening}\n\n**Astrological Baseline ({asc} Ascendant, {moon} Moon sign)**:\n{body}\n\n**Strategic Outlook**: {conclusion}"
+
+
+def _synthesize_direct_placement_answer(
+    domain: str,
+    asc: str,
+    moon: str,
+    h10_sign: Optional[str],
+    h10_lord: Optional[str],
+    c_maha: str,
+    positives: List[str],
+    challenges: List[str],
+    is_hinglish: bool = False
+) -> str:
+    if not h10_sign or not h10_lord:
+        h10_sign, h10_lord = _resolve_house_and_lord(asc, 10)
+
+    if is_hinglish:
+        opening = f"Aapka 10th lord {h10_lord} ({h10_sign}) aapke career ko methodical discipline, organizational integrity, aur long-term authority ke saath anchor karta hai."
+        mechanics = "Vedic astrology mein 10th house Karma Bhava (professional action) ko govern karta hai. Is placement ke saath professional growth patience aur structured execution se reward hoti hai."
+        body = _connect_evidence_phrases(positives, challenges, is_hinglish=True)
+        conclusion = "Is placement ko analytical planning aur structured execution wale roles mein utilize karna aapki potential ko maximize karega."
+        return f"{opening}\n\n**Placement Dynamics ({asc} Lagna, {moon} Moon)**:\n{mechanics}\n\n{body}\n\n**Core Takeaway**: {conclusion}"
+    else:
+        opening = f"Your 10th lord {h10_lord} placed in {h10_sign} directly anchors your career in methodical discipline, organizational integrity, and long-term authority."
+        mechanics = f"In Vedic astrology, the 10th house governs Karma Bhava (professional action and public standing). With {h10_lord} overseeing this domain, career elevation rewards patient persistence and structured responsibility."
+        body = _connect_evidence_phrases(positives, challenges, is_hinglish=False)
+        conclusion = "Channeling this placement into roles that demand technical precision and structured leadership maximizes your professional fulfillment."
+        return f"{opening}\n\n**Astrological Mechanics ({asc} Ascendant, {moon} Moon sign)**:\n{mechanics}\n\n{body}\n\n**Core Takeaway**: {conclusion}"
 
 
 def synthesize_local_answer(
@@ -90,20 +417,21 @@ def synthesize_local_answer(
 ) -> str:
     """
     Synthesizes clean, natural human language from a StructuredEvidence object.
-    Mirrors language automatically if the question is asked in Hinglish.
+    Applies question-aware answer shapes, direct opening sentences, evidence-aware
+    discourse connectors, and repetition reduction.
     """
     if not is_hinglish and question:
         is_hinglish = is_hinglish_query(question)
 
-    # 0. Check Evidence Availability & Handle Missing Evidence (Test D)
+    # 0. Check Evidence Availability & Handle Missing Evidence (Safeguard 5)
     if not evidence or not evidence.is_sufficient():
         domain_label = evidence.domain if evidence else "astrological"
         if is_hinglish:
-            return (
+            return guard_deterministic_claims(
                 f"✨ Aapke chart ke according {domain_label} domain ke liye sufficient background details available nahi hain. "
                 "System facts verify nahi hone par dynamic prediction create nahi karta."
             )
-        return (
+        return guard_deterministic_claims(
             f"✨ Based on the available evidence, details regarding your {domain_label} domain cannot be fully determined from the backend facts. "
             "The system avoids generating ungrounded claims when evidence is incomplete."
         )
@@ -118,6 +446,10 @@ def synthesize_local_answer(
     sun = facts.get("sun_sign", "Gemini")
     c_maha = timing.get("active_mahadasha", "")
     c_antar = timing.get("active_antardasha", "")
+    h10_sign = facts.get("tenth_house_sign")
+    h10_lord = facts.get("tenth_lord")
+    h7_sign = facts.get("seventh_house_sign")
+    h7_lord = facts.get("seventh_lord")
 
     # Get gated semantic phrases (Safeguard 2)
     vocab = get_gated_semantic_phrases(evidence, is_hinglish=is_hinglish)
@@ -129,204 +461,161 @@ def synthesize_local_answer(
     intent = evidence.intent.lower()
     domain = evidence.domain.lower()
 
-    # 1. SPECIFIC INTENT ROUTING & ANSWER SHAPES (Safeguard 3)
-    
-    # 1. SPECIFIC INTENT ROUTING & ANSWER SHAPES (Safeguard 3)
-    
-    # Health Domain Handling
+    # Reuse Phase 1 Context Features non-destructively
+    features = _extract_features(question)
+    explicit_horizon = features.get("explicit_user_horizon")
+
+    # Classify Question Type
+    q_type = classify_question_type(question, intent, features)
+
+    # 1. HEALTH DOMAIN HANDLING (Preserve wellness disclaimers & boundaries)
     if domain == "health" or intent.startswith("health") or any(k in q_lower for k in ["tired", "energy", "sleep", "wellbeing", "vitality", "routine", "overthink", "stressed", "emotional", "rest", "physical strength", "weakness"]):
         disclaimer_en = "\n\nThese are astrological wellness indicators, not a medical diagnosis."
         disclaimer_hi = "\n\nYeh astrological wellness indicators hain, koi medical diagnosis nahi."
 
-        # Sleep & Rest Focus (Questions 9-14)
+        # Sleep & Rest Focus
         if any(k in q_lower for k in ["sleep", "rest", "night", "insomnia", "bedtime"]):
             if is_hinglish:
-                return (
-                    f"**Rest & Sleep Analysis ({asc} Lagna, {moon} Moon sign):**\n\n"
-                    f"- **Rest & Sleep Indicators**: 12th-house placements recovery, relaxation, aur nighttime quietude ko manage karte hain.\n"
+                opening = "Aapki birth chart ke according sleep aur rest schedule ko stabilize karna aapki mental clarity aur daily recovery ke liye essential factor hai."
+                body = (
+                    f"- **Recovery Indicators**: 12th-house placements recovery, relaxation, aur nighttime quietude ko manage karte hain.\n"
                     f"- **Moon & Mind**: {moon} Moon placement suggest karti hai ki sleep se pehle mind ko relax karna sleep quality aur recovery ko favor karta hai.\n"
-                    f"- **Dasha Influence**: Active Dasha ({c_maha}{'/' + c_antar if c_antar else ''}) highlight karti hai ki busy phases ke dauran constant sleep schedule maintan karna beneficial rehta hai."
-                    f"{disclaimer_hi}"
+                    f"- **Dasha Influence**: Active Dasha ({c_maha}{'/' + c_antar if c_antar else ''}) consistent sleep hygiene maintain karne par emphasis deti hai."
                 )
-            return (
-                f"**Rest & Sleep Indicators ({asc} Ascendant, {moon} Moon sign):**\n\n"
+                return guard_deterministic_claims(f"{opening}\n\n**Rest & Recovery ({asc} Lagna, {moon} Moon)**:\n{body}{disclaimer_hi}")
+            opening = "Your birth chart indicates that maintaining structured quietude before sleep directly supports your emotional rest and physical recovery."
+            body = (
                 f"- **Rest & Recovery Indicators**: Your 12th-house placements govern recovery, relaxation, and nighttime quietude.\n"
                 f"- **Moon & Mind Balance**: Your {moon} Moon placement suggests that calming your mental state before sleep supports higher sleep quality and emotional rest.\n"
                 f"- **Dasha Influence**: Your active Dasha period ({c_maha}{'/' + c_antar if c_antar else ''}) highlights the importance of maintaining a consistent sleep schedule to prevent restlessness during demanding phases."
-                f"{disclaimer_en}"
             )
+            return guard_deterministic_claims(f"{opening}\n\n**Rest & Recovery ({asc} Ascendant, {moon} Moon sign)**:\n{body}{disclaimer_en}")
 
-        # Overthinking / Stress / Emotional Balance Focus (Questions 15-22)
+        # Overthinking / Stress / Emotional Balance
         if any(k in q_lower for k in ["overthink", "stress", "emotional", "relax", "mind", "mental"]):
             if is_hinglish:
-                return (
-                    f"**Emotional Balance & Mind ({asc} Lagna, {moon} Moon sign):**\n\n"
-                    f"- **Moon Placement & Emotional Nature**: {moon} mein Moon placement deep thinking aur active mental reflection ko show karti hai, jo kabhi fatigue create kar sakti hai.\n"
-                    f"- **Stress Management**: 6th-house indicators suggest karte hain ki daily work aur relaxation ke beech clear boundaries maintain karne se emotional stability strengthening hoti hai.\n"
-                    f"- **Dasha Period**: Current Dasha ({c_maha}{'/' + c_antar if c_antar else ''}) intentional mental relaxation aur mindful pacing ko favor karti hai."
-                    f"{disclaimer_hi}"
+                opening = "Aapka Moon placement ek analytical aur deeply reflective nature show karta hai, jo busy work phases mein intentional mental pauses lene se balance hota hai."
+                body = (
+                    f"- **Moon Placement & Mind**: {moon} mein Moon placement deep thinking aur active mental reflection ko show karti hai.\n"
+                    f"- **Stress Management**: 6th-house indicators suggest karte hain ki daily work aur relaxation ke beech clear boundaries maintain karne se emotional stability strengthen hoti hai.\n"
+                    f"- **Dasha Influence**: Current Dasha ({c_maha}{'/' + c_antar if c_antar else ''}) mindful pacing ko favor karti hai."
                 )
-            return (
-                f"**Emotional Nature & Mind ({asc} Ascendant, {moon} Moon sign):**\n\n"
+                return guard_deterministic_claims(f"{opening}\n\n**Mind & Emotional Balance ({asc} Lagna, {moon} Moon)**:\n{body}{disclaimer_hi}")
+            opening = "Your Moon placement indicates an active, deeply reflective analytical disposition that benefits from intentional mental pauses between demanding tasks."
+            body = (
                 f"- **Moon Placement & Mind**: Your Moon in {moon} indicates an analytical, deeply reflective emotional disposition, which can occasionally lead to mental fatigue if unpaced.\n"
                 f"- **Stress & Workload Balance**: 6th-house indicators suggest that maintaining clear boundaries between work tasks and relaxation strengthens emotional resilience.\n"
                 f"- **Dasha Period**: Your current Dasha ({c_maha}{'/' + c_antar if c_antar else ''}) emphasizes intentional mental relaxation and mindful energy management during active phases."
-                f"{disclaimer_en}"
             )
+            return guard_deterministic_claims(f"{opening}\n\n**Mind & Emotional Balance ({asc} Ascendant, {moon} Moon sign)**:\n{body}{disclaimer_en}")
 
-        # Fatigue / Low Energy / Vitality Fluctuations (Questions 1-2, 4-8, 23-28)
-        if any(k in q_lower for k in ["tired", "energy", "vitality", "routine", "weak", "strength", "wellbeing"]):
-            if is_hinglish:
-                return (
-                    f"**Vitality & Energy Patterns ({asc} Lagna, {moon} Moon sign):**\n\n"
-                    f"- **Astrological Vitality**: {asc} Lagna aur Sun placements ({sun}) aapki core energy aur stamina tendencies ko highlight karte hain.\n"
-                    f"- **Routine & Wellness**: 6th-house indicators batate hain ki consistent daily routine aur workload balance energy levels ko support karte hain.\n"
-                    f"- **Rest & Recovery**: 12th-house factors suggest karte hain ki adequate rest aur recovery windows physical vitality refresh karne ke liye essential hain.\n"
-                    f"- **Dasha Influence**: Active Dasha ({c_maha}{'/' + c_antar if c_antar else ''}) active work phases mein physical pacing ko favor karti hai."
-                    f"{disclaimer_hi}"
-                )
-            return (
-                f"**Vitality & Energy Patterns ({asc} Ascendant, {moon} Moon sign):**\n\n"
-                f"- **Astrological Vitality**: Your {asc} Lagna and {sun} Sun placement describe your baseline physical constitution and vitality tendencies.\n"
-                f"- **Routine & Wellness**: 6th-house indicators emphasize the importance of maintaining consistent daily routines and workload discipline to manage energy levels.\n"
-                f"- **Rest & Recovery**: 12th-house factors indicate that structured quiet recovery time plays a key role in maintaining physical resilience.\n"
-                f"- **Dasha Influence**: Your active Dasha ({c_maha}{'/' + c_antar if c_antar else ''}) suggests pacing your activities and balancing exertion with adequate rest during this period."
-                f"{disclaimer_en}"
-            )
-
-        # Default Health Overview (Overall Wellbeing)
+        # Fatigue / Vitality / Energy
         if is_hinglish:
-            return (
-                f"**Overall Astrological Wellness ({asc} Lagna, {moon} Moon sign):**\n\n"
-                f"- **Vitality**: {asc} Lagna placements baseline stamina aur energy patterns ko support karte hain.\n"
-                f"- **Wellness Routine**: 6th-house indicators disciplined daily habits ko emphasize karte hain.\n"
-                f"- **Rest & Recovery**: 12th-house factors recovery aur sleep quality par emphasis dete hain.\n"
-                f"- **Timing**: Active Dasha ({c_maha}{'/' + c_antar if c_antar else ''}) work-rest equilibrium ko favor karti hai."
-                f"{disclaimer_hi}"
+            opening = "Aapka chart indicate karta hai ki baseline physical vitality steady daily routines aur balanced workload discipline se best support hoti hai."
+            body = (
+                f"- **Astrological Vitality**: {asc} Lagna aur Sun placements ({sun}) aapki core energy aur stamina tendencies ko highlight karte hain.\n"
+                f"- **Routine & Wellness**: 6th-house indicators batate hain ki consistent daily routine aur workload balance energy levels ko support karte hain.\n"
+                f"- **Rest & Recovery**: 12th-house factors suggest karte hain ki adequate rest aur recovery windows physical vitality refresh karne ke liye essential hain.\n"
+                f"- **Dasha Influence**: Active Dasha ({c_maha}{'/' + c_antar if c_antar else ''}) active work phases mein physical pacing ko favor karti hai."
             )
-        return (
-            f"**Overall Astrological Wellness ({asc} Ascendant, {moon} Moon sign):**\n\n"
-            f"Your chart indicates generally supportive wellness factors through your {asc} Lagna and related indicators.\n\n"
-            f"- **Astrological Vitality**: Lagna strength supports your core constitution and physical resilience.\n"
-            f"- **Wellness Habits**: 6th-house indicators highlight the benefits of maintaining disciplined daily routines and stress management.\n"
-            f"- **Rest & Recovery**: 12th-house factors make adequate rest and sleep especially relevant for sustained stamina.\n"
-            f"- **Dasha Context**: Your current Dasha ({c_maha}{'/' + c_antar if c_antar else ''}) suggests prioritizing work-rest equilibrium during active phases."
-            f"{disclaimer_en}"
+            return guard_deterministic_claims(f"{opening}\n\n**Vitality Patterns ({asc} Lagna, {moon} Moon)**:\n{body}{disclaimer_hi}")
+        opening = "Your chart indicates that your baseline physical vitality is best sustained through predictable daily rhythms and structured recovery windows rather than sporadic bursts of activity."
+        body = (
+            f"- **Astrological Vitality**: Your {asc} Lagna and {sun} Sun placement describe your baseline physical constitution and vitality tendencies.\n"
+            f"- **Routine & Wellness**: 6th-house indicators emphasize the importance of maintaining consistent daily routines and workload discipline to manage energy levels.\n"
+            f"- **Rest & Recovery**: 12th-house factors indicate that structured quiet recovery time plays a key role in maintaining physical resilience.\n"
+            f"- **Dasha Influence**: Your active Dasha ({c_maha}{'/' + c_antar if c_antar else ''}) suggests pacing your activities and balancing exertion with adequate rest during this period."
         )
+        return guard_deterministic_claims(f"{opening}\n\n**Vitality Patterns ({asc} Ascendant, {moon} Moon sign)**:\n{body}{disclaimer_en}")
 
-    # Education Domain Handling
+    # 2. EDUCATION DOMAIN HANDLING
     if domain == "education" or intent.startswith("education") or any(k in q_lower for k in ["education", "study", "learning", "college", "degree", "academic", "5th house"]):
-        h5_rashi = "Capricorn" if asc == "Virgo" else "5th house"
         mercury_sign = "Taurus" if asc == "Virgo" else "favorable placement"
-        
-        # Technical education / education suitability
-        if any(k in q_lower for k in ["technical", "suit", "type of education", "field"]):
-            if is_hinglish:
-                return (
-                    f"**Education & Learning Analysis ({asc} Lagna, {moon} Moon sign):**\n\n"
-                    f"- **Technical Alignment**: 5th house intelligence indicators aur Mercury ({mercury_sign}) analytical disciplines, technical fields, aur applied problem-solving ko strongly support karte hain.\n"
-                    f"- **Higher Learning**: 9th house placements structured academic development aur higher certifications ko favor karte hain.\n"
-                    f"- **Dasha Period**: Active Dasha ({c_maha}{'/' + c_antar if c_antar else ''}) practical skill acquisition aur focused study phase ko favor karti hai."
-                )
-            return (
-                f"**Education & Learning Analysis ({asc} Ascendant, {moon} Moon sign):**\n\n"
-                f"- **Technical & Academic Alignment**: Your 5th house indicators and Mercury placement ({mercury_sign}) strongly favor analytical disciplines, technical training, and structured problem-solving.\n"
-                f"- **Higher Learning Strengths**: Higher education factors suggest favorable capacity for advanced degrees, conceptual synthesis, and specialized certifications.\n"
-                f"- **Dasha Influence**: Your active Dasha ({c_maha}{'/' + c_antar if c_antar else ''}) supports concentrated academic effort and steady skill acquisition."
-            )
-
-        # 5th house / learning indicators
-        if any(k in q_lower for k in ["5th house", "learning", "intellect", "planets influence"]):
-            if is_hinglish:
-                return (
-                    f"**5th House & Learning Indicators ({asc} Lagna, {moon} Moon sign):**\n\n"
-                    f"- **Intellect & Comprehension**: 5th house intellect, memory, aur higher comprehension ko govern karta hai. Yeh placement structured deep learning favor karti hai.\n"
-                    f"- **Key Planetary Influences**: Mercury aur Jupiter learning capabilities, logical analysis, aur knowledge retention ko drive karte hain.\n"
-                    f"- **Timing**: Current Dasha ({c_maha}{'/' + c_antar if c_antar else ''}) practical academic progress ko strengthen karti hai."
-                )
-            return (
-                f"**5th House & Learning Indicators ({asc} Ascendant, {moon} Moon sign):**\n\n"
-                f"- **Intellect & Grasping Power**: The 5th house governs intellect (Buddhi), analytical depth, and memory retention, supporting methodical and structured study habits.\n"
-                f"- **Key Planetary Influences**: Mercury (logical intellect) and Jupiter (higher wisdom) are the primary karakas shaping your academic focus and retention.\n"
-                f"- **Dasha Factor**: Your active period ({c_maha}{'/' + c_antar if c_antar else ''}) encourages dedicated application toward mastering complex subjects."
-            )
-
-        # General Higher Education
         if is_hinglish:
-            return (
-                f"**Higher Education Indicators ({asc} Lagna, {moon} Moon sign):**\n\n"
-                f"- **Academic Foundation**: 4th aur 5th house indicators solid foundational study aur conceptual clarity highlight karte hain.\n"
-                f"- **Advanced Studies**: 9th house indicators higher education, specialized degrees, ya technical programs ke liye favorable tendencies show karte hain.\n"
+            opening = "Aapki birth chart analytical learning, technical disciplines, aur conceptual clarity ko strongly favor karti hai."
+            body = (
+                f"- **Technical Alignment**: 5th house intelligence indicators aur Mercury ({mercury_sign}) analytical disciplines aur applied problem-solving ko support karte hain.\n"
+                f"- **Advanced Studies**: 9th house indicators higher education aur specialized certifications ko favor karte hain.\n"
                 f"- **Current Phase**: Active Dasha ({c_maha}{'/' + c_antar if c_antar else ''}) consistent academic discipline ko reward karti hai."
             )
-        return (
-            f"**Higher Education Indicators ({asc} Ascendant, {moon} Moon sign):**\n\n"
-            f"- **Academic Foundation**: Your 4th and 5th house indicators describe a solid intellectual foundation with high analytical discipline.\n"
-            f"- **Advanced Studies**: Placements connected to your 9th house support specialized higher learning, technical certifications, and advanced degrees.\n"
-            f"- **Timing & Focus**: Your current Dasha ({c_maha}{'/' + c_antar if c_antar else ''}) highlights structured study and consistent academic effort."
+            return guard_deterministic_claims(f"{opening}\n\n**Education Indicators ({asc} Lagna, {moon} Moon)**:\n{body}")
+        opening = "Your birth chart strongly aligns with analytical disciplines, technical training, and structured academic problem-solving."
+        body = (
+            f"- **Academic Alignment**: Your 5th house indicators and Mercury placement ({mercury_sign}) strongly favor analytical disciplines, technical training, and structured problem-solving.\n"
+            f"- **Higher Learning Strengths**: Higher education factors suggest favorable capacity for advanced degrees, conceptual synthesis, and specialized certifications.\n"
+            f"- **Dasha Influence**: Your active Dasha ({c_maha}{'/' + c_antar if c_antar else ''}) supports concentrated academic effort and steady skill acquisition."
+        )
+        return guard_deterministic_claims(f"{opening}\n\n**Academic Alignment ({asc} Ascendant, {moon} Moon sign)**:\n{body}")
+
+    # 3. QUESTION-AWARE SYNTHESIS FOR CAREER, MARRIAGE, FINANCE, AND GENERAL
+    if q_type == "comparison":
+        res = _synthesize_comparison_answer(
+            domain=domain,
+            asc=asc,
+            moon=moon,
+            h10_sign=h10_sign,
+            h10_lord=h10_lord,
+            h7_sign=h7_sign,
+            h7_lord=h7_lord,
+            c_maha=c_maha,
+            positives=positives,
+            challenges=challenges,
+            is_hinglish=is_hinglish
+        )
+    elif q_type == "timing":
+        res = _synthesize_timing_answer(
+            domain=domain,
+            asc=asc,
+            moon=moon,
+            c_maha=c_maha,
+            c_antar=c_antar,
+            h_sign=h10_sign if domain == "career" else h7_sign,
+            h_lord=h10_lord if domain == "career" else h7_lord,
+            positives=positives,
+            challenges=challenges,
+            explicit_horizon=explicit_horizon,
+            timing_window=timing.get("timing_window") or timing.get("window"),
+            is_hinglish=is_hinglish
+        )
+    elif q_type == "feasibility_advisory":
+        res = _synthesize_feasibility_answer(
+            domain=domain,
+            asc=asc,
+            moon=moon,
+            c_maha=c_maha,
+            c_antar=c_antar,
+            h_sign=h10_sign if domain == "career" else h7_sign,
+            h_lord=h10_lord if domain == "career" else h7_lord,
+            positives=positives,
+            challenges=challenges,
+            is_hinglish=is_hinglish
+        )
+    elif q_type == "direct_placement":
+        res = _synthesize_direct_placement_answer(
+            domain=domain,
+            asc=asc,
+            moon=moon,
+            h10_sign=h10_sign,
+            h10_lord=h10_lord,
+            c_maha=c_maha,
+            positives=positives,
+            challenges=challenges,
+            is_hinglish=is_hinglish
+        )
+    else:  # growth_outlook or fallback
+        res = _synthesize_growth_outlook_answer(
+            domain=domain,
+            asc=asc,
+            moon=moon,
+            themes=themes,
+            c_maha=c_maha,
+            c_antar=c_antar,
+            positives=positives,
+            challenges=challenges,
+            is_hinglish=is_hinglish
         )
 
-    # Career Suitability ("Which career suits me?")
-    if "suit" in q_lower or "field" in q_lower or intent == "career_suitability":
-        if is_hinglish:
-            theme_str = ", ".join(themes[:3]) if themes else "structured management, analytics"
-            return (
-                f"**Career Suitability ({asc} Lagna, {moon} Moon sign):**\n\n"
-                f"Aapka chart un career fields ko favor karta hai jahan **{theme_str}** important hote hain.\n\n"
-                f"- **Aligned Fields**: Data & systems management, strategic planning, technical roles, ya organizational leadership aapke chart strength ke saath acche se match karte hain.\n"
-                f"- **Core Strength**: " + (positives[0] if positives else "Structured execution aur conceptual clarity aapki growth ko support karte hain.")
-            )
-        theme_str = ", ".join(themes[:3]) if themes else "structured management, analytical reasoning"
-        return (
-            f"**Career Alignment ({asc} Ascendant, {moon} Moon sign):**\n\n"
-            f"Your chart indicators favor career paths that combine **{theme_str}**.\n\n"
-            f"- **Suitable Domains**: Technical management, data analysis, strategic planning, financial operations, or organizational leadership align particularly well with your chart factors.\n"
-            f"- **Core Indicator & Strengths**: " + (positives[0] if positives else "Your placements support steady skill consolidation and structured execution.")
-        )
-
-    # Dasha & Timing Interaction ("How does my Dasha affect my career?")
-    if any(k in q_lower for k in ["dasha", "period", "timing", "when"]) or "dasha" in intent:
-        if domain == "marriage":
-            if is_hinglish:
-                return (
-                    f"**Marriage Timing & Dasha:** Aapki active Dasha ({c_maha}{'/' + c_antar if c_antar else ''}) relationship house factors ko highlight karti hai. "
-                    "**2027–2028** ke aas-paas relationship commitment aur supportive timing window highlight hoti hai."
-                )
-            return (
-                f"**Marriage Timing & Dasha:** Your active period ({c_maha}{'/' + c_antar if c_antar else ''}) connects constructively with your relationship house factors. "
-                "Your chart indicates a supportive timing window for marriage around **2027–2028**."
-            )
-        else: # career timing
-            if is_hinglish:
-                return (
-                    f"**Career Dasha & Timing:** Aapki active Dasha ({c_maha}{'/' + c_antar if c_antar else ''}) aapke 10th-house career indicators ko activate karti hai. "
-                    "Agle **1–2 saal** ke dauran professional development aur expanding responsibilities ke liye supportive phase dikhta hai."
-                )
-            return (
-                f"**Career Dasha & Timing:** Your active Dasha period ({c_maha}{'/' + c_antar if c_antar else ''}) connects directly with your career indicators. "
-                "This period favors professional growth and expanding responsibilities over the next **1–2 years** through consistent effort."
-            )
-
-    # General Domain Overview ("What does my chart indicate about my career/marriage/finances?")
-    pos_bullet = positives[0] if positives else ("Your 10th-house indicators highlight natural strengths in analytical management." if domain == "career" else "Your placements emphasize mutual trust and long-term stability.")
-    pos_bullet_2 = positives[1] if len(positives) > 1 else ("Planetary alignments support steady professional advancement." if domain == "career" else "Planetary alignments favor building an enduring relationship foundation.")
-    
-    chal_bullet = challenges[0] if challenges else ("Current transit influences suggest progress comes through consistent effort rather than sudden shifts." if domain == "career" else "Patient communication strengthens long-term partnership bond.")
-
-    if is_hinglish:
-        return (
-            f"Based on your birth chart ({asc} Lagna, {moon} Moon sign):\n\n"
-            f"- {pos_bullet.capitalize()}.\n"
-            f"- {pos_bullet_2.capitalize()}.\n"
-            f"- {chal_bullet.capitalize()}."
-        )
-
-    return (
-        f"Based on your birth chart ({asc} Ascendant, {moon} Moon sign):\n\n"
-        f"- {pos_bullet.capitalize()}.\n"
-        f"- {pos_bullet_2.capitalize()}.\n"
-        f"- {chal_bullet.capitalize()}."
-    )
+    return guard_deterministic_claims(res)
 
 
 def build_auditable_answer_trace(
