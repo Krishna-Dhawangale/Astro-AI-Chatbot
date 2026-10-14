@@ -4,7 +4,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-FREE_ASTROLOGY_KEY = os.getenv("FREE_ASTROLOGY_API_KEY")
+FREE_ASTROLOGY_KEY = os.getenv("FREE_ASTROLOGY_API_KEY") or os.getenv("FREE_ASTROLOGY_KEY")
 PROKERALA_CLIENT_ID = os.getenv("PROKERALA_CLIENT_ID")
 PROKERALA_CLIENT_SECRET = os.getenv("PROKERALA_CLIENT_SECRET")
 
@@ -13,26 +13,28 @@ def fetch_planet_positions(year, month, day, hour, minute, second, lat, lon, tz=
     url = "https://json.freeastrologyapi.com/planets/extended"
     headers = {
         "Content-Type": "application/json",
-        "x-api-key": FREE_ASTROLOGY_KEY
+        "x-api-key": FREE_ASTROLOGY_KEY or ""
     }
     payload = {
-        "Year": year,
-        "Month": month,
-        "Date": day,
-        "Hours": hour,
-        "Minutes": minute,
-        "Seconds": second,
-        "Latitude": lat,
-        "Longitude": lon,
-        "Timezone": tz,
-        "Settings": {
-            "Observation Point": "topocentric",
-            "Ayanamsha": "lahiri",
-            "Language": "en"
+        "year": year,
+        "month": month,
+        "date": day,
+        "hours": hour,
+        "minutes": minute,
+        "seconds": second,
+        "latitude": lat,
+        "longitude": lon,
+        "timezone": tz,
+        "config": {
+            "observation_point": "topocentric",
+            "ayanamsha": "lahiri"
         }
     }
-    response = requests.post(url, json=payload, headers=headers)
-    return response.json()
+    try:
+        response = requests.post(url, json=payload, headers=headers, timeout=10)
+        return response.json()
+    except Exception as e:
+        return {"error": str(e), "statusCode": 500}
 
 
 # 2. Free Astrology API - Vimshottari Dasha
@@ -40,26 +42,28 @@ def fetch_dasha_details(year, month, day, hour, minute, second, lat, lon, tz=5.5
     url = "https://json.freeastrologyapi.com/vimsottari/maha-dasas-and-antar-dasas"
     headers = {
         "Content-Type": "application/json",
-        "x-api-key": FREE_ASTROLOGY_KEY
+        "x-api-key": FREE_ASTROLOGY_KEY or ""
     }
     payload = {
-        "Year": year,
-        "Month": month,
-        "Date": day,
-        "Hours": hour,
-        "Minutes": minute,
-        "Seconds": second,
-        "Latitude": lat,
-        "Longitude": lon,
-        "Timezone": tz,
-        "Settings": {
-            "Observation Point": "topocentric",
-            "Ayanamsha": "lahiri",
-            "Language": "en"
+        "year": year,
+        "month": month,
+        "date": day,
+        "hours": hour,
+        "minutes": minute,
+        "seconds": second,
+        "latitude": lat,
+        "longitude": lon,
+        "timezone": tz,
+        "config": {
+            "observation_point": "topocentric",
+            "ayanamsha": "lahiri"
         }
     }
-    response = requests.post(url, json=payload, headers=headers)
-    return response.json()
+    try:
+        response = requests.post(url, json=payload, headers=headers, timeout=10)
+        return response.json()
+    except Exception as e:
+        return {"error": str(e), "statusCode": 500}
 
 
 # 3. Prokerala API - OAuth Token & SVG Chart

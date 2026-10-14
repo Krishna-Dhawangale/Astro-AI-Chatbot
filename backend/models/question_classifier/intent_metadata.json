@@ -1,0 +1,72 @@
+{
+    "model_name": "Vedic Astrology Intent Classifier",
+    "model_type": "TF-IDF + Logistic Regression",
+    "version": "1.0",
+    "trained_at": "2026-09-22T05:36:52.898045",
+    "dataset": {
+        "master_path": "/content/drive/MyDrive/Vedic_Astrology_AI/data/processed/router_dataset_master.csv",
+        "train_path": "/content/drive/MyDrive/Vedic_Astrology_AI/data/processed/train_router.csv",
+        "validation_path": "/content/drive/MyDrive/Vedic_Astrology_AI/data/processed/validation_router.csv",
+        "test_path": "/content/drive/MyDrive/Vedic_Astrology_AI/data/processed/test_router.csv"
+    },
+    "dataset_size": {
+        "total": 2496,
+        "train": 1996,
+        "validation": 250,
+        "test": 250
+    },
+    "number_of_intents": 23,
+    "intents": [
+        "career_business",
+        "career_change",
+        "career_general",
+        "career_interview",
+        "career_job",
+        "career_promotion",
+        "compatibility",
+        "dasha",
+        "definition",
+        "finance_general",
+        "financial_stability",
+        "health_general",
+        "health_period",
+        "income",
+        "life_overview",
+        "love_marriage",
+        "marriage_timing",
+        "married_life",
+        "multi_domain",
+        "personality",
+        "relationship",
+        "wealth",
+        "wellness"
+    ],
+    "vectorizer": {
+        "type": "TfidfVectorizer",
+        "ngram_range": [
+            1,
+            3
+        ],
+        "min_df": 1,
+        "max_df": 0.98,
+        "sublinear_tf": true,
+        "max_features": 50000,
+        "lowercase": true,
+        "strip_accents": "unicode"
+    },
+    "classifier": {
+        "type": "LogisticRegression",
+        "max_iter": 5000,
+        "class_weight": "balanced",
+        "C": 2.0,
+        "solver": "lbfgs"
+    },
+    "evaluation": {
+        "test_accuracy": 0.996,
+        "test_accuracy_percent": 99.6,
+        "macro_f1": 0.9963705103969754,
+        "weighted_f1": 0.9959930434782609
+    },
+    "known_test_errors": 1,
+    "status": "FINAL_STAGE_3_INTENT_MODEL"
+}

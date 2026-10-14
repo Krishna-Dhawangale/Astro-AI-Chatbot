@@ -1,57 +1,83 @@
 """
-Safety & Abuse Guardrail Engine: Multi-Lingual Toxicity Detection with 3-Strike Session Termination.
+backend/abuse_guardrail.py
+==========================
+Calibrated Multilingual Abuse Guardrail & Isolated Session Tracking
+(Proposal 1 Integration)
 
-Rule 2 (Safety & Profanity Guardrail):
-- Multi-lingual Toxicity / Vulgarity Detection (English, Hindi, Hinglish).
-- In-memory `abuse_strikes` tracking per session ID.
-- Strike 1 & 2: Return warning: "⚠️ Warning ({count}/3): Inappropriate or vulgar language is not permitted."
-- Strike 3: Terminate chat session immediately and lock further inputs:
-  "🚫 Session Terminated: You have exceeded the limit for inappropriate language."
-
-Rule 1 Integration (Fast Domain Restriction):
-- Integrates domain validation in middleware and route checks.
+Features & Design Invariants:
+1. Multilingual profanity detection across English, Hinglish, leetspeak, and Devanagari.
+2. Contextual disambiguation for historical 'BC', astrological 'MC', biological 'sex' (progeny),
+   and proper names (e.g. 'Randi Zuckerberg').
+3. Cryptographically signed, server-controlled session tokens (HMAC-SHA256).
+   - Secret loaded from SESSION_SECRET_KEY environment variable.
+   - If unset (development mode), an ephemeral 32-byte secret is generated dynamically.
+     NOTE: In development, restarting the server invalidates existing tokens.
+     In production, configure a stable SESSION_SECRET_KEY to preserve sessions across restarts.
+   - Automatic token rotation after 12 hours (TOKEN_ROTATION_INTERVAL).
+   - Hard cryptographic token expiration after 24 hours (TOKEN_MAX_AGE).
+4. Thread-safe, bounded session strike tracker (CalibratedAbuseSessionTracker).
+   - 2-hour inactivity strike decay.
+   - 24-hour lockout expiration.
+   - Bounded cache (10,000 sessions) with lazy pruning to prevent memory exhaustion.
+5. Strict safety precedence support (record_safety_query tracks strikes without suppressing
+   unsupported clinical medical/death limitation responses).
+6. Response cookie management (attach_session_cookie) with HttpOnly, SameSite=Lax, and Secure flags.
 """
 
-import json
-import logging
+import hashlib
+import hmac
 import os
 import re
+import secrets
 import threading
 import time
-from typing import Any, Callable, Dict, List, Optional, Tuple
+import uuid
+from typing import Any, Dict, Optional, Tuple
 
-from fastapi import APIRouter, Request, Response
-from fastapi.responses import JSONResponse
-from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import Response
 
-try:
-    from router import OUT_OF_SCOPE_RESPONSE, validate_astrology_domain
-except ImportError:
-    from backend.router import OUT_OF_SCOPE_RESPONSE, validate_astrology_domain
-
-logger = logging.getLogger(__name__)
-
-# Standard Guardrail Templates mandated by Rule Book
+# ---------------------------------------------------------------------------
+# Standard Guardrail Templates
+# ---------------------------------------------------------------------------
 WARNING_TEMPLATE = "⚠️ Warning ({count}/3): Inappropriate or vulgar language is not permitted."
 TERMINATED_MESSAGE = "🚫 Session Terminated: You have exceeded the limit for inappropriate language."
 
-# Character substitution mapping for leetspeak / masked profanity
+SESSION_COOKIE_NAME = "astro_session_id"
+TOKEN_MAX_AGE = 86400  # 24 hours in seconds
+TOKEN_ROTATION_INTERVAL = 43200  # 12 hours in seconds
+
+# ---------------------------------------------------------------------------
+# Leetspeak & Normalization Substitutions
+# ---------------------------------------------------------------------------
 LEET_SUBS = {
-    "@": "a",
-    "4": "a",
-    "$": "s",
-    "5": "s",
-    "1": "i",
-    "!": "i",
-    "0": "o",
-    "3": "e",
+    "@": "a", "4": "a", "$": "s", "5": "s", "1": "i", "!": "i", "0": "o", "3": "e"
 }
 
 # ---------------------------------------------------------------------------
-# Multi-Lingual Abuse & Toxicity Regex Rules (English, Hindi, Hinglish)
+# Contextual Exemption Dictionaries
 # ---------------------------------------------------------------------------
-ABUSE_REGEX_PATTERNS = [
-    # --- English Profanity, Vulgarity & Sexually Explicit Terms ---
+ASTROLOGY_CONTEXT_TOKENS = {
+    "midheaven", "natal", "chart", "sign", "degree", "house", "conjunct", "trine",
+    "square", "aspect", "ic", "ascendant", "zenith", "astrology", "vedic", "horoscope",
+    "lagna", "rashi", "planet", "graha", "transit"
+}
+
+PROGENY_DEMOGRAPHIC_TOKENS = {
+    "child", "children", "baby", "progeny", "birth", "gender", "male", "female",
+    "biological", "son", "daughter", "pregnancy", "demographic", "foetus", "fetus",
+    "santan", "santaan", "family", "born", "unborn"
+}
+
+HISTORICAL_DATE_TOKENS = {
+    "era", "century", "ad", "bce", "ce", "dating", "dates", "date", "calendar",
+    "ancient", "history", "established", "founded", "period", "written", "compiled"
+}
+
+# ---------------------------------------------------------------------------
+# Calibrated Regular Expressions
+# ---------------------------------------------------------------------------
+RAW_ABUSE_PATTERNS = [
+    # English Profanity
     r"\bf+u*c+k+(?:er|ing|ed|s|off)?\b",
     r"\bf+c+k+\b",
     r"\bmother\s*f+u*c+k+(?:er)?\b",
@@ -74,17 +100,15 @@ ABUSE_REGEX_PATTERNS = [
     r"\bblowjob\b",
     r"\bhandjob\b",
     r"\bmasturbat\w*\b",
-    r"\b(?:sex|sexy|nude|nudes|boobs|tits|penis|vagina|incest|xxx|xvideos|porno)\b",
+    r"\b(?:sexy|nude|nudes|boobs|tits|penis|vagina|incest|xxx|xvideos|porno)\b",
 
-    # --- Hindi / Hinglish Profanity (Latin Script) ---
+    # Hindi / Hinglish Profanity
     r"\b(?:behen|bhen|bhn)\s*c+h+o+d+\b",
-    r"\bb+c+\b",
     r"\bb+s+d+k+\b",
     r"\bb+h+o+s+[a-z]*d+i+k+e+\b",
     r"\bb+h+o+s+[a-z]*d+i+(?:wala|wali|wale)?\b",
     r"\bb+h+o+s+d+a+\b",
     r"\b(?:madar|maadar|mader)\s*c+h+o+d+\b",
-    r"\bm+c+\b",
     r"\bmadarja+t+\b",
     r"\bc+h+u+t+i+y+a+(?:s|n|pan)?\b",
     r"\bc+h+u+t+i+y+e+\b",
@@ -92,7 +116,6 @@ ABUSE_REGEX_PATTERNS = [
     r"\bc+h+o+o+t+i+y+a+\b",
     r"\bg+a+n+d+u+(?:s)?\b",
     r"\bg+a+a+n+d+\s*(?:marna|mara|mari|faad|fat|masti|chhed)?\b",
-    r"\bg+a+n+d+\s*(?:marna|mara|mari|faad|fat)\b",
     r"\bh+a+r+a+m+i+(?:yo|pan)?\b",
     r"\bh+a+r+a+m+k+h+o+r+\b",
     r"\bk+a+m+i+n+e+\b",
@@ -101,8 +124,6 @@ ABUSE_REGEX_PATTERNS = [
     r"\bl+o+d+[aeiu]+\b",
     r"\bl+a+v+d+[aeiu]+\b",
     r"\bl+u+n+d+(?:s)?\b",
-    r"\br+a+n+d+i+(?:ya|baaz)?\b",
-    r"\br+a+n+d+w+a+\b",
     r"\bc+h+i+n+a+l+\b",
     r"\bt+a+t+t+e+\b",
     r"\bj+h+a+a*t+\b",
@@ -110,319 +131,369 @@ ABUSE_REGEX_PATTERNS = [
     r"\bmaa\s+ki\s+choot\b",
     r"\bmaa\s+ka\s+bhosda\b",
     r"\bsaale\s+kutte\b",
-    r"\b(?:chudai|chodna|chodo|chode|muth|muthal)\b",
+    r"\b(?:chudai|chodna|chodo|chode|muthal)\b",
 
-    # --- Hindi Devanagari Script ---
-    r"मादरचोद",
-    r"बहनचोद",
-    r"भोसड़ीके",
-    r"भोसड़ी",
-    r"चूतिया",
-    r"चूतिये",
-    r"गांडू",
-    r"हरामी",
-    r"कमीने",
-    r"लौड़े",
-    r"लौड़ा",
-    r"लंड",
-    r"रंडी",
-    r"साले\s*कुत्ते",
-    r"चोदना",
-    r"चुदाई",
-    r"मुठ",
-    r"सेक्स",
+    # Devanagari Hindi
+    r"मादरचोद", r"बहनचोद", r"भोसड़ीके", r"भोसड़ी", r"चूतिया", r"चूतिये",
+    r"गांडू", r"हरामी", r"कमीने", r"लौड़े", r"लौड़ा", r"लंड", r"रंडी",
+    r"साले\s*कुत्ते", r"चोदना", r"चुदाई", r"मुठ", r"सेक्स"
 ]
 
-COMPILED_PATTERNS = [re.compile(pat, re.IGNORECASE) for pat in ABUSE_REGEX_PATTERNS]
+COMPILED_PATTERNS = [re.compile(pat, re.IGNORECASE) for pat in RAW_ABUSE_PATTERNS]
+
+# Context-Sensitive Patterns that require negative disambiguation checks
+PATTERN_BC = re.compile(r"\bb+c+\b", re.IGNORECASE)
+PATTERN_MC = re.compile(r"\bm+c+\b", re.IGNORECASE)
+PATTERN_SEX = re.compile(r"\bsex\b", re.IGNORECASE)
+PATTERN_RANDI = re.compile(r"\br+a+n+d+i+(?:ya|baaz)?\b", re.IGNORECASE)
 
 
 def normalize_text_for_detection(text: str) -> str:
-    """Normalize leetspeak and letter elongations while preserving word structure."""
+    """Normalize leetspeak, wildcards, and elongated characters for detection."""
     if not text:
         return ""
     t = text.lower()
     for symbol, rep in LEET_SUBS.items():
         t = t.replace(symbol, rep)
-    # Replace wildcard '*' with 'u' if inside words (e.g. f*ck -> fuck)
     t = re.sub(r'(?<=\w)\*(?=\w)', 'u', t)
-    # Collapse 3+ repeating characters (e.g., fuuuuck -> fuuck, bheeencoood -> bhenchod)
     t = re.sub(r'(.)\1{2,}', r'\1\1', t)
     return t
 
 
-def is_abusive_language(text: str) -> Tuple[bool, Optional[str]]:
+def is_contextual_abusive_language(query: str) -> Tuple[bool, Optional[str]]:
     """
-    Evaluates whether input text contains offensive, vulgar, sexual, or abusive language.
-    Returns (is_abusive: bool, matched_reason: Optional[str]).
+    Context-aware abuse evaluation.
+    Enforces genuine profanity detection while exempting:
+    1. Historical 'BC' (e.g. 1500 BC, BC era).
+    2. Astrological 'MC' (Midheaven / Medium Coeli).
+    3. Biological 'sex' in child/gender/progeny context.
+    4. Capitalized proper nouns containing 'Randi' (e.g. Randi Zuckerberg).
     """
-    if not text or not text.strip():
+    if not query or not query.strip():
         return False, None
 
-    normalized = normalize_text_for_detection(text)
+    normalized = normalize_text_for_detection(query)
+    q_low = query.lower()
+    words = set(re.findall(r"\b[a-zA-Z0-9_-]+\b", q_low))
 
+    # 1. Check Standard Unambiguous Abuse Patterns
     for pattern in COMPILED_PATTERNS:
-        match = pattern.search(normalized) or pattern.search(text)
+        match = pattern.search(normalized) or pattern.search(query)
         if match:
-            reason = match.group(0)
-            logger.warning("Abuse guardrail flagged term: '%s' in query", reason)
-            return True, reason
+            return True, match.group(0)
+
+    # 2. Contextual Check: 'BC' (Behenchod vs Before Christ)
+    match_bc = PATTERN_BC.search(query) or PATTERN_BC.search(normalized)
+    if match_bc:
+        is_date_bc = bool(re.search(r"\b\d+\s*bc\b", q_low))
+        has_historical_context = any(t in words for t in HISTORICAL_DATE_TOKENS)
+        if not (is_date_bc or has_historical_context):
+            return True, match_bc.group(0)
+
+    # 3. Contextual Check: 'MC' (Madarchod vs Midheaven)
+    match_mc = PATTERN_MC.search(query) or PATTERN_MC.search(normalized)
+    if match_mc:
+        has_astro_context = any(t in words for t in ASTROLOGY_CONTEXT_TOKENS)
+        is_mc_axis = bool(re.search(r"\b(?:my|natal|the|sign\s+of)\s+mc\b", q_low)) or "midheaven" in q_low
+        if not (has_astro_context or is_mc_axis):
+            return True, match_mc.group(0)
+
+    # 4. Contextual Check: 'sex' (Vulgarity vs Child's biological gender/sex)
+    match_sex = PATTERN_SEX.search(query)
+    if match_sex:
+        has_progeny_context = any(t in words for t in PROGENY_DEMOGRAPHIC_TOKENS)
+        if not has_progeny_context:
+            return True, match_sex.group(0)
+
+    # 5. Contextual Check: 'Randi' (Slur vs Proper Name)
+    match_randi = PATTERN_RANDI.search(query) or PATTERN_RANDI.search(normalized)
+    if match_randi:
+        is_proper_name = bool(re.search(r"\bRandi\s+[A-Z][a-z]+", query))
+        has_author_title = any(t in words for t in {"author", "book", "writer", "person", "mr", "ms", "dr"})
+        if not (is_proper_name and has_author_title):
+            return True, match_randi.group(0)
 
     return False, None
 
 
 # ---------------------------------------------------------------------------
-# Session Tracking Store (In-Memory with Optional Redis)
+# Cryptographic Session Token Management
 # ---------------------------------------------------------------------------
-class AbuseSessionTracker:
+_MODULE_EPHEMERAL_SECRET: Optional[bytes] = None
+
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except Exception:
+    pass
+
+
+def is_production_mode() -> bool:
+    """Robustly detect production mode across standard environment variables."""
+    for key in ("ENVIRONMENT", "ENV", "APP_ENV"):
+        val = (os.getenv(key) or "").strip().lower()
+        if val in ("production", "prod"):
+            return True
+    return False
+
+
+def get_session_secret() -> bytes:
     """
-    Manages session-level abuse strike tracking with thread safety.
-    Maintains an in-memory `abuse_strikes` counter per session ID.
-    Enforces the 3-Strike policy:
-      - Strikes 1 & 2: Warning
-      - Strike 3: Permanent session termination and lockout of all further inputs.
+    Retrieve configured SESSION_SECRET_KEY or generate an ephemeral 32-byte secret.
+    In development, an ephemeral secret suffices, but server restarts invalidate tokens.
+    In production, define SESSION_SECRET_KEY in the environment for stable multi-process operation.
+    """
+    global _MODULE_EPHEMERAL_SECRET
+    env_secret = (os.getenv("SESSION_SECRET_KEY") or "").strip()
+    if env_secret:
+        return env_secret.encode("utf-8")
+
+    # Fail fast in production if secret is missing or empty
+    if is_production_mode():
+        raise RuntimeError(
+            "CRITICAL SECURITY CONFIGURATION ERROR: SESSION_SECRET_KEY environment variable is missing or empty in production mode. "
+            "A stable, cryptographically secure key must be configured in production."
+        )
+
+    if _MODULE_EPHEMERAL_SECRET is None:
+        _MODULE_EPHEMERAL_SECRET = secrets.token_bytes(32)
+    return _MODULE_EPHEMERAL_SECRET
+
+
+def issue_secure_session_token(session_uuid: Optional[str] = None, current_time: Optional[float] = None) -> str:
+    """
+    Generate an HMAC-signed session token containing session_uuid and issued_timestamp:
+    token = f"{session_uuid}.{ts}.{sig}"
+    """
+    now_ts = int(current_time or time.time())
+    sid = session_uuid or str(uuid.uuid4())
+    payload = f"{sid}.{now_ts}"
+    secret = get_session_secret()
+    sig = hmac.new(secret, payload.encode("utf-8"), hashlib.sha256).hexdigest()[:16]
+    return f"{payload}.{sig}"
+
+
+def validate_secure_session_token(
+    token: Optional[str],
+    current_time: Optional[float] = None
+) -> Tuple[bool, Optional[str], bool]:
+    """
+    Validate server-issued session token signature and age.
+
+    Returns:
+        (is_valid: bool, session_uuid: Optional[str], needs_rotation: bool)
+    """
+    if not token or not isinstance(token, str):
+        return False, None, False
+
+    parts = token.split(".")
+    if len(parts) != 3:
+        return False, None, False
+
+    sid, ts_str, sig = parts
+    try:
+        ts = int(ts_str)
+    except ValueError:
+        return False, None, False
+
+    now = int(current_time or time.time())
+
+    # Verify signature
+    payload = f"{sid}.{ts_str}"
+    secret = get_session_secret()
+    expected_sig = hmac.new(secret, payload.encode("utf-8"), hashlib.sha256).hexdigest()[:16]
+    if not hmac.compare_digest(sig, expected_sig):
+        return False, None, False
+
+    # Check expiration (cannot be older than TOKEN_MAX_AGE or more than 60s in the future)
+    token_age = now - ts
+    if token_age > TOKEN_MAX_AGE or token_age < -60:
+        return False, None, False
+
+    # Check soft rotation interval
+    needs_rotation = (token_age >= TOKEN_ROTATION_INTERVAL)
+    return True, sid, needs_rotation
+
+
+# ---------------------------------------------------------------------------
+# Thread-Safe Bounded Session Strike Tracker
+# ---------------------------------------------------------------------------
+class CalibratedAbuseSessionTracker:
+    """
+    Thread-safe, bounded session tracker with:
+    - Inactivity strike decay (default 2 hours / 7200s).
+    - Lockout expiration (default 24 hours / 86400s).
+    - Lazy pruning of expired sessions to cap memory usage.
     """
 
-    def __init__(self, redis_url: Optional[str] = None):
+    def __init__(
+        self,
+        decay_seconds: float = 7200.0,
+        lockout_seconds: float = 86400.0,
+        max_sessions: int = 10000
+    ):
         self._lock = threading.RLock()
-        self._memory_sessions: Dict[str, Dict[str, Any]] = {}
-        self.redis_client = None
+        self._sessions: Dict[str, Dict[str, Any]] = {}
+        self.decay_seconds = decay_seconds
+        self.lockout_seconds = lockout_seconds
+        self.max_sessions = max_sessions
 
-        url = redis_url or os.getenv("REDIS_URL")
-        if url:
-            try:
-                import redis
-                client = redis.from_url(url, decode_responses=True, socket_connect_timeout=1.0)
-                client.ping()
-                self.redis_client = client
-                logger.info("AbuseSessionTracker connected to Redis at %s", url)
-            except Exception as e:
-                logger.info("AbuseSessionTracker Redis unavailable (%s); using thread-safe in-memory store", e)
-                self.redis_client = None
+    def _prune_expired_sessions_locked(self, current_time: float) -> None:
+        """Internal helper to remove expired sessions and prevent memory growth."""
+        to_delete = []
+        for sid, s in self._sessions.items():
+            if s.get("is_terminated"):
+                if current_time - s.get("locked_at", 0) >= self.lockout_seconds:
+                    to_delete.append(sid)
+            else:
+                if current_time - s.get("last_activity", 0) >= self.decay_seconds:
+                    to_delete.append(sid)
+        for sid in to_delete:
+            del self._sessions[sid]
 
-    def _get_raw_session(self, session_id: str) -> Dict[str, Any]:
-        """Fetch raw session record from Redis or memory."""
-        if self.redis_client:
-            try:
-                raw = self.redis_client.get(f"abuse_guardrail:{session_id}")
-                if raw:
-                    return json.loads(raw)
-            except Exception as e:
-                logger.warning("Error reading session %s from Redis: %s", session_id, e)
-
+    def get_session_state(self, session_id: str, current_time: Optional[float] = None) -> Dict[str, Any]:
+        """Fetch and evaluate session status applying decay and lockout expiration."""
+        now = current_time or time.time()
         with self._lock:
-            if session_id not in self._memory_sessions:
-                self._memory_sessions[session_id] = {
-                    "abuse_strikes": 0,
-                    "is_terminated": False,
-                    "last_updated": time.time(),
-                }
-            return dict(self._memory_sessions[session_id])
+            session = self._sessions.get(session_id)
+            if not session:
+                return {"abuse_strikes": 0, "is_terminated": False, "last_activity": now}
 
-    def _save_raw_session(self, session_id: str, data: Dict[str, Any]) -> None:
-        """Persist session record to memory and Redis with 24h TTL."""
-        data["last_updated"] = time.time()
-        with self._lock:
-            self._memory_sessions[session_id] = dict(data)
+            # Check Lockout Expiration
+            if session.get("is_terminated"):
+                locked_at = session.get("locked_at", 0)
+                if now - locked_at >= self.lockout_seconds:
+                    session["abuse_strikes"] = 0
+                    session["is_terminated"] = False
+                    session["locked_at"] = None
 
-        if self.redis_client:
-            try:
-                self.redis_client.setex(
-                    f"abuse_guardrail:{session_id}",
-                    86400,  # 24 hours TTL
-                    json.dumps(data),
-                )
-            except Exception as e:
-                logger.warning("Error saving session %s to Redis: %s", session_id, e)
+            # Check Strike Inactivity Decay (if not currently locked)
+            elif session.get("abuse_strikes", 0) > 0:
+                last_act = session.get("last_activity", 0)
+                if now - last_act >= self.decay_seconds:
+                    session["abuse_strikes"] = 0
 
-    def check_message(self, session_id: str, message: str) -> Optional[Dict[str, Any]]:
+            return dict(session)
+
+    def record_safety_query(self, session_id: str, query: str, current_time: Optional[float] = None) -> None:
         """
-        Process a message through the 3-Strike guardrail.
+        Record and audit queries that trigger clinical medical or death boundaries.
+        Tracks strikes internally if vulgar, but NEVER returns a blocking response,
+        preserving unbreakable safety boundary response delivery.
+        """
+        now = current_time or time.time()
+        with self._lock:
+            state = self.get_session_state(session_id, current_time=now)
+            is_abusive, _ = is_contextual_abusive_language(query)
+            if is_abusive and not state.get("is_terminated"):
+                state["abuse_strikes"] = min(3, state.get("abuse_strikes", 0) + 1)
+                state["last_activity"] = now
+                if state["abuse_strikes"] >= 3:
+                    state["is_terminated"] = True
+                    state["locked_at"] = now
+                self._sessions[session_id] = state
+
+    def check_message(
+        self,
+        session_id: str,
+        query: str,
+        current_time: Optional[float] = None
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Process non-safety queries through the 3-strike policy.
+
         Returns:
-          - None: Allowed to proceed.
-          - Dict: Intercepted payload (Warning or Terminated).
+            None: Message is clean, proceed downstream.
+            Dict: Intercepted response (Warning or Terminated).
         """
-        session = self._get_raw_session(session_id)
+        now = current_time or time.time()
 
-        # 1. If session is already terminated, lock further inputs immediately
-        if session.get("is_terminated"):
-            return {
-                "blocked": True,
-                "terminated": True,
-                "strikes": session.get("abuse_strikes", 3),
-                "message": TERMINATED_MESSAGE,
-            }
+        with self._lock:
+            # Enforce max sessions bound via lazy pruning
+            if len(self._sessions) > self.max_sessions:
+                self._prune_expired_sessions_locked(now)
 
-        # 2. Check for abusive language
-        is_abusive, _ = is_abusive_language(message)
+            state = self.get_session_state(session_id, current_time=now)
+            is_terminated = state.get("is_terminated", False)
 
-        if is_abusive:
-            session["abuse_strikes"] = session.get("abuse_strikes", 0) + 1
-            strikes = session["abuse_strikes"]
-
-            if strikes >= 3:
-                session["is_terminated"] = True
-                self._save_raw_session(session_id, session)
-                logger.warning("Session %s reached Strike 3 and is TERMINATED.", session_id)
+            # Locked session enforcement for all non-safety queries
+            if is_terminated:
                 return {
                     "blocked": True,
                     "terminated": True,
-                    "strikes": strikes,
-                    "message": TERMINATED_MESSAGE,
-                }
-            else:
-                self._save_raw_session(session_id, session)
-                warning_msg = WARNING_TEMPLATE.format(count=strikes)
-                logger.warning("Session %s received Strike %d/3 warning.", session_id, strikes)
-                return {
-                    "blocked": True,
-                    "terminated": False,
-                    "strikes": strikes,
-                    "message": warning_msg,
+                    "strikes": 3,
+                    "message": TERMINATED_MESSAGE
                 }
 
-        # 3. Message is clean; persist and allow downstream processing
-        self._save_raw_session(session_id, session)
-        return None
+            # Evaluate contextual abuse
+            is_abusive, matched_term = is_contextual_abusive_language(query)
 
-    def reset_session(self, session_id: str) -> Dict[str, Any]:
-        """Admin reset of a session's strikes and termination status."""
-        session = {
-            "abuse_strikes": 0,
-            "is_terminated": False,
-            "last_updated": time.time(),
-        }
-        self._save_raw_session(session_id, session)
-        return session
+            if is_abusive:
+                strikes = state.get("abuse_strikes", 0) + 1
+                state["abuse_strikes"] = strikes
+                state["last_activity"] = now
 
-    def get_status(self, session_id: str) -> Dict[str, Any]:
-        """Inspect current state of a session."""
-        return self._get_raw_session(session_id)
+                if strikes >= 3:
+                    state["is_terminated"] = True
+                    state["locked_at"] = now
+                    self._sessions[session_id] = state
+                    return {
+                        "blocked": True,
+                        "terminated": True,
+                        "strikes": strikes,
+                        "message": TERMINATED_MESSAGE,
+                        "flagged_term": matched_term
+                    }
+                else:
+                    self._sessions[session_id] = state
+                    warning_msg = WARNING_TEMPLATE.format(count=strikes)
+                    return {
+                        "blocked": True,
+                        "terminated": False,
+                        "strikes": strikes,
+                        "message": warning_msg,
+                        "flagged_term": matched_term
+                    }
 
+            # Clean message: update activity
+            state["last_activity"] = now
+            self._sessions[session_id] = state
+            return None
 
-# Global Singleton Guardrail Tracker
-_GUARDRAIL_TRACKER = AbuseSessionTracker()
-
-
-def check_abuse_guardrail(session_id: str, query: str) -> Optional[Dict[str, Any]]:
-    """
-    Public safety guardrail function.
-    Returns:
-      - None: Query is clean and allowed to proceed.
-      - Dict with {blocked: True, terminated: bool, strikes: int, message: str}: Intercepted.
-    """
-    if not session_id:
-        session_id = "default_user"
-    return _GUARDRAIL_TRACKER.check_message(session_id, query)
-
-
-def reset_abuse_session(session_id: str) -> Dict[str, Any]:
-    """Admin function to reset strikes and unblock a session."""
-    return _GUARDRAIL_TRACKER.reset_session(session_id)
-
-
-def get_abuse_session_status(session_id: str) -> Dict[str, Any]:
-    """Admin function to inspect session guardrail stats."""
-    return _GUARDRAIL_TRACKER.get_status(session_id)
+    def reset_session(self, session_id: str) -> None:
+        """Admin or test reset of session strikes."""
+        with self._lock:
+            if session_id in self._sessions:
+                del self._sessions[session_id]
 
 
-# ---------------------------------------------------------------------------
-# FastAPI Middleware: Enforces Rule 1 (Domain) & Rule 2 (Safety/3-Strike)
-# ---------------------------------------------------------------------------
-class AbuseGuardrailMiddleware(BaseHTTPMiddleware):
-    """
-    FastAPI Middleware inspecting chat requests at the HTTP layer.
-    Enforces:
-      1. Safety & Profanity Guardrail (3-strike vulgarity rule & lockout)
-      2. Domain Restriction Guardrail (Vedic astrology & life-path only)
-    """
-
-    def __init__(self, app, protected_paths: Optional[List[str]] = None):
-        super().__init__(app)
-        self.protected_paths = protected_paths or ["/chat", "/api/chat"]
-
-    async def dispatch(self, request: Request, call_next: Callable) -> Response:
-        if request.method == "POST" and any(request.url.path.startswith(p) for p in self.protected_paths):
-            try:
-                body_bytes = await request.body()
-
-                # Re-assign receive so downstream route handlers can read the body again
-                async def receive():
-                    return {"type": "http.request", "body": body_bytes}
-                request._receive = receive
-
-                if body_bytes:
-                    data = json.loads(body_bytes.decode("utf-8"))
-                    query = (
-                        data.get("query")
-                        or data.get("prompt")
-                        or data.get("user_query")
-                        or ""
-                    )
-                    user_id = (
-                        data.get("user_id")
-                        or (data.get("user_profile") or {}).get("user_id")
-                        or (data.get("user_profile") or {}).get("id")
-                        or "default_user"
-                    )
-
-                    # Step 1: Safety & Profanity Guardrail check (3-strike rule)
-                    abuse_result = check_abuse_guardrail(str(user_id), str(query))
-                    if abuse_result:
-                        status_str = "terminated" if abuse_result.get("terminated") else "warning"
-                        return JSONResponse(
-                            status_code=200,
-                            content={
-                                "status": status_str,
-                                "answer": abuse_result["message"],
-                                "response": abuse_result["message"],
-                                "abuse_strikes": abuse_result["strikes"],
-                                "terminated": abuse_result["terminated"],
-                                "related_questions": [],
-                            },
-                        )
-
-                    # Step 2: Domain Restriction Guardrail check (Astrology Only)
-                    is_valid, out_of_scope_msg = validate_astrology_domain(str(query))
-                    if not is_valid:
-                        return JSONResponse(
-                            status_code=200,
-                            content={
-                                "status": "out_of_scope",
-                                "answer": out_of_scope_msg,
-                                "response": out_of_scope_msg,
-                                "abuse_strikes": 0,
-                                "terminated": False,
-                                "related_questions": [
-                                    "How does my birth chart influence my career?",
-                                    "When is a favorable period for marriage in my chart?",
-                                    "What do my planetary transits say about my health?",
-                                ],
-                            },
-                        )
-            except Exception as exc:
-                logger.warning("AbuseGuardrailMiddleware error: %s", exc)
-
-        return await call_next(request)
-
-
-# Backwards compatible alias
-AstroGuardrailMiddleware = AbuseGuardrailMiddleware
+# Global tracker instance
+abuse_tracker = CalibratedAbuseSessionTracker()
 
 
 # ---------------------------------------------------------------------------
-# Administrative APIRouter for Guardrail Status & Testing
+# Response Cookie Utility
 # ---------------------------------------------------------------------------
-guardrail_router = APIRouter(prefix="/api/guardrail", tags=["Abuse Guardrail"])
+def attach_session_cookie(
+    response: Response,
+    token: str,
+    is_secure: Optional[bool] = None
+) -> Response:
+    """
+    Attach the signed session token as an HttpOnly, SameSite=Lax cookie on the response.
+    Applies to all Starlette/FastAPI responses (JSONResponse, StreamingResponse, etc.).
+    """
+    if is_secure is None:
+        is_secure = os.getenv("COOKIE_SECURE", "false").lower() == "true"
 
-
-@guardrail_router.get("/status/{session_id}")
-def guardrail_status(session_id: str):
-    """Fetch active strike count and status for a session."""
-    return {"session_id": session_id, "guardrail": get_abuse_session_status(session_id)}
-
-
-@guardrail_router.post("/reset/{session_id}")
-def guardrail_reset(session_id: str):
-    """Manually reset strikes and unblock a session."""
-    data = reset_abuse_session(session_id)
-    return {"session_id": session_id, "status": "reset_successful", "guardrail": data}
+    response.set_cookie(
+        key=SESSION_COOKIE_NAME,
+        value=token,
+        max_age=TOKEN_MAX_AGE,
+        httponly=True,
+        samesite="lax",
+        secure=is_secure,
+        path="/"
+    )
+    return response

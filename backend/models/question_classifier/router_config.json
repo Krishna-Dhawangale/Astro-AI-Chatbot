@@ -1,0 +1,36 @@
+{
+    "router_version": "1.0",
+    "architecture": {
+        "faq_first": true,
+        "domain_classifier": true,
+        "complexity_classifier": true,
+        "intent_classifier": true
+    },
+    "routing_logic": {
+        "faq_match": "faq",
+        "simple": "local",
+        "needs_chart": "astrology",
+        "multi_domain": "astrology"
+    },
+    "chart_requirement": {
+        "faq": false,
+        "local": false,
+        "astrology": true
+    },
+    "models": {
+        "domain": "domain_model.pkl",
+        "domain_vectorizer": "domain_vectorizer.pkl",
+        "complexity": "complexity_model.pkl",
+        "complexity_vectorizer": "complexity_vectorizer.pkl",
+        "intent": "intent_model.pkl",
+        "intent_vectorizer": "intent_vectorizer.pkl"
+    },
+    "confidence_policy": {
+        "thresholds_enabled": false,
+        "note": "Confidence thresholds are intentionally not enforced yet."
+    },
+    "faq_policy": {
+        "enabled": true,
+        "priority": "before_ml_router"
+    }
+}

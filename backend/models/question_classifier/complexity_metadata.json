@@ -1,0 +1,19 @@
+{
+    "model": "LogisticRegression",
+    "vectorizer": "TfidfVectorizer",
+    "ngram_range": [
+        1,
+        3
+    ],
+    "max_features": 50000,
+    "C": 2.0,
+    "class_weight": "balanced",
+    "max_iter": 3000,
+    "classes": [
+        "needs_chart",
+        "simple"
+    ],
+    "training_samples": 432,
+    "validation_samples": 63,
+    "validation_accuracy": 1.0
+}
