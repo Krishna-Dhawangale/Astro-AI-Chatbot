@@ -93,6 +93,90 @@ def is_unsupported_boundary_query(question: str) -> bool:
     return any(p in q_low for p in UNSUPPORTED_PATTERNS) or any(p in q_low for p in CLINICAL_DIAGNOSTIC_PATTERNS)
 
 
+def analyze_question_task(question: str) -> Dict[str, bool]:
+    """
+    Evaluates semantic task requirements of the user's question.
+    Distinguishes:
+    - comparative dilemmas (e.g. govt vs private, job vs business, career field comparisons)
+    - causal / delay inquiries (e.g. why delay, growth stagnation, reason for struggle)
+    - action / decision dilemmas (e.g. job switch timing, taking business risk)
+    - multi-topic synthesis
+    from general overview and direct factual inquiries.
+    """
+    if not question:
+        return {
+            "is_comparative": False,
+            "is_causal_delay": False,
+            "is_action_dilemma": False,
+            "is_multi_topic": False,
+            "is_legacy_complex": False,
+            "is_synthesis_gap": False,
+        }
+    q = question.lower().strip()
+
+    # 1. Comparative Dilemmas (comparing two sectors, career paths, or choices)
+    has_vs = any(sep in q for sep in [" vs ", " vs.", " versus ", " v/s "]) or q.startswith("job vs") or q.startswith("business vs")
+    has_gov_private = ("government" in q or "govt" in q or "sarkari" in q) and ("private" in q or "corporate" in q)
+    has_job_biz = ("job" in q or "naukri" in q or "rojgari" in q) and ("business" in q or "vyapar" in q or "enterprise" in q)
+    has_choice_or = any(p in q for p in [
+        "karun ya", "kare ya", "karein ya", "rahega ya", "better rahega ya", "kaunsa option better",
+        "which option is better", "which is better", "dono mein se", "dono me se", "kis mein jyada",
+        "kisme jyada", "choose karun ya", "try karte rehna chahiye ya", "or business", "or a job",
+        "business or", "job or"
+    ])
+    is_comparative = has_vs or has_gov_private or has_job_biz or has_choice_or
+
+    # 2. Causal / Delay / Obstacle Inquiries (why delay, why stuck, why stagnation)
+    is_causal_delay = any(p in q for p in [
+        "delay kyun", "delay kyu", "delay why", "why is there delay", "why delay", "baar-baar delay",
+        "baar baar delay", "delay ho raha", "late kyun", "late kyu", "rukawat", "growth nahi mil rahi",
+        "growth nahi", "growth kyu nahi", "growth kyun nahi", "fas gaya", "stuck in", "paisa fas",
+        "problem kyun", "kyun nahi ho raha", "kyu nahi ho raha", "is stress ka reason", "restlessness rehti hai",
+        "neend nahi aati"
+    ])
+
+    # 3. Action / Decision Dilemmas (should I switch, change, stay, take risk)
+    is_action_dilemma = any(p in q for p in [
+        "job change", "switch karna", "switch karun", "badalna safe", "rojgari badalna", "tikna sahi",
+        "purani naukri mein hi tikna", "purani job mein", "should i switch", "should i change",
+        "risk lena chahiye", "risk lu ya", "risk lena safe", "approach a career transition",
+        "switch from", "move from", "leave job", "leave my job"
+    ])
+
+    # 4. Multi-Topic Synthesis (queries combining multiple distinct life domains)
+    domain_hits = 0
+    if any(k in q for k in ["shaadi", "marriage", "shadi", "relationship", "spouse"]):
+        domain_hits += 1
+    if any(k in q for k in ["foreign", "videsh", "abroad", "foreign settlement"]):
+        domain_hits += 1
+    if any(k in q for k in ["income", "paisa", "wealth", "earning", "finance"]):
+        domain_hits += 1
+    if any(k in q for k in ["job", "career", "naukri", "profession"]):
+        domain_hits += 1
+    is_multi_topic = (domain_hits >= 2)
+
+    # Legacy uncovered keywords
+    complex_uncovered_keywords = [
+        "transition", "move from", "switch from", "should i change", "explain my overall",
+        "detail about my future", "tell me everything about", "career story", "guidance for my",
+        "product management", "software engineering", "move to", "should i move",
+        "business environment", "approach a career transition", "influence each other",
+        "how should i approach"
+    ]
+    is_legacy_complex = any(k in q for k in complex_uncovered_keywords)
+
+    is_synthesis_gap = is_comparative or is_causal_delay or is_action_dilemma or is_multi_topic or is_legacy_complex
+
+    return {
+        "is_comparative": is_comparative,
+        "is_causal_delay": is_causal_delay,
+        "is_action_dilemma": is_action_dilemma,
+        "is_multi_topic": is_multi_topic,
+        "is_legacy_complex": is_legacy_complex,
+        "is_synthesis_gap": is_synthesis_gap,
+    }
+
+
 def evaluate_rule_coverage(
     question: str,
     domain: str,
@@ -154,22 +238,15 @@ def evaluate_rule_coverage(
         or any(k in q_low for k in ["dasha", "mahadasha", "lagna", "10th lord", "7th lord", "2nd lord", "5th house", "10th house", "moon sign", "which career", "technical education", "higher education"])
     )
 
-    # 3. Exact Rule Match Evaluation
-    # Local rule match requires intent match + active matched rules + complete evidence
-    # AND must NOT be a complex custom/transition query beyond local rule scope
-    complex_uncovered_keywords = [
-        "transition", "move from", "switch from", "should i change", "explain my overall",
-        "detail about my future", "tell me everything about", "career story", "guidance for my",
-        "product management", "software engineering", "move to", "should i move",
-        "business environment", "approach a career transition", "influence each other",
-        "how should i approach"
-    ]
-    is_complex_uncovered = any(k in q_low for k in complex_uncovered_keywords)
+    # 3. Task Requirement vs Local Template Capability
+    # Distinguish general domain overview vs comparative, causal delay, or decision dilemmas
+    task = analyze_question_task(question)
+    is_synthesis_gap = task["is_synthesis_gap"]
 
     exact_rule_match = False
-    if evidence_complete and intent_match and not is_complex_uncovered:
+    if evidence_complete and intent_match and not is_synthesis_gap:
         exact_rule_match = True
-    elif evidence_complete and not is_complex_uncovered and ("which career" in q_low or "what is my lagna" in q_low or q_low.strip("?.!") == "my current dasha"):
+    elif evidence_complete and not is_synthesis_gap and ("which career" in q_low or "what is my lagna" in q_low or q_low.strip("?.!") == "my current dasha"):
         exact_rule_match = True
 
     if exact_rule_match:
@@ -189,7 +266,7 @@ def evaluate_rule_coverage(
             "reason": "Exact deterministic rule coverage available for intent"
         }
 
-    # 4. Valid Domain Question but No Specific Local Rule (Triggers Tier 3: EVIDENCE_GROUNDED_LLM)
+    # 4. Valid Domain Question but Local Capability Gap (Triggers Tier 3: EVIDENCE_GROUNDED_LLM)
     return {
         "domain_match": domain_match,
         "intent_match": domain_match,
@@ -198,7 +275,11 @@ def evaluate_rule_coverage(
         "required_evidence_complete": evidence_complete,
         "coverage_score": 0.0,
         "answerable_locally": False,
-        "reason": "Valid domain question but no sufficiently specific local rule coverage"
+        "reason": (
+            "Valid domain question with backend evidence available, but requires comparative, causal, or decision synthesis beyond local template capability"
+            if (domain_match and evidence_complete and is_synthesis_gap)
+            else "Valid domain question but no sufficiently specific local rule coverage"
+        )
     }
 
 

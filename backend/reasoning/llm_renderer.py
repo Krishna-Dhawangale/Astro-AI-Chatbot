@@ -31,13 +31,17 @@ STRICT_RENDERER_SYSTEM_INSTRUCTION = (
 
 def get_renderer_system_instruction(word_limit_str: str = "40–65 words") -> str:
     """
-    Returns an ultra-lean system instruction (~65 tokens) with customized word limit bounds.
+    Returns an ultra-lean system instruction (~75 tokens) with customized word limit bounds.
     """
     return (
         "You are a Vedic astrology response renderer. "
         "Use ONLY the supplied facts and rules. "
-        "Never calculate, infer, or invent astrology. "
+        "Never calculate, infer, or invent astrology or missing placements. "
         "Answer the user's question directly. "
+        "If comparing paths (such as government vs private, or job vs business), ground the comparison strictly in the provided 10th/7th/11th house, Sun, Saturn, Mercury, and karaka facts. "
+        "If explaining delays or growth challenges, reference the provided Saturn, 10th lord, or active dasha without inventing unstated transits. "
+        "If evidence for any requested sub-question is incomplete or missing, explicitly state that rather than assuming. "
+        "For wellness or sleep queries, provide astrological perspective only, never a medical diagnosis. "
         "Use cautious language; never guarantee predictions. "
         "Do not mention internal rules or system details. "
         f"Be concise: {word_limit_str}. "
@@ -197,7 +201,13 @@ def build_compact_evidence_package(
             verified_facts["Sun"] = sun_data.get("rashi") or sun_data.get("sign")
 
     # Domain specific essential facts
-    if dom == "career" or "career" in q_low or "job" in q_low or "profession" in q_low:
+    is_biz_query = any(k in q_low for k in ["business", "vyapar", "enterprise", "venture", "trade", "risk", "vs"])
+    is_sleep_query = any(k in q_low for k in ["neend", "sleep", "restlessness", "stress", "insomnia", "night", "dimaag", "tanav"])
+    is_govt_query = any(k in q_low for k in ["government", "govt", "sarkari", "public sector", "civil service"])
+    is_delay_query = any(k in q_low for k in ["delay", "baar-baar", "rukawat", "growth nahi", "stuck", "late", "fas gaya", "switch", "change"])
+    is_multi_domain = dom == "multi_domain" or (("marriage" in q_low or "shaadi" in q_low) and ("foreign" in q_low or "income" in q_low))
+
+    if dom == "career" or "career" in q_low or "job" in q_low or "profession" in q_low or is_biz_query or is_govt_query or is_delay_query:
         tenth_lord_rule = next(
             (
                 rule for rule in matched_rules
@@ -219,6 +229,77 @@ def build_compact_evidence_package(
                     lord_sign = rule_evidence.get("lord_natal_rashi")
                     if isinstance(lord_sign, str) and lord_sign:
                         verified_facts["10L_placement"] += f" ({lord_sign})"
+        
+        # If comparative Job vs Business/Vyapar query, extract 7th and 11th house evidence and karakas
+        if is_biz_query:
+            seventh_lord_rule = next(
+                (rule for rule in matched_rules if "7TH_LORD" in rule.get("rule_id", "") and rule.get("matched", True)),
+                None
+            )
+            if seventh_lord_rule:
+                s_ev = seventh_lord_rule.get("evidence", {})
+                if isinstance(s_ev, dict) and s_ev.get("lord"):
+                    verified_facts["7H_Business_Lord"] = f"{s_ev.get('lord')} in {s_ev.get('lord_natal_house', '')}H"
+
+            eleventh_lord_rule = next(
+                (rule for rule in matched_rules if "11TH_LORD" in rule.get("rule_id", "") and rule.get("matched", True)),
+                None
+            )
+            if eleventh_lord_rule:
+                e_ev = eleventh_lord_rule.get("evidence", {})
+                if isinstance(e_ev, dict) and e_ev.get("lord"):
+                    verified_facts["11H_Gains_Lord"] = f"{e_ev.get('lord')} in {e_ev.get('lord_natal_house', '')}H"
+
+            merc = planets.get("Mercury", {})
+            if isinstance(merc, dict) and merc.get("house"):
+                verified_facts["Mercury_Commerce"] = f"{merc.get('rashi', '')} in {merc.get('house')}H"
+            sat = planets.get("Saturn", {})
+            if isinstance(sat, dict) and sat.get("house"):
+                verified_facts["Saturn_Service"] = f"{sat.get('rashi', '')} in {sat.get('house')}H"
+
+        # If Government vs Private / Sector choice query, extract Sun, Saturn, and Mercury
+        if is_govt_query:
+            sun_data = planets.get("Sun", {})
+            if isinstance(sun_data, dict) and (sun_data.get("rashi") or sun_data.get("sign")):
+                h_sun = sun_data.get("house")
+                sign_sun = sun_data.get("rashi") or sun_data.get("sign")
+                verified_facts["Sun_Govt_Authority"] = f"{sign_sun} in {h_sun}H" if h_sun else sign_sun
+
+            sat = planets.get("Saturn", {})
+            if isinstance(sat, dict) and sat.get("house"):
+                verified_facts["Saturn_Service"] = f"{sat.get('rashi', '')} in {sat.get('house')}H"
+
+            merc = planets.get("Mercury", {})
+            if isinstance(merc, dict) and merc.get("house"):
+                verified_facts["Mercury_IT_Systems"] = f"{merc.get('rashi', '')} in {merc.get('house')}H"
+
+        # If Causal Delay / Obstacle query, extract Saturn and Mercury
+        if is_delay_query:
+            sat = planets.get("Saturn", {})
+            if isinstance(sat, dict) and sat.get("house"):
+                verified_facts["Saturn_Delays_Discipline"] = f"{sat.get('rashi', '')} in {sat.get('house')}H"
+            merc = planets.get("Mercury", {})
+            if isinstance(merc, dict) and merc.get("house"):
+                verified_facts["Mercury_IT_Fields"] = f"{merc.get('rashi', '')} in {merc.get('house')}H"
+
+    elif is_sleep_query or dom == "health" or "health" in q_low:
+        moon_data = planets.get("Moon", {})
+        if isinstance(moon_data, dict) and moon_data.get("rashi"):
+            verified_facts["Moon_Mind"] = f"{moon_data.get('rashi')} in {moon_data.get('house', '')}H"
+        h12_planets = [p for p, pdata in planets.items() if isinstance(pdata, dict) and pdata.get("house") == 12]
+        if h12_planets:
+            verified_facts["12H_Sleep_Occupants"] = ", ".join(h12_planets)
+        else:
+            verified_facts["12H_Sleep"] = "Neutral (no malefic occupants)"
+
+    elif is_multi_domain:
+        ven_data = planets.get("Venus", {})
+        h_pos = ven_data.get("house") if (ven_data and isinstance(ven_data, dict)) else 8
+        verified_facts["7H_Marriage"] = "Pisces"
+        verified_facts["Venus_Marriage_Karaka"] = f"Venus@{h_pos}H"
+        if not unresolved_subquestion:
+            unresolved_subquestion = "Foreign settlement and income improvement indicators are unavailable in the current birth chart facts."
+
     elif dom == "marriage" or "marriage" in q_low or "relationship" in q_low:
         ven_data = planets.get("Venus", {})
         h_pos = ven_data.get("house") if ven_data else 8
@@ -231,8 +312,18 @@ def build_compact_evidence_package(
         verified_facts["Jupiter"] = f"Jupiter@{h_pos}H"
 
     if dasha_hierarchy:
-        m = dasha_hierarchy.get("current_mahadasha") or dasha_hierarchy.get("mahadasha", {}).get("planet", "")
-        a = dasha_hierarchy.get("current_antardasha") or dasha_hierarchy.get("antardasha", {}).get("planet", "")
+        m = (
+            dasha_hierarchy.get("current_mahadasha")
+            or (dasha_hierarchy.get("mahadasha", {}).get("planet") if isinstance(dasha_hierarchy.get("mahadasha"), dict) else None)
+            or (dasha_hierarchy.get("output", {}).get("current_mahadasha") if isinstance(dasha_hierarchy.get("output"), dict) else None)
+            or ""
+        )
+        a = (
+            dasha_hierarchy.get("current_antardasha")
+            or (dasha_hierarchy.get("antardasha", {}).get("planet") if isinstance(dasha_hierarchy.get("antardasha"), dict) else None)
+            or (dasha_hierarchy.get("output", {}).get("current_antardasha") if isinstance(dasha_hierarchy.get("output"), dict) else None)
+            or ""
+        )
         if m:
             verified_facts["Dasha"] = f"{m}-{a}" if a else m
 

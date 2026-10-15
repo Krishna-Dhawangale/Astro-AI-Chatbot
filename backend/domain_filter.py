@@ -182,6 +182,20 @@ EXPLICIT_OUT_OF_SCOPE_PATTERNS = [
         )
     ),
     (
+        "political_officeholder_trivia",
+        re.compile(
+            r"\bwho\s+is\s+(?:the\s+)?(?:prime\s+minister|president|chief\s+minister|governor|king|queen|chancellor|ceo)\s+of\b",
+            re.IGNORECASE
+        )
+    ),
+    (
+        "vehicle_and_speed_trivia",
+        re.compile(
+            r"\b(?:which|what)\s+is\s+(?:the\s+)?(?:fastest|fasest|quickest|speediest)\s+(?:car|vehicle|plane|train|bike|automobile)\b",
+            re.IGNORECASE
+        )
+    ),
+    (
         "sports_pop_trivia",
         re.compile(
             r"\b(?:who\s+won\s+the\s+(?:world\s+cup|ipl|super\s+bowl|oscar)|who\s+directed|lyrics\s+of)\b",

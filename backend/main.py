@@ -2462,9 +2462,10 @@ def format_local_interpretation_answer(
         dasha_hierarchy=dasha_hierarchy or {}
     )
 
-    return synthesize_local_answer(struct_ev, is_hinglish=is_hinglish, question=question)
-
-    q_lower = (question or "").lower().strip()
+    synth_ans = synthesize_local_answer(struct_ev, is_hinglish=is_hinglish, question=question)
+    if synth_ans and synth_ans.strip():
+        return synth_ans
+    return None
 
     # 1. Job vs Business / Career Path Comparison Questions
     if any(k in q_lower for k in ["business or job", "job or business", "business or a job", "job or a business", "business vs job", "job vs business", "corporate or business"]):
@@ -2868,13 +2869,13 @@ async def _handle_chat_response(request: ChatRequest, session_id: Optional[str] 
     # 2. Check for Simple Deterministic Questions (Dasha / Moon Sign / Ascendant) -> NO Gemini needed
     q_lower = normalized_query.lower()
     is_direct_dasha_q = (
-        any(k in q_lower for k in ["what is my dasha", "my mahadasha", "what is my mahadasha", "current antardasha"])
-        or (q_lower.strip("?.!") in ["my current dasha", "what is my dasha", "my dasha"])
-    ) and not any(ck in q_lower for ck in ["career", "job", "work", "move from", "transition", "should i", "marriage", "marry", "finance"])
+        any(k in q_lower for k in ["what is my dasha", "my mahadasha", "what is my mahadasha", "current antardasha", "what is my current mahadasha", "current mahadasha", "which mahadasha"])
+        or (q_lower.strip("?.!") in ["my current dasha", "what is my dasha", "my dasha", "current dasha"])
+    ) and not any(ck in q_lower for ck in ["career", "job", "work", "move from", "transition", "should i", "marriage", "marry", "finance", "business", "vyapar", "restlessness", "neend", "stress", "market", "vs", "risk"])
 
     if is_direct_dasha_q and resolved_intent != "multi_domain":
-        mah = dasha_hierarchy.get("current_mahadasha") or dasha_hierarchy.get("output", {}).get("current_mahadasha", "Active Dasha")
-        ant = dasha_hierarchy.get("current_antardasha") or dasha_hierarchy.get("output", {}).get("current_antardasha", "Active Antardasha")
+        mah = norm_dasha.get("current_mahadasha") or (dasha_hierarchy.get("current_mahadasha") if isinstance(dasha_hierarchy, dict) else None) or "Active Dasha"
+        ant = norm_dasha.get("current_antardasha") or (dasha_hierarchy.get("current_antardasha") if isinstance(dasha_hierarchy, dict) else None) or "Active Antardasha"
         dasha_ans = (
             f"Aapka current Mahadasha {mah} aur Antardasha {ant} hai."
             if is_hinglish_query(request.query) else
@@ -2909,11 +2910,11 @@ async def _handle_chat_response(request: ChatRequest, session_id: Optional[str] 
     # 3b. HIGHEST PRIORITY FACT PATH (Pillar 1 Authority: FreeAstrologyAPI)
     strat_contract = get_question_strategy(resolved_intent, normalized_query)
     required_ev_keys = strat_contract.get("required_evidence", [])
-    ev_audit = evaluate_evidence_availability(required_ev_keys, norm_chart, dasha_hierarchy)
+    ev_audit = evaluate_evidence_availability(required_ev_keys, norm_chart, norm_dasha)
 
     direct_fact = None
-    if is_direct_fact_query(normalized_query):
-        direct_fact = extract_direct_fact(normalized_query, norm_chart, dasha_hierarchy)
+    if is_direct_fact_query(normalized_query, intent=resolved_intent):
+        direct_fact = extract_direct_fact(normalized_query, norm_chart, norm_dasha)
     if direct_fact:
         ans_text = direct_fact["answer"]
         USER_SESSIONS[request.user_id]["history"].append({"role": "user", "content": request.query})
@@ -3137,42 +3138,47 @@ async def _handle_chat_response(request: ChatRequest, session_id: Optional[str] 
                 dasha_hierarchy=dasha_hierarchy
             )
 
-            USER_SESSIONS[request.user_id]["history"].append({"role": "user", "content": request.query})
-            USER_SESSIONS[request.user_id]["history"].append({"role": "assistant", "content": local_answer})
+            if local_answer and local_answer.strip():
+                USER_SESSIONS[request.user_id]["history"].append({"role": "user", "content": request.query})
+                USER_SESSIONS[request.user_id]["history"].append({"role": "assistant", "content": local_answer})
 
-            follow_ups = generate_follow_up_questions(request.query, local_answer, domain=predicted_domain)
-            print_evidence_observability_report(
-                question=request.query, domain=predicted_domain, intent=resolved_intent,
-                answer_source="LOCAL", api_calls=1, local_rules=len(relevant_evidence), gemini_calls=0,
-                input_tokens=0, output_tokens=0,
-                required_evidence=ev_audit["required_evidence"],
-                available_evidence=ev_audit["available_evidence"],
-                missing_evidence=ev_audit["missing_evidence"],
-                evidence_status=ev_audit["evidence_status"],
-                domain_match=cov_eval.get("domain_match", True),
-                intent_match=cov_eval.get("intent_match", True),
-                exact_rule_match=True,
-                rule_coverage_score=1.0
-            )
-            record_production_decision_trace(
-                question=request.query, domain=predicted_domain, selected_model="V3",
-                domain_confidence=raw_confidence, intent=raw_intent, resolved_intent=resolved_intent,
-                complexity=complexity, chart_required=True, chart_evidence=[], matched_rules=mode_info.get("evidence_ids", []),
-                evidence_score=1.0, evidence_status="complete", answer_source="LOCAL", gemini_calls=0,
-                llm_input_tokens=0, llm_output_tokens=0, llm_total_tokens=0, llm_call_details=[], latency_ms=15.0
-            )
-            return JSONResponse(content={
-                "answer": label_answer_source(local_answer, "RULE_BASED"),
-                "answer_mode": "RULE_BASED",
-                "answer_source": "LOCAL",
-                "intent": resolved_intent,
-                "evidence_complete": True,
-                "gemini_calls": 0,
-                "evidence_ids": mode_info.get("evidence_ids", []),
-                "fallback_reason": None,
-                "related_questions": follow_ups,
-                "source": "deterministic_reasoning",
-            })
+                follow_ups = generate_follow_up_questions(request.query, local_answer, domain=predicted_domain)
+                print_evidence_observability_report(
+                    question=request.query, domain=predicted_domain, intent=resolved_intent,
+                    answer_source="LOCAL", api_calls=1, local_rules=len(relevant_evidence), gemini_calls=0,
+                    input_tokens=0, output_tokens=0,
+                    required_evidence=ev_audit["required_evidence"],
+                    available_evidence=ev_audit["available_evidence"],
+                    missing_evidence=ev_audit["missing_evidence"],
+                    evidence_status=ev_audit["evidence_status"],
+                    domain_match=cov_eval.get("domain_match", True),
+                    intent_match=cov_eval.get("intent_match", True),
+                    exact_rule_match=True,
+                    rule_coverage_score=1.0
+                )
+                record_production_decision_trace(
+                    question=request.query, domain=predicted_domain, selected_model="V3",
+                    domain_confidence=raw_confidence, intent=raw_intent, resolved_intent=resolved_intent,
+                    complexity=complexity, chart_required=True, chart_evidence=[], matched_rules=mode_info.get("evidence_ids", []),
+                    evidence_score=1.0, evidence_status="complete", answer_source="LOCAL", gemini_calls=0,
+                    llm_input_tokens=0, llm_output_tokens=0, llm_total_tokens=0, llm_call_details=[], latency_ms=15.0
+                )
+                return JSONResponse(content={
+                    "answer": label_answer_source(local_answer, "RULE_BASED"),
+                    "answer_mode": "RULE_BASED",
+                    "answer_source": "LOCAL",
+                    "intent": resolved_intent,
+                    "evidence_complete": True,
+                    "gemini_calls": 0,
+                    "evidence_ids": mode_info.get("evidence_ids", []),
+                    "fallback_reason": None,
+                    "related_questions": follow_ups,
+                    "source": "deterministic_reasoning",
+                })
+            else:
+                logger.info("[ROUTING FALLBACK] Local synthesizer returned no adequate strategy for '%s'; falling through to Tier 3 LLM synthesis.", request.query)
+                mode_info["mode"] = "LLM_ASSISTED"
+                mode_info["answer_source"] = "EVIDENCE_GROUNDED_LLM"
         except Exception as format_err:
             logger.error("[INTEGRATION ERROR] Local Interpretation Formatter failed: %s", format_err, exc_info=True)
             return JSONResponse(
@@ -3228,7 +3234,7 @@ async def _handle_chat_response(request: ChatRequest, session_id: Optional[str] 
         intent=resolved_intent,
         chart_data=norm_chart,
         matched_rules=matched_rules_list,
-        dasha_hierarchy=dasha_hierarchy,
+        dasha_hierarchy=norm_dasha,
         question=request.query
     )
     llm_prompt_text, est_tokens = format_llm_assisted_prompt(request.query, compact_evidence_pkg)

@@ -18,6 +18,11 @@ from backend.reasoning.controlled_vocab import get_gated_semantic_phrases
 from backend.reasoning.answer_shapes import get_answer_shape
 
 try:
+    from backend.reasoning.rule_coverage import analyze_question_task
+except ImportError:
+    from reasoning.rule_coverage import analyze_question_task
+
+try:
     from backend.llm_router import is_hinglish_query
 except ImportError:
     def is_hinglish_query(q: str) -> bool:
@@ -266,8 +271,13 @@ def synthesize_local_answer(
             f"- **Timing & Focus**: Your current Dasha ({c_maha}{'/' + c_antar if c_antar else ''}) highlights structured study and consistent academic effort."
         )
 
-    # Career Suitability ("Which career suits me?")
-    if "suit" in q_lower or "field" in q_lower or intent == "career_suitability":
+    # 2. Local Capability Assessment
+    task_req = analyze_question_task(question)
+    is_synthesis_gap = task_req.get("is_synthesis_gap", False)
+
+    # Career Suitability ("Which career suits me?") - only when genuinely asking general suitability, not comparative/causal dilemmas
+    if (("suit" in q_lower or intent == "career_suitability" or ("field" in q_lower and "which" in q_lower))
+        and not is_synthesis_gap):
         if is_hinglish:
             theme_str = ", ".join(themes[:3]) if themes else "structured management, analytics"
             return (
@@ -285,7 +295,7 @@ def synthesize_local_answer(
         )
 
     # Dasha & Timing Interaction ("How does my Dasha affect my career?")
-    if any(k in q_lower for k in ["dasha", "period", "timing", "when"]) or "dasha" in intent:
+    if (any(k in q_lower for k in ["dasha", "period", "timing", "when"]) or "dasha" in intent) and not is_synthesis_gap:
         if domain == "marriage":
             if is_hinglish:
                 return (
@@ -308,6 +318,10 @@ def synthesize_local_answer(
             )
 
     # General Domain Overview ("What does my chart indicate about my career/marriage/finances?")
+    # If the user asked a comparative dilemma, causal delay inquiry, or decision dilemma, do NOT dump generic canned bullets!
+    if is_synthesis_gap:
+        return None
+
     pos_bullet = positives[0] if positives else ("Your 10th-house indicators highlight natural strengths in analytical management." if domain == "career" else "Your placements emphasize mutual trust and long-term stability.")
     pos_bullet_2 = positives[1] if len(positives) > 1 else ("Planetary alignments support steady professional advancement." if domain == "career" else "Planetary alignments favor building an enduring relationship foundation.")
     
@@ -327,6 +341,17 @@ def synthesize_local_answer(
         f"- {pos_bullet_2.capitalize()}.\n"
         f"- {chal_bullet.capitalize()}."
     )
+
+
+def can_synthesize_local_answer(evidence: Optional[StructuredEvidence], question: str = "") -> bool:
+    """
+    Checks if the local synthesizer has an adequate, specific deterministic answer strategy
+    for the user's question, preventing generic canned responses from masquerading as complete answers.
+    """
+    if not evidence or not evidence.is_sufficient():
+        return False
+    task_req = analyze_question_task(question)
+    return not task_req.get("is_synthesis_gap", False)
 
 
 def build_auditable_answer_trace(

@@ -22,28 +22,39 @@ DIRECT_FACT_PATTERNS = {
 }
 
 
-def is_direct_fact_query(question: str) -> bool:
+def is_direct_fact_query(question: str, intent: Optional[str] = None) -> bool:
     """
     Returns True if the user question is a direct factual calculation/lookup query.
+    Rejects multi-domain, causal, comparative, or advisory queries.
     """
     if not question:
         return False
+    
+    # 0. Multi-domain queries should never be handled as simple 1-line direct facts
+    if intent == "multi_domain":
+        return False
+
     q_lower = question.lower().strip()
     
-    # Support direct distinction & comparison lookups
+    # Support direct distinction & comparison lookups (e.g. difference between lagna and rashi)
     if any(kw in q_lower for kw in ["difference", "different", "same as"]):
         if any(f in q_lower for f in ["lagna", "rashi", "moon sign", "sun sign", "nakshatra"]):
             return True
 
-    # Exclude complex interpretative or timing/prediction queries
+    # Exclude complex interpretative, causal, advisory, or timing/prediction queries
     complex_exclusions = [
         "when", "timing", "kab", "will i", "predict", "why", "how is", "affect", "suit me",
         "career", "marriage", "improve", "future", "tired", "health", "should i", "move from",
-        "transition", "switch", "explain", "change", "overall", "situation", "detail"
+        "transition", "switch", "explain", "change", "overall", "situation", "detail",
+        # Hinglish, comparative, advisory, and distress signals:
+        "vs", "risk", "vyapar", "business", "neend", "sleep", "restlessness", "stress",
+        "dimaag", "gochar", "malefic", "reason", "karan", "kyun", "growth", "fas gaya",
+        "market", "better", "safe", "loss", "faida", "nuksan", "dono mein", "kaise",
+        "hoga ya nahi"
     ]
     if any(kw in q_lower for kw in complex_exclusions):
         if any(f in q_lower for f in ["what is my moon sign", "what is my sun sign", "what is my lagna", "what is my nakshatra", "what is my current mahadasha", "what is my dasha", "lagna different", "difference between"]):
-            if not any(t in q_lower for t in ["when will", "when is", "when get", "marri", "job", "career", "move", "transition", "should i"]):
+            if not any(t in q_lower for t in ["when will", "when is", "when get", "marri", "job", "career", "move", "transition", "should i", "risk", "vs", "neend", "stress"]):
                 return True
         return False
 
@@ -324,21 +335,65 @@ def extract_direct_fact(question: str, chart_data: Dict[str, Any], dasha_hierarc
 
     # 5. Current Mahadasha / Antardasha Path
     if any(k in q_lower for k in ["mahadasha", "antardasha", "current dasha", "current period", "what dasha", "dasha", "dasa", "dash"]):
-        if dasha_hierarchy:
-            c_maha = dasha_hierarchy.get("current_mahadasha") or dasha_hierarchy.get("mahadasha", {}).get("planet")
-            c_antar = dasha_hierarchy.get("current_antardasha") or dasha_hierarchy.get("antardasha", {}).get("planet")
-            if c_maha:
-                antar_str = f" and **{c_antar} Antardasha**" if c_antar else ""
-                return {
-                    "answer": f"Your current period is **{c_maha} Mahadasha**{antar_str}. Vimshottari Dasha is the 120-year planetary cycle system in Vedic astrology, revealing the exact planetary ruler currently activating karmic events, opportunities, and lessons in your life.",
-                    "fact_type": "current_dasha",
-                    "answer_mode": "DIRECT",
-                    "gemini_calls": 0,
-                    "evidence_complete": True,
-                    "fact_sources": {"current_dasha": "FreeAstrologyAPI"}
-                }
+        if dasha_hierarchy and isinstance(dasha_hierarchy, dict):
+            # 1. Root level check (norm_dasha format)
+            c_maha = dasha_hierarchy.get("current_mahadasha")
+            c_antar = dasha_hierarchy.get("current_antardasha")
             st_date = dasha_hierarchy.get("start_date")
             et_date = dasha_hierarchy.get("end_date")
+
+            # 2. Nested mahadasha/antardasha object check safely
+            if not c_maha:
+                m_obj = dasha_hierarchy.get("mahadasha")
+                if isinstance(m_obj, dict):
+                    c_maha = m_obj.get("planet")
+                elif isinstance(m_obj, str):
+                    c_maha = m_obj
+
+            if not c_antar:
+                a_obj = dasha_hierarchy.get("antardasha")
+                if isinstance(a_obj, dict):
+                    c_antar = a_obj.get("planet")
+                elif isinstance(a_obj, str):
+                    c_antar = a_obj
+
+            # 3. Nested 'output' dict check safely
+            out_obj = dasha_hierarchy.get("output")
+            if isinstance(out_obj, dict):
+                if not c_maha:
+                    c_maha = out_obj.get("current_mahadasha")
+                if not c_antar:
+                    c_antar = out_obj.get("current_antardasha")
+                if not st_date:
+                    st_date = out_obj.get("start_date")
+                if not et_date:
+                    et_date = out_obj.get("end_date")
+
+            # 4. If still None but dasha_hierarchy has nested timeline, calculate active dasha dynamically
+            hierarchy_obj = dasha_hierarchy.get("dasha_hierarchy") if "dasha_hierarchy" in dasha_hierarchy else dasha_hierarchy
+            if not c_maha and isinstance(hierarchy_obj, dict):
+                from datetime import datetime
+                now = datetime.now()
+                for maha, antars in hierarchy_obj.items():
+                    if isinstance(antars, dict):
+                        for antar, dates in antars.items():
+                            if isinstance(dates, dict):
+                                st_str = dates.get("start_time") or dates.get("start")
+                                et_str = dates.get("end_time") or dates.get("end")
+                                if st_str and et_str:
+                                    try:
+                                        st = datetime.strptime(st_str[:19], "%Y-%m-%d %H:%M:%S")
+                                        et = datetime.strptime(et_str[:19], "%Y-%m-%d %H:%M:%S")
+                                        if st <= now <= et:
+                                            c_maha = maha
+                                            c_antar = antar
+                                            st_date = st_str
+                                            et_date = et_str
+                                            break
+                                    except Exception:
+                                        pass
+                        if c_maha:
+                            break
 
             if c_maha:
                 antar_str = f" and **{c_antar} Antardasha**" if c_antar else ""
@@ -363,6 +418,15 @@ def extract_direct_fact(question: str, chart_data: Dict[str, Any], dasha_hierarc
                     "evidence_complete": False,
                     "fact_sources": {"current_dasha": "MISSING"}
                 }
+        else:
+            return {
+                "answer": "Your Dasha timing evidence is unavailable in the API chart data.",
+                "fact_type": "current_dasha",
+                "answer_mode": "UNRESOLVED",
+                "gemini_calls": 0,
+                "evidence_complete": False,
+                "fact_sources": {"current_dasha": "MISSING"}
+            }
 
     # 6. Specific Planet Placement
     for planet_name in ["Sun", "Moon", "Mars", "Mercury", "Jupiter", "Venus", "Saturn", "Rahu", "Ketu"]:
