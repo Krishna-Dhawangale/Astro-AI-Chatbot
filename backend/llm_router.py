@@ -625,6 +625,22 @@ async def stream_cascading_router(
                 )
                 inp_tok = max(1, (len(prompt) + len(system_prompt)) // 4)
                 out_tok = max(1, len(total_text) // 4)
+                tot_tok = inp_tok + out_tok
+
+                rem_model = 0
+                all_status = {}
+                try:
+                    from backend.answer_synthesizer import (
+                        record_model_tokens,
+                        get_model_remaining_tokens,
+                        get_all_models_token_status,
+                    )
+                    model_stats = record_model_tokens(p_model, tot_tok)
+                    rem_model = model_stats.get("remaining_tokens", 0)
+                    all_status = get_all_models_token_status()
+                except Exception:
+                    pass
+
                 yield ("", {
                     "provider": p_type,
                     "account": p_acc,
@@ -635,7 +651,10 @@ async def stream_cascading_router(
                     "full_text": total_text,
                     "input_tokens": inp_tok,
                     "output_tokens": out_tok,
-                    "total_tokens": inp_tok + out_tok,
+                    "total_tokens": tot_tok,
+                    "remaining_query_tokens": max(0, 400 - tot_tok),
+                    "remaining_model_tokens": rem_model,
+                    "model_token_status": all_status,
                 })
                 return  # Single-model completion: terminate cascade immediately
 

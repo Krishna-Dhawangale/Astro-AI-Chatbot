@@ -605,14 +605,57 @@ async def synthesize_timing_response(
     else:
         source_badge_type = "HYBRID"
 
-    inp_tokens = meta_info.get("input_tokens") or max(1, (len(user_prompt) + len(system_prompt)) // 4) if active_model else 0
-    out_tokens = meta_info.get("output_tokens") or max(1, len(refined_prose) // 4) if active_model else 0
+    try:
+        from backend.answer_synthesizer import estimate_tokens
+    except ImportError:
+        try:
+            from answer_synthesizer import estimate_tokens
+        except ImportError:
+            estimate_tokens = lambda text: int(len(text.split()) * 1.3)
+
+    inp_tokens = meta_info.get("input_tokens") or (estimate_tokens(f"{system_prompt}\n{user_prompt}") if active_model else 0)
+    out_tokens = meta_info.get("output_tokens") or (estimate_tokens(refined_prose) if active_model else 0)
     tot_tokens = inp_tokens + out_tokens
 
-    # Append standardized calculation metadata footer
+    rem_model = 0
+    all_status = {}
+    if active_model:
+        try:
+            try:
+                from backend.answer_synthesizer import (
+                    record_model_tokens,
+                    get_model_remaining_tokens,
+                    get_all_models_token_status,
+                    print_terminal_token_report,
+                )
+            except ImportError:
+                from answer_synthesizer import (
+                    record_model_tokens,
+                    get_model_remaining_tokens,
+                    get_all_models_token_status,
+                    print_terminal_token_report,
+                )
+            model_stats = record_model_tokens(active_model, tot_tokens)
+            rem_model = model_stats.get("remaining_tokens", 0)
+            all_status = get_all_models_token_status()
+            print_terminal_token_report(
+                mode="LOCAL_DATABASE_PLUS_LLM_TIMING",
+                model_name=active_model,
+                inp_tokens=inp_tokens,
+                out_tokens=out_tokens,
+                total_tokens=tot_tokens,
+                query_remaining=max(0, 400 - tot_tokens),
+                model_budget=model_stats.get("budget_tokens", 100000),
+                model_remaining=rem_model,
+            )
+        except Exception as te_err:
+            logger.warning("Timing engine terminal token report error: %s", te_err)
+
+    # Append clean standardized calculation metadata footer
     body = refined_prose.strip()
     body = re.sub(r"\n*\s*\*\[Calculation:[^\]]+\]\*", "", body).strip()
-    final_answer = f"{body}\n\n{TIMING_CALCULATION_FOOTER}"
+    footer_badge = TIMING_CALCULATION_FOOTER
+    final_answer = f"{body}\n\n{footer_badge}"
 
     # Prepend source badge
     try:
@@ -628,12 +671,15 @@ async def synthesize_timing_response(
         "domain": domain,
         "timing_window": window,
         "active_dasha": f"{md}/{ad}",
-        "attribution_badge": TIMING_CALCULATION_FOOTER,
+        "attribution_badge": footer_badge,
         "model_name": active_model,
         "timing_data": timing_data,
         "input_tokens": inp_tokens,
         "output_tokens": out_tokens,
         "total_tokens": tot_tokens,
+        "remaining_query_tokens": max(0, 400 - tot_tokens),
+        "remaining_model_tokens": rem_model,
+        "model_token_status": all_status,
         "tokens": {"input": inp_tokens, "output": out_tokens, "total": tot_tokens},
     }
 

@@ -4,8 +4,10 @@ Multi-Domain LLM Answer Synthesizer & Prose Refiner
 ===================================================
 1. Mandatory LLM Synthesis for multi-domain inquiries.
 2. Formulates context_payload containing verified raw chart facts & database rules.
-3. Strict Prose Refiner system prompt ensuring EVERY domain is synthesized.
-4. Generates dynamic calculation footer:
+3. Ultra-lean Prose Refiner system prompt (~50 tokens) with strict 350-400 total token budget.
+4. Word-to-token ratio (1.3x) token estimator and conditional token logging.
+5. Real-time Model Token Tracker & Remaining Token Observability.
+6. Generates dynamic calculation footer:
    *[Calculation: SwissEphemeris_VimshottariEngine | Multi-Domain Hybrid Synthesis: Career & Finance]*
 """
 
@@ -16,6 +18,88 @@ import logging
 from typing import Dict, Any, List, Optional, Tuple
 
 logger = logging.getLogger("AstroChatbot.AnswerSynthesizer")
+
+ULTRA_LEAN_SYSTEM_PROMPT = (
+    "You are a Vedic astrology synthesizer. Use ONLY the provided facts. "
+    "Synthesize all requested domains into one cohesive reading. Never invent astrology. "
+    "Be concise: 65–85 words. Return only the final consultation prose."
+)
+
+# ---------------------------------------------------------------------------
+# Per-Model Token Quota & Remaining Token Tracking
+# ---------------------------------------------------------------------------
+DEFAULT_MODEL_BUDGETS: Dict[str, int] = {
+    "gemini-3.5-flash-lite": int(os.getenv("GEMINI_FLASH_LITE_TOKEN_BUDGET", "250000")),
+    "gemini-3.8-flash": int(os.getenv("GEMINI_FLASH_TOKEN_BUDGET", "250000")),
+    "gemini-2.5-flash": int(os.getenv("GEMINI_25_FLASH_TOKEN_BUDGET", "250000")),
+    "qwen/qwen3.8-27b": int(os.getenv("GROQ_QWEN_TOKEN_BUDGET", "100000")),
+    "llama-3.3-70b-versatile": int(os.getenv("GROQ_LLAMA70B_TOKEN_BUDGET", "100000")),
+    "llama-3.1-8b-instant": int(os.getenv("GROQ_LLAMA8B_TOKEN_BUDGET", "100000")),
+    "openai/gpt-oss-120b": int(os.getenv("GROQ_GPTOSS_TOKEN_BUDGET", "100000")),
+}
+DEFAULT_FALLBACK_BUDGET = 100000
+
+# In-memory tracking state: model_name -> {"used_tokens": int, "call_count": int}
+_MODEL_TOKEN_USAGE: Dict[str, Dict[str, int]] = {}
+
+
+def record_model_tokens(model_name: str, tokens: int) -> Dict[str, Any]:
+    """
+    Records consumed tokens for a given model and calculates remaining token budget.
+    """
+    clean_model = (model_name or "unknown").strip().lower()
+    if clean_model not in _MODEL_TOKEN_USAGE:
+        _MODEL_TOKEN_USAGE[clean_model] = {"used_tokens": 0, "call_count": 0}
+    
+    _MODEL_TOKEN_USAGE[clean_model]["used_tokens"] += tokens
+    _MODEL_TOKEN_USAGE[clean_model]["call_count"] += 1
+    
+    budget = DEFAULT_MODEL_BUDGETS.get(clean_model, DEFAULT_FALLBACK_BUDGET)
+    used = _MODEL_TOKEN_USAGE[clean_model]["used_tokens"]
+    remaining = max(0, budget - used)
+    
+    return {
+        "model": clean_model,
+        "used_tokens": used,
+        "budget_tokens": budget,
+        "remaining_tokens": remaining,
+        "call_count": _MODEL_TOKEN_USAGE[clean_model]["call_count"],
+    }
+
+
+def get_model_remaining_tokens(model_name: str) -> int:
+    """Returns the remaining tokens available for a given model."""
+    clean_model = (model_name or "unknown").strip().lower()
+    budget = DEFAULT_MODEL_BUDGETS.get(clean_model, DEFAULT_FALLBACK_BUDGET)
+    used = _MODEL_TOKEN_USAGE.get(clean_model, {}).get("used_tokens", 0)
+    return max(0, budget - used)
+
+
+def get_all_models_token_status() -> Dict[str, Dict[str, Any]]:
+    """Returns a full snapshot of token usage and remaining tokens for all registered models."""
+    status = {}
+    all_models = set(DEFAULT_MODEL_BUDGETS.keys()).union(_MODEL_TOKEN_USAGE.keys())
+    for model in sorted(all_models):
+        budget = DEFAULT_MODEL_BUDGETS.get(model, DEFAULT_FALLBACK_BUDGET)
+        used = _MODEL_TOKEN_USAGE.get(model, {}).get("used_tokens", 0)
+        calls = _MODEL_TOKEN_USAGE.get(model, {}).get("call_count", 0)
+        status[model] = {
+            "budget_tokens": budget,
+            "used_tokens": used,
+            "remaining_tokens": max(0, budget - used),
+            "calls": calls,
+        }
+    return status
+
+
+def estimate_tokens(text: str) -> int:
+    """
+    Estimates token count using a word-to-token ratio (~1.3 multiplier).
+    """
+    if not text or not text.strip():
+        return 0
+    words = len(text.strip().split())
+    return max(1, int(round(words * 1.3)))
 
 
 def format_domains_title(domains: List[str]) -> str:
@@ -58,7 +142,38 @@ def format_domains_title(domains: List[str]) -> str:
         return ", ".join(clean_domains[:-1]) + f" & {clean_domains[-1]}"
 
 
-def format_multidomain_footer(domains: List[str], engine: str = "FreeAstrologyAPI (Dasha) + SwissEphemeris (Gochar Timing)") -> str:
+def print_terminal_token_report(
+    mode: str,
+    model_name: str,
+    inp_tokens: int,
+    out_tokens: int,
+    total_tokens: int,
+    query_remaining: int,
+    model_budget: int,
+    model_remaining: int,
+) -> None:
+    """Prints clean observability metrics to the terminal only."""
+    report_lines = [
+        "==================================================",
+        "        TERMINAL LLM TOKEN & REMAINING TRACKER    ",
+        "==================================================",
+        f"Execution Mode     : {mode}",
+        f"Model Used         : {model_name}",
+        f"Input Tokens       : {inp_tokens}",
+        f"Output Tokens      : {out_tokens}",
+        f"Total Tokens       : {total_tokens} (Budget: 350-400)",
+        f"Query Remainder    : {query_remaining} tokens",
+        f"Model Total Budget : {model_budget:,} tokens",
+        f"Model Tokens Left  : {model_remaining:,} tokens",
+        "=================================================="
+    ]
+    print("\n" + "\n".join(report_lines) + "\n", flush=True)
+
+
+def format_multidomain_footer(
+    domains: List[str],
+    engine: str = "FreeAstrologyAPI (Dasha) + SwissEphemeris (Gochar Timing)"
+) -> str:
     """
     Constructs the standardized multi-domain calculation metadata footer.
     Example: *[Calculation: FreeAstrologyAPI (Dasha) + SwissEphemeris (Gochar Timing) | Multi-Domain Hybrid Synthesis: Career & Finance]*
@@ -75,7 +190,6 @@ def append_multidomain_footer(answer: str, domains: List[str]) -> str:
     if not answer:
         return ""
     body = answer.strip()
-    # Strip any existing calculation badge
     body = re.sub(r"\n*\s*\*\[Calculation:[^\]]+\]\*", "", body).strip()
     footer = format_multidomain_footer(domains)
     return f"{body}\n\n{footer}"
@@ -86,15 +200,15 @@ def build_multidomain_system_prompt(
     is_hinglish: bool = False
 ) -> str:
     """
-    Generates ultra-compact prose refiner system prompt (~45 tokens) with mandatory zero-hallucination contract.
+    Generates ultra-compact prose refiner system prompt (~50 tokens).
     """
-    lang = "conversational Hinglish (Latin script)" if is_hinglish else "articulate English"
-    dom_str = ", ".join(d.capitalize() for d in domains) if domains else "requested domains"
-    return (
-        f"You are a Vedic astrologer refiner. Synthesize provided facts into one cohesive {lang} consultation "
-        f"covering: {dom_str}. Use ONLY supplied chart facts and timing windows. Never invent astrology or dates. "
-        "Keep tone objective, grounded, and practical. Concise: 50–75 words. Return ONLY consultation prose."
-    )
+    if is_hinglish:
+        return (
+            "You are a Vedic astrology synthesizer. Use ONLY the provided facts. "
+            "Synthesize all requested domains into one cohesive reading in conversational Hinglish. "
+            "Never invent astrology. Be concise: 65–85 words. Return only the final consultation prose."
+        )
+    return ULTRA_LEAN_SYSTEM_PROMPT
 
 
 def build_context_payload(
@@ -108,7 +222,7 @@ def build_context_payload(
     return raw_context.strip()
 
 
-async def synthesize_multidomain_answer(
+async def synthesizer_multidomain_response(
     query: str,
     context_payload: str,
     detected_intents: List[str],
@@ -119,7 +233,8 @@ async def synthesize_multidomain_answer(
     is_hinglish: bool = False
 ) -> Dict[str, Any]:
     """
-    Executes mandatory LLM synthesis over multi-domain context_payload.
+    Executes LLM synthesis over multi-domain context_payload with strict token optimization,
+    hard output token cap (120), and conditional remaining-token tracking per model.
     """
     system_prompt = build_multidomain_system_prompt(domains=domains, is_hinglish=is_hinglish)
     user_prompt = (
@@ -139,7 +254,7 @@ async def synthesize_multidomain_answer(
         async for chunk, meta in stream_cascading_router(
             prompt=user_prompt,
             system_prompt=system_prompt,
-            max_output_tokens=110,
+            max_output_tokens=120,
             temperature=0.2,
             session_id=session_id,
             custom_gemini_client=custom_gemini_client
@@ -169,9 +284,31 @@ async def synthesize_multidomain_answer(
         used_model = active_model or os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite")
         source_badge_type = "HYBRID"
         llm_calls = 1
-        inp_tokens = meta_info.get("input_tokens") or max(1, (len(user_prompt) + len(system_prompt)) // 4)
-        out_tokens = meta_info.get("output_tokens") or max(1, len(refined_prose) // 4)
+        inp_tokens = meta_info.get("input_tokens") or estimate_tokens(f"{system_prompt}\n{user_prompt}")
+        out_tokens = meta_info.get("output_tokens") or estimate_tokens(refined_prose)
         total_tokens = inp_tokens + out_tokens
+
+        # Record tokens against model budget & calculate remaining
+        model_stats = record_model_tokens(used_model, total_tokens)
+        model_tokens_remaining = model_stats["remaining_tokens"]
+        query_remaining_tokens = max(0, 400 - total_tokens)
+
+        # Conditional token tracking and threshold alerts for LLM / Hybrid mode
+        if inp_tokens > 260:
+            logger.warning(
+                "[TOKEN ALERT] Input tokens (%d) exceed safe threshold of 260! Total Tokens: %d | Prompt snippet: %s...",
+                inp_tokens, total_tokens, user_prompt[:90].replace("\n", " ")
+            )
+        print_terminal_token_report(
+            mode="LOCAL_DATABASE_PLUS_LLM_MULTI_DOMAIN",
+            model_name=used_model,
+            inp_tokens=inp_tokens,
+            out_tokens=out_tokens,
+            total_tokens=total_tokens,
+            query_remaining=query_remaining_tokens,
+            model_budget=model_stats["budget_tokens"],
+            model_remaining=model_tokens_remaining,
+        )
     else:
         # Graceful deterministic fallback synthesizing all domains if LLM offline
         used_model = None
@@ -180,6 +317,8 @@ async def synthesize_multidomain_answer(
         inp_tokens = 0
         out_tokens = 0
         total_tokens = 0
+        query_remaining_tokens = 400
+        model_tokens_remaining = 0
         asc = user_profile.get("ascendant_sign", "Virgo")
         moon = user_profile.get("moon_sign", "Taurus")
         maha = user_profile.get("mahadasha", "Rahu")
@@ -249,7 +388,7 @@ async def synthesize_multidomain_answer(
                 f"11th houses emphasize prudent savings and avoiding speculative risks during this planetary cycle to ensure lasting prosperity."
             )
 
-    # 1. Append standardized calculation metadata footer with domain specifics
+    # 1. Append standardized calculation metadata footer with domain specifics (clean, no tokens)
     final_answer = append_multidomain_footer(refined_prose, domains=domains)
 
     # 2. Prepend source badge [Local Database + LLM: {model_name}]
@@ -270,5 +409,12 @@ async def synthesize_multidomain_answer(
         "input_tokens": inp_tokens,
         "output_tokens": out_tokens,
         "total_tokens": total_tokens,
+        "remaining_query_tokens": query_remaining_tokens,
+        "remaining_model_tokens": model_tokens_remaining,
+        "all_models_token_status": get_all_models_token_status(),
         "latency_ms": latency_ms,
     }
+
+
+# Backwards-compatibility alias
+synthesize_multidomain_answer = synthesizer_multidomain_response

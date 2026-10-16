@@ -9,3 +9,6 @@ scikit-learn
 sentence-transformers
 pydantic
 python-dotenv
+asyncpg
+sqlalchemy>=2.0.0
+psycopg2-binary

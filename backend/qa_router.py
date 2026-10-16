@@ -4,8 +4,8 @@ Multi-Domain & Deep Micro-Intent Classifier with Hybrid Local Retrieval + LLM Sy
 ========================================================================================
 Architecture:
 1. Multi-Domain & Micro-Intent Parsing (returns List[str] of detected micro-intents).
-2. Aggregated Local Database Retrieval (pulls & personalizes raw_context from qa_database.json).
-3. LLM Prose Refiner & Synthesizer Prompt Structure (Groq / Gemini fallback).
+2. Compressed Chart Summary & Aggregated Local Database Micro-Conclusions.
+3. LLM Prose Refiner & Synthesizer Prompt Structure with strict token optimization.
 4. Standardized Calculation Provenance Footer.
 """
 
@@ -18,6 +18,7 @@ from dataclasses import dataclass
 
 logger = logging.getLogger("AstroChatbot.QARouter")
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
 
 def _get_context_features(query: str) -> Dict[str, Any]:
     try:
@@ -41,6 +42,7 @@ def _get_context_features(query: str) -> Dict[str, Any]:
                 "is_feasibility": False,
                 "is_multi_part": False,
             }
+
 
 # ---------------------------------------------------------------------------
 # Micro-Intent Definition Model
@@ -351,8 +353,6 @@ MICRO_INTENT_REGISTRY: Dict[str, MicroIntentDefinition] = {
     ),
 }
 
-
-# Mapping of all standard and Vedic planet aliases
 VALID_PLANETS: Dict[str, str] = {
     "rahu": "rahu", "ketu": "ketu", "saturn": "saturn", "shani": "saturn",
     "jupiter": "jupiter", "guru": "jupiter", "brihaspati": "jupiter",
@@ -368,8 +368,7 @@ VALID_PLANETS: Dict[str, str] = {
 def classify_multi_domain_micro_intents(query: str) -> List[str]:
     """
     Parses a user query and returns ALL detected domain micro-intents.
-    Decomposes multi-domain queries into separate micro-intents (e.g.
-    dasha_impact_rahu_saturn, career_growth_prospects, finance_stability).
+    Decomposes multi-domain queries into separate micro-intents.
     """
     if not query:
         return ["career_timing"]
@@ -377,21 +376,18 @@ def classify_multi_domain_micro_intents(query: str) -> List[str]:
     q_clean = query.lower().strip()
     detected_intents: List[str] = []
 
-    # Context feature extraction for polysemy disambiguation, negations, and domain signals
     features = _get_context_features(query)
     disambiguated = features.get("disambiguated_terms", {})
     negated_domains = set(features.get("negated_domains", []))
     active_domain_signals = features.get("active_domain_signals", [])
 
-    # 1. Explicit Planetary Dasha Decomposition (e.g., dasha_impact_rahu_saturn)
+    # 1. Explicit Planetary Dasha Decomposition
     planets_regex = r"(rahu|ketu|saturn|shani|jupiter|guru|brihaspati|mercury|budh|budha|mars|mangal|venus|shukra|sun|surya|moon|chandra)"
-    # Pattern A: "Rahu Mahadasha and Saturn Antardasha" / "Rahu Mahadasha Saturn Antardasha"
     dasha_pair_match = re.search(
         rf"\b{planets_regex}\s*(?:mahadasha|maha\s*dasha|dasha)?\s*(?:and|aur|with|-|&|\/|,)?\s*{planets_regex}\s*(?:antardasha|antar\s*dasha|sub-period|bhukti|dasha)\b",
         q_clean
     )
     if not dasha_pair_match:
-        # Pattern B: "under Rahu and Saturn dasha" / "during Rahu-Saturn dasha"
         dasha_pair_match = re.search(
             rf"\b(?:under|during|in)\s+{planets_regex}(?:'s)?\s*(?:mahadasha|dasha)?\s*(?:and|aur|with|-)\s*{planets_regex}\s*(?:antardasha|sub-period|bhukti|dasha)?\b",
             q_clean
@@ -404,7 +400,6 @@ def classify_multi_domain_micro_intents(query: str) -> List[str]:
         if dasha_intent_id not in detected_intents:
             detected_intents.append(dasha_intent_id)
     else:
-        # Pattern C: Single planet dasha (e.g. "Rahu Mahadasha", "under Saturn dasha")
         single_dasha_match = re.search(
             rf"\b{planets_regex}\s+(?:mahadasha|maha\s*dasha|antardasha|dasha)\b",
             q_clean
@@ -420,16 +415,14 @@ def classify_multi_domain_micro_intents(query: str) -> List[str]:
         if re.search(r"\b(?:under|during|in)\s+.*(?:dasha|mahadasha)\b", q_clean) or re.search(r"\b(?:mahadasha|antardasha)\s+(?:effects?|impact|results?)\b", q_clean):
             detected_intents.append("dasha_dynamics")
 
-    # 3. Canonical Registry Matching (Career, Finance, Marriage, Remedies, Health, etc.)
+    # 3. Canonical Registry Matching
     for intent_id, intent_def in MICRO_INTENT_REGISTRY.items():
         matched = False
-        # A. Pattern Regex Match
         for pattern in intent_def.patterns:
             if re.search(pattern, q_clean, re.IGNORECASE):
                 matched = True
                 break
 
-        # B. Multi-Keyword Combination Match
         if not matched:
             kw_hits = sum(1 for kw in intent_def.keywords if re.search(rf"\b{re.escape(kw)}\b", q_clean))
             if kw_hits >= 2:
@@ -438,7 +431,7 @@ def classify_multi_domain_micro_intents(query: str) -> List[str]:
         if matched and intent_id not in detected_intents:
             detected_intents.append(intent_id)
 
-    # 4. Synchronize Multi-Domain Context Signals (Domain-to-Micro-Intent bridge)
+    # 4. Synchronize Multi-Domain Context Signals
     for signal in active_domain_signals:
         if signal == "career_signal" and "career" not in negated_domains:
             if not any(MICRO_INTENT_REGISTRY.get(it) and MICRO_INTENT_REGISTRY[it].domain == "career" for it in detected_intents):
@@ -481,7 +474,7 @@ def classify_multi_domain_micro_intents(query: str) -> List[str]:
                 else:
                     detected_intents.append("health_timing")
 
-    # 5. Disambiguation Filtering: Polysemous Term Disambiguation
+    # 5. Disambiguation Filtering
     if disambiguated.get("partner") == "business":
         if "marriage_compatibility" in detected_intents:
             if not any(re.search(rf"\b{w}\b", q_clean) for w in ["marriage", "shaadi", "vivah", "spouse", "wife", "husband"]):
@@ -491,26 +484,24 @@ def classify_multi_domain_micro_intents(query: str) -> List[str]:
         if "property_vehicle_timing" in detected_intents:
             detected_intents.remove("property_vehicle_timing")
 
-    # 6. Negation Filtering: Suppress Any Explicitly Negated Domains
+    # 6. Negation Filtering
     if negated_domains:
         detected_intents = [
             it for it in detected_intents
             if not (MICRO_INTENT_REGISTRY.get(it) and MICRO_INTENT_REGISTRY[it].domain in negated_domains)
         ]
 
-    # Clean up redundant career intents: if career_growth_prospects matched and career_timing has no explicit timing words
     if "career_growth_prospects" in detected_intents and "career_timing" in detected_intents:
         timing_words = ["kab", "when", "switch", "change", "right time", "timeline", "date", "stabilize", "settle"]
         if not any(tw in q_clean for tw in timing_words):
             detected_intents.remove("career_timing")
 
-    # Clean up redundant finance intents: if finance_stability matched and finance_timing has no explicit timing words
     if "finance_stability" in detected_intents and "finance_timing" in detected_intents:
         timing_words = ["kab", "when", "timeline", "date", "aayega"]
         if not any(tw in q_clean for tw in timing_words):
             detected_intents.remove("finance_timing")
 
-    # Fallback only when broad domain keywords are present and nothing detected
+    # Fallback heuristics
     if not detected_intents:
         is_astro_house = bool(re.search(r"\b(?:\d+(?:st|nd|rd|th)?|first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth)\s+house\b|\bhouse\s+(?:lord|sign|rashi|ruler)\b", q_clean))
         if any(re.search(rf"\b{re.escape(w)}\b", q_clean) for w in ["car", "cars", "vehicle", "vehicles", "gadi", "flat", "makan", "plot", "land", "vahana"]):
@@ -571,15 +562,38 @@ SIGN_RULERS = {
 }
 
 
+def build_chart_context_summary(
+    user_profile: Dict[str, Any],
+    active_houses: Optional[str] = None
+) -> str:
+    """
+    Compresses user profile metadata into a single-line compact notation (~35 tokens):
+    '{lagna} Lagna, {moon_sign} Moon | Dasha: {mahadasha}-{antardasha} | Transits: {active_houses} active.'
+    """
+    lagna = (
+        user_profile.get("ascendant_sign")
+        or user_profile.get("ascendant")
+        or user_profile.get("lagna")
+        or "Virgo"
+    )
+    moon_sign = user_profile.get("moon_sign") or "Taurus"
+    mahadasha = user_profile.get("mahadasha") or "Rahu"
+    antardasha = user_profile.get("antardasha") or "Saturn"
+
+    if not active_houses:
+        active_houses = user_profile.get("active_houses") or "10th/11th"
+
+    return f"{lagna} Lagna, {moon_sign} Moon | Dasha: {mahadasha}-{antardasha} | Transits: {active_houses} active."
+
+
 def retrieve_aggregated_local_context(
     detected_intents: List[str],
     user_profile: Dict[str, Any],
     qa_db: Dict[str, Any]
 ) -> str:
     """
-    Pulls the verified templates for all detected micro-intents from qa_database.json,
-    personalizes them using the user's birth chart parameters (Lagna, Moon, Dasha, Lords),
-    and aggregates them into a structured raw_context block.
+    Extracts lean micro-conclusions (1 line per domain, ~110 tokens total)
+    plus a single-line chart context summary rather than verbose paragraph dumps.
     """
     try:
         from backend.dasha_calculator import resolve_safe_user_dasha_profile
@@ -590,142 +604,92 @@ def retrieve_aggregated_local_context(
     asc_sign = safe_profile.get("ascendant_sign", "Virgo")
     moon_sign = safe_profile.get("moon_sign", "Taurus")
     sun_sign = safe_profile.get("sun_sign", "Gemini")
-    mahadasha = safe_profile.get("mahadasha", "Jupiter")
-    antardasha = safe_profile.get("antardasha", "Mercury")
+    mahadasha = safe_profile.get("mahadasha", "Rahu")
+    antardasha = safe_profile.get("antardasha", "Saturn")
     pratyantardasha = safe_profile.get("pratyantardasha", "Mercury")
-    timing_window = None
 
-    # Dynamically detect primary inquiry domain from detected intents
+    # Determine primary inquiry domains
+    domain_map = {
+        "property": "4th",
+        "vehicle": "4th",
+        "travel": "9th/12th",
+        "foreign": "9th/12th",
+        "finance": "2nd/11th",
+        "marriage": "7th",
+        "health": "6th/12th",
+        "education": "5th/9th",
+        "career": "10th/6th"
+    }
+
+    active_house_parts = []
     primary_domain = "career"
     for it in detected_intents:
-        if "property" in it or "vehicle" in it:
-            primary_domain = "property"
-            break
-        elif "travel" in it or "foreign" in it:
-            primary_domain = "travel"
-            break
-        elif "finance" in it:
-            primary_domain = "finance"
-            break
-        elif "marriage" in it:
-            primary_domain = "marriage"
-            break
-        elif "health" in it:
-            primary_domain = "health"
-            break
+        for dom_key, house_val in domain_map.items():
+            if dom_key in it:
+                if house_val not in active_house_parts:
+                    active_house_parts.append(house_val)
+                primary_domain = dom_key
+                break
 
-    # Compute dynamic Gochar timing window via timing_engine for the SPECIFIC domain
+    active_houses_str = ", ".join(active_house_parts) if active_house_parts else "10th/11th"
+
+    # Compute dynamic Gochar timing window via timing_engine if available
+    timing_window = "Favorable Transit Window"
     try:
         from backend.timing_engine import calculate_astrological_timing_window
-    except ImportError:
-        from timing_engine import calculate_astrological_timing_window
+        resolved_birth = (
+            user_profile.get("session_birth_data")
+            or safe_profile.get("session_birth_data")
+        )
+        if not resolved_birth and any(k in user_profile for k in ("birth_year", "birth_month", "birth_day")):
+            resolved_birth = user_profile
 
-    # Resolve birth data & dasha bounds
-    resolved_birth = (
-        user_profile.get("session_birth_data")
-        or safe_profile.get("session_birth_data")
-    )
-    if not resolved_birth and any(k in user_profile for k in ("birth_year", "birth_month", "birth_day")):
-        resolved_birth = user_profile
+        resolved_chart = user_profile.get("chart_data") or safe_profile.get("chart_data")
+        d_start = safe_profile.get("dasha_start_date") or user_profile.get("dasha_start_date")
+        d_end = safe_profile.get("dasha_end_date") or user_profile.get("dasha_end_date")
 
-    resolved_chart = user_profile.get("chart_data") or safe_profile.get("chart_data")
-    d_start = safe_profile.get("dasha_start_date") or user_profile.get("dasha_start_date")
-    d_end = safe_profile.get("dasha_end_date") or user_profile.get("dasha_end_date")
+        calced_timing = calculate_astrological_timing_window(
+            domain=primary_domain,
+            ascendant_sign=asc_sign,
+            moon_sign=moon_sign,
+            mahadasha=mahadasha,
+            antardasha=antardasha,
+            session_birth_data=resolved_birth,
+            chart_data=resolved_chart,
+            dasha_start_date=d_start,
+            dasha_end_date=d_end
+        )
+        timing_window = calced_timing.get("timing_window") or timing_window
+    except Exception:
+        pass
 
-    calced_timing = calculate_astrological_timing_window(
-        domain=primary_domain,
-        ascendant_sign=asc_sign,
-        moon_sign=moon_sign,
-        mahadasha=mahadasha,
-        antardasha=antardasha,
-        session_birth_data=resolved_birth,
-        chart_data=resolved_chart,
-        dasha_start_date=d_start,
-        dasha_end_date=d_end
-    )
-    timing_window = calced_timing.get("timing_window") or "Favorable Planetary Transit Window"
-    transit_summary = calced_timing.get("transit_summary", "")
+    # 1. Single-line compact chart context summary (~35 tokens)
+    chart_summary_line = build_chart_context_summary(safe_profile, active_houses=active_houses_str)
 
-    asc_idx = ZODIAC_SIGNS.index(asc_sign) if asc_sign in ZODIAC_SIGNS else 5
-    h4_sign = ZODIAC_SIGNS[(asc_idx + 3) % 12]
-    h4_ruler = SIGN_RULERS.get(h4_sign, "Jupiter")
-    h9_sign = ZODIAC_SIGNS[(asc_idx + 8) % 12]
-    h9_ruler = SIGN_RULERS.get(h9_sign, "Venus")
-    h10_sign = ZODIAC_SIGNS[(asc_idx + 9) % 12]
-    h10_ruler = SIGN_RULERS.get(h10_sign, "Mercury")
-    h7_sign = ZODIAC_SIGNS[(asc_idx + 6) % 12]
-    h7_ruler = SIGN_RULERS.get(h7_sign, "Jupiter")
-    h2_sign = ZODIAC_SIGNS[(asc_idx + 1) % 12]
-    h2_ruler = SIGN_RULERS.get(h2_sign, "Venus")
-    h12_sign = ZODIAC_SIGNS[(asc_idx + 11) % 12]
-    h12_ruler = SIGN_RULERS.get(h12_sign, "Sun")
-    h6_sign = ZODIAC_SIGNS[(asc_idx + 5) % 12]
-    h6_ruler = SIGN_RULERS.get(h6_sign, "Saturn")
-    gemstone = LAGNA_GEMSTONES.get(asc_sign, "Emerald (Panna)")
+    # 2. Extract lean micro-conclusions (1 line per domain, ~110 tokens total)
+    seen_domains = set()
+    micro_conclusions: List[str] = []
 
-    snippets: List[str] = []
-
-    # Domain-isolated birth chart facts formatted ultra-compactly
-    chart_facts = [
-        f"[CHART & TIMING EVIDENCE]",
-        f"- Lagna: {asc_sign} (Lord: {SIGN_RULERS.get(asc_sign, 'Mercury')}) | Moon: {moon_sign} | Sun: {sun_sign}",
-        f"- Dasha: {mahadasha}-{antardasha} (PD: {pratyantardasha})",
-        f"- Target Domain: {primary_domain.capitalize()}",
-    ]
-    if primary_domain == "property":
-        chart_facts.extend([
-            f"- 4th House (Assets & Sukha): {h4_sign} (Lord: {h4_ruler}) | Karakas: Venus (vehicles), Mars (property)",
-            f"- Favorable Timing Window: {timing_window}",
-        ])
-    elif primary_domain == "travel":
-        chart_facts.extend([
-            f"- 9th/12th House (Foreign/Travel): {h9_sign}/{h12_sign} (Lords: {h9_ruler}/{h12_ruler}) | Karakas: Rahu & Moon",
-            f"- Favorable Timing Window: {timing_window}",
-        ])
-    elif primary_domain == "finance":
-        chart_facts.extend([
-            f"- 2nd/11th House (Wealth/Gains): {h2_sign}/{ZODIAC_SIGNS[(asc_idx + 10) % 12]} | Karaka: Jupiter",
-            f"- Favorable Timing Window: {timing_window}",
-        ])
-    elif primary_domain == "marriage":
-        chart_facts.extend([
-            f"- 7th House (Partnerships): {h7_sign} (Lord: {h7_ruler}) | Karakas: Venus & Jupiter",
-            f"- Favorable Timing Window: {timing_window}",
-        ])
-    elif primary_domain == "health":
-        chart_facts.extend([
-            f"- 6th/12th House (Health & Rest): {h6_sign}/{h12_sign} (Lords: {h6_ruler}/{h12_ruler})",
-            f"- Favorable Timing Window: {timing_window}",
-        ])
-    else:
-        chart_facts.extend([
-            f"- 10th/6th House (Career & Service): {h10_sign}/{h6_sign} (Lords: {h10_ruler}/{h6_ruler}) | Karakas: Saturn & Sun",
-            f"- Favorable Timing Window: {timing_window}",
-        ])
-
-    snippets.append("\n".join(chart_facts))
-
-    # Fetch corresponding domain rule entries from qa_database.json (compact 1-2 sentence core facts)
     for intent_id in detected_intents:
-        intent_def = MICRO_INTENT_REGISTRY.get(intent_id)
-        if not intent_def:
-            # Handle dynamic planetary dasha micro-intents (e.g. dasha_impact_rahu_saturn)
-            if intent_id.startswith("dasha_impact_"):
+        if intent_id.startswith("dasha_impact_"):
+            if "dasha" not in seen_domains:
+                seen_domains.add("dasha")
                 parts = intent_id.replace("dasha_impact_", "").split("_")
                 p1 = parts[0] if len(parts) > 0 else "rahu"
                 p2 = parts[1] if len(parts) > 1 else "saturn"
-
-                dasha_line = (
-                    f"  * {p1.capitalize()}-{p2.capitalize()} Dasha combines {p1.capitalize()}'s intense ambition with "
-                    f"{p2.capitalize()}'s discipline; requires methodical effort in career and conservative finance."
-                )
-                snippets.append(
-                    f"[MICRO_INTENT: {intent_id.upper()} (Domain: dasha)]\n{dasha_line}"
+                micro_conclusions.append(
+                    f"[DASHA]: {p1.capitalize()}-{p2.capitalize()} Dasha combines {p1.capitalize()}'s ambition "
+                    f"with {p2.capitalize()}'s discipline, requiring methodical execution."
                 )
             continue
 
-        intent_snippets = []
-        for qk in intent_def.qa_keys[:1]:
+        intent_def = MICRO_INTENT_REGISTRY.get(intent_id)
+        if not intent_def or intent_def.domain in seen_domains:
+            continue
+
+        seen_domains.add(intent_def.domain)
+        retrieved_fact = ""
+        for qk in intent_def.qa_keys:
             val = qa_db.get(qk)
             if val and isinstance(val, str):
                 # Personalize placeholders
@@ -736,17 +700,33 @@ def retrieve_aggregated_local_context(
                 clean_val = clean_val.replace("{moon_sign}", moon_sign)
                 clean_val = clean_val.replace("{ascendant}", asc_sign)
                 clean_val = clean_val.replace("{sun_sign}", sun_sign)
-                sentences = [s.strip() for s in clean_val.split(".") if s.strip()]
-                compact_val = ". ".join(sentences[:2]) + "." if sentences else clean_val
-                intent_snippets.append(f"  * {qk.upper()}: {compact_val}")
+                # Take exactly 1 concise sentence
+                sentences = [s.strip() for s in re.split(r"[.\n]+", clean_val) if len(s.strip()) > 15]
+                if sentences:
+                    retrieved_fact = sentences[0]
+                    break
 
-        if intent_snippets:
-            snippets.append(
-                f"[MICRO_INTENT: {intent_id.upper()} (Domain: {intent_def.domain})]\n" +
-                "\n".join(intent_snippets)
-            )
+        if retrieved_fact:
+            micro_conclusions.append(f"[{intent_def.domain.upper()}]: {retrieved_fact}.")
+        else:
+            # Fallback lean micro-conclusion if template lookup is empty
+            dom = intent_def.domain
+            if dom == "career":
+                micro_conclusions.append(f"[CAREER]: 10th house indicates steady advancement through perseverance; favorable window: {timing_window}.")
+            elif dom == "finance":
+                micro_conclusions.append("[FINANCE]: 2nd and 11th houses govern accumulated wealth; conservative financial planning is advised.")
+            elif dom == "property":
+                micro_conclusions.append(f"[PROPERTY]: 4th house alignments support vehicle and fixed asset acquisition during {timing_window}.")
+            elif dom == "travel":
+                micro_conclusions.append(f"[TRAVEL]: 9th and 12th houses activate foreign journeys and documentation clearance ({timing_window}).")
+            elif dom == "marriage":
+                micro_conclusions.append(f"[MARRIAGE]: 7th house indicates auspicious partnership prospects within {timing_window}.")
+            elif dom == "health":
+                micro_conclusions.append("[HEALTH]: 6th and 12th houses emphasize restorative rest and balanced evening routines.")
 
-    return "\n\n".join(snippets)
+    evidence_body = "\n".join(micro_conclusions) if micro_conclusions else f"[{primary_domain.upper()}]: Supportive planetary cycle ({timing_window})."
+
+    return f"{chart_summary_line}\n\n{evidence_body}"
 
 
 # ---------------------------------------------------------------------------
@@ -782,7 +762,6 @@ def build_llm_refiner_prompts(
 def append_multidomain_attribution_footer(answer: str, domains: Optional[List[str]] = None) -> str:
     """
     Standardizes the final response by appending the required Multi-Domain Hybrid Synthesis footer.
-    Example: *[Calculation: SwissEphemeris_VimshottariEngine | Multi-Domain Hybrid Synthesis: Career & Finance]*
     """
     try:
         from backend.answer_synthesizer import append_multidomain_footer
@@ -814,25 +793,20 @@ async def execute_multidomain_hybrid_synthesis(
 ) -> Dict[str, Any]:
     """
     Executes the end-to-end Multi-Domain Local Retrieval + LLM Refiner synthesis.
-    1. Aggregates personalized local database facts into raw_context / context_payload.
-    2. Builds strict Prose Refiner prompts via answer_synthesizer.
-    3. Calls cascading router (Groq -> OpenRouter -> Gemini).
-    4. Appends standardized Multi-Domain attribution footer with domain specifics.
     """
     try:
         from backend.answer_synthesizer import (
             build_context_payload,
-            synthesize_multidomain_answer,
+            synthesizer_multidomain_response,
             format_multidomain_footer,
         )
     except ImportError:
         from answer_synthesizer import (
             build_context_payload,
-            synthesize_multidomain_answer,
+            synthesizer_multidomain_response,
             format_multidomain_footer,
         )
 
-    # Determine domains from detected intents
     domains = []
     for it in detected_intents:
         if it.startswith("dasha_impact") or "dasha" in it:
@@ -853,7 +827,7 @@ async def execute_multidomain_hybrid_synthesis(
     raw_context = retrieve_aggregated_local_context(detected_intents, safe_profile, qa_db)
     context_payload = build_context_payload(raw_context, detected_intents, safe_profile)
 
-    return await synthesize_multidomain_answer(
+    return await synthesizer_multidomain_response(
         query=query,
         context_payload=context_payload,
         detected_intents=detected_intents,
@@ -904,9 +878,7 @@ async def handle_timing_query(
     is_hinglish: bool = False
 ) -> Dict[str, Any]:
     """
-    Executes the specialized Timing Engine pipeline:
-    Calculates Gochar transit windows (Jupiter & Saturn activations) combined with active Dasha,
-    synthesizes a personalized consultation response via LLM, and appends the provenance footer.
+    Executes the specialized Timing Engine pipeline.
     """
     try:
         from backend.timing_engine import execute_timing_pipeline

@@ -32,6 +32,27 @@ def print_llm_call_report(
     total_tokens = input_tokens + output_tokens
     evidence_str = ", ".join(evidence_sent) if evidence_sent else "Standard chart evidence package"
 
+    rem_tokens_str = None
+    try:
+        try:
+            from backend.answer_synthesizer import (
+                get_model_remaining_tokens,
+                DEFAULT_MODEL_BUDGETS,
+                DEFAULT_FALLBACK_BUDGET,
+            )
+        except ImportError:
+            from answer_synthesizer import (
+                get_model_remaining_tokens,
+                DEFAULT_MODEL_BUDGETS,
+                DEFAULT_FALLBACK_BUDGET,
+            )
+        clean_model = (model_name or "unknown").lower().strip()
+        rem_tok = get_model_remaining_tokens(clean_model)
+        budget = DEFAULT_MODEL_BUDGETS.get(clean_model, DEFAULT_FALLBACK_BUDGET)
+        rem_tokens_str = f"{rem_tok:,} / {budget:,}"
+    except Exception:
+        pass
+
     report_lines = [
         "==================================================",
         "                 LLM TOKEN REPORT                 ",
@@ -41,11 +62,16 @@ def print_llm_call_report(
         f"Model Used     : {model_name}",
         f"Input Tokens   : {input_tokens}",
         f"Output Tokens  : {output_tokens}",
-        f"Total Tokens   : {total_tokens}",
+        f"Total Tokens   : {total_tokens} (Budget: 350-400)",
+        f"Query Remainder: {max(0, 400 - total_tokens)} tokens",
+    ]
+    if rem_tokens_str:
+        report_lines.append(f"Model Tokens   : {rem_tokens_str} remaining")
+    report_lines.extend([
         f"Evidence Sent  : {evidence_str}",
         f"Latency        : {latency_ms:.2f} ms",
         "=================================================="
-    ]
+    ])
     report_text = "\n".join(report_lines)
     print("\n" + report_text + "\n", flush=True)
 
