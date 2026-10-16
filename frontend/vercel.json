@@ -6,19 +6,19 @@
   "rewrites": [
     {
       "source": "/chat",
-      "destination": "https://astro-ai-backend.onrender.com/chat"
+      "destination": "https://astro-ai-chatbot.onrender.com/chat"
     },
     {
       "source": "/health",
-      "destination": "https://astro-ai-backend.onrender.com/health"
+      "destination": "https://astro-ai-chatbot.onrender.com/health"
     },
     {
       "source": "/api/:match*",
-      "destination": "https://astro-ai-backend.onrender.com/api/:match*"
+      "destination": "https://astro-ai-chatbot.onrender.com/api/:match*"
     },
     {
       "source": "/admin/:match*",
-      "destination": "https://astro-ai-backend.onrender.com/admin/:match*"
+      "destination": "https://astro-ai-chatbot.onrender.com/admin/:match*"
     },
     {
       "source": "/((?!.*\\.[\\w]+$).*)",
