@@ -955,10 +955,15 @@
 
   <script>
     // ── Global Configurations & Constants ─────────────────────────
-    const isBackendOrigin = ['8000', '8001'].includes(window.location.port);
-    const BACKEND_ORIGIN = isBackendOrigin
-      ? window.location.origin
-      : 'http://127.0.0.1:8000';
+    const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+    const isBackendPort = ['8000', '8001'].includes(window.location.port);
+    const customBackend = window.__BACKEND_URL__ || localStorage.getItem('astro_backend_url');
+
+    const BACKEND_ORIGIN = customBackend
+      ? customBackend.replace(/\/+$/, '')
+      : (isLocalhost
+          ? (isBackendPort ? window.location.origin : 'http://127.0.0.1:8000')
+          : ''); // Production (Vercel): empty string triggers same-origin /chat rewritten to Render backend
     const BACKEND_URL = `${BACKEND_ORIGIN}/chat`;
     
     let USER_ID = localStorage.getItem('astro_user_id') || ('user_' + Math.random().toString(36).substring(2, 9));

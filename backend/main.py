@@ -2433,6 +2433,13 @@ def read_root():
         return FileResponse(FRONTEND_PATH)
     elif os.path.exists("index.html"):
         return FileResponse("index.html")
+    return {"message": "Astro AI Chatbot API is operational", "status": "running"}
+
+
+@app.get("/health")
+def health_check():
+    return {"status": "healthy", "service": "astro-ai-backend"}
+
 def check_intent_evidence_relevance(
     domain: str,
     intent: str,
