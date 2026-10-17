@@ -963,7 +963,7 @@
       ? customBackend.replace(/\/+$/, '')
       : (isLocalhost
           ? (isBackendPort ? window.location.origin : 'http://127.0.0.1:8000')
-          : ''); // Production (Vercel): empty string triggers same-origin /chat rewritten to Render backend
+          : 'https://astro-ai-chatbot.onrender.com'); // Live Render Backend with full CORS support
     const BACKEND_URL = `${BACKEND_ORIGIN}/chat`;
     
     let USER_ID = localStorage.getItem('astro_user_id') || ('user_' + Math.random().toString(36).substring(2, 9));

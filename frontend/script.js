@@ -180,7 +180,12 @@ async function sendChatMessage() {
   }
 
   try {
-    const response = await fetch("/chat", {
+    const isLocalhost = typeof window !== "undefined" && (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1");
+    const backendOrigin = (typeof window !== "undefined" && (window.__BACKEND_URL__ || localStorage.getItem("astro_backend_url")))
+      || (isLocalhost ? "http://127.0.0.1:8000" : "https://astro-ai-chatbot.onrender.com");
+    const endpoint = `${backendOrigin.replace(/\/+$/, "")}/chat`;
+
+    const response = await fetch(endpoint, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
