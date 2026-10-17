@@ -651,18 +651,10 @@ async def synthesize_timing_response(
         except Exception as te_err:
             logger.warning("Timing engine terminal token report error: %s", te_err)
 
-    # Append clean standardized calculation metadata footer
+    # Return clean prose without footers, provenance badges, or asterisks
     body = refined_prose.strip()
-    body = re.sub(r"\n*\s*\*\[Calculation:[^\]]+\]\*", "", body).strip()
-    footer_badge = TIMING_CALCULATION_FOOTER
-    final_answer = f"{body}\n\n{footer_badge}"
-
-    # Prepend source badge
-    try:
-        from backend.response_formatter import prepend_source_prefix
-        final_answer = prepend_source_prefix(final_answer, source_type=source_badge_type, model_name=active_model)
-    except ImportError:
-        pass
+    body = re.sub(r"\n*\s*\*?\[Calculation:[^\]]+\]\*?", "", body, flags=re.IGNORECASE).strip()
+    final_answer = body.replace("*", "").strip()
 
     return {
         "answer": final_answer,

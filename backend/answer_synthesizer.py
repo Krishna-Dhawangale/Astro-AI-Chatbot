@@ -174,25 +174,17 @@ def format_multidomain_footer(
     domains: List[str],
     engine: str = "FreeAstrologyAPI (Dasha) + SwissEphemeris (Gochar Timing)"
 ) -> str:
-    """
-    Constructs the standardized multi-domain calculation metadata footer.
-    Example: *[Calculation: FreeAstrologyAPI (Dasha) + SwissEphemeris (Gochar Timing) | Multi-Domain Hybrid Synthesis: Career & Finance]*
-    """
-    domain_title = format_domains_title(domains)
-    return f"*[Calculation: {engine} | Multi-Domain Hybrid Synthesis: {domain_title}]*"
+    """Returns empty string so calculation footers are omitted from customer-facing answers."""
+    return ""
 
 
 def append_multidomain_footer(answer: str, domains: List[str]) -> str:
-    """
-    Appends the standardized calculation metadata footer with exactly two newlines,
-    preventing duplicate footer accumulation.
-    """
+    """Returns clean answer without calculation footers or asterisks."""
     if not answer:
         return ""
     body = answer.strip()
-    body = re.sub(r"\n*\s*\*\[Calculation:[^\]]+\]\*", "", body).strip()
-    footer = format_multidomain_footer(domains)
-    return f"{body}\n\n{footer}"
+    body = re.sub(r"\n*\s*\*?\[Calculation:[^\]]+\]\*?", "", body, flags=re.IGNORECASE).strip()
+    return body.replace("*", "").strip()
 
 
 def build_multidomain_system_prompt(

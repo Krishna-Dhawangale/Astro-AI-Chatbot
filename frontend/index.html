@@ -1386,7 +1386,8 @@
             if (tokenIdx !== -1 && (cutIdx === -1 || tokenIdx < cutIdx)) {
               cutIdx = tokenIdx;
             }
-            const displayText = cutIdx !== -1 ? streamText.slice(0, cutIdx).trim() : streamText;
+            const rawDisplayText = cutIdx !== -1 ? streamText.slice(0, cutIdx).trim() : streamText;
+            const displayText = cleanBotText(rawDisplayText);
 
             if (!botMsgContainer) {
               if (typingIndicator) typingIndicator.remove();
@@ -1440,6 +1441,19 @@
       }
     }
 
+    // ── Helper to format and clean bot responses ───────────────────
+    function cleanBotText(rawText) {
+      if (!rawText || typeof rawText !== 'string') return '';
+      return rawText
+        // 1. Remove provenance prefix [Local Database + LLM: ...], [Local Database], [LLM: ...]
+        .replace(/^\s*\[(?:Local Database(?:\s*\+\s*LLM(?::\s*[^\]]+)?)?|LLM(?::\s*[^\]]+)?|Backend|DIRECT|RULE_BASED|Deterministic[^\]]*|Hybrid[^\]]*|Timing[^\]]*|FAQ[^\]]*)\]\s*/i, '')
+        // 2. Remove calculation footers *[Calculation: ...]* or [Calculation: ...]
+        .replace(/\n*\s*\*?\[Calculation:[^\]]+\]\*?/gi, '')
+        // 3. Remove asterisks (* and **) from text
+        .replace(/\*/g, '')
+        .trim();
+    }
+
     // ── DOM Helper Functions ───────────────────────────────────────
     function appendMessage(text, sender) {
       const container = document.getElementById('chatContainer');
@@ -1450,7 +1464,7 @@
       
       const msg = document.createElement('div'); 
       msg.className = `message ${sender}`; 
-      msg.innerText = text;
+      msg.innerText = (sender === 'bot') ? cleanBotText(text) : text;
 
       const timeDiv = document.createElement('div'); 
       timeDiv.className = 'time'; 

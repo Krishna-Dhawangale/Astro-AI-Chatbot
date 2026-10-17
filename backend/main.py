@@ -273,22 +273,21 @@ async def shutdown_db_event():
 
 
 def label_answer_source(answer: str, source: str, model_name: Optional[str] = None) -> str:
-    """Prepend provenance prefix ([Local Database + LLM: {model}], [Local Database], [LLM: {model}])."""
+    """Returns a clean, user-facing answer with provenance badges, calculation footers, and asterisks stripped."""
     if not answer:
         return ""
     try:
-        from backend.response_formatter import prepend_source_prefix
+        from backend.response_formatter import clean_astrology_response
+        return clean_astrology_response(answer)
     except ImportError:
-        from response_formatter import prepend_source_prefix
+        try:
+            from response_formatter import clean_astrology_response
+            return clean_astrology_response(answer)
+        except ImportError:
+            res = re.sub(r"^\s*\[[^\]]+\]\s*", "", answer).strip()
+            res = re.sub(r"\n*\s*\*?\[Calculation:[^\]]+\]\*?", "", res, flags=re.IGNORECASE).strip()
+            return res.replace("*", "").strip()
 
-    s_upper = (source or "").upper().strip()
-    if any(k in s_upper for k in ["HYBRID", "SYNTHESIS"]):
-        return prepend_source_prefix(answer, "HYBRID", model_name)
-    elif any(k in s_upper for k in ["LOCAL", "DIRECT", "DETERMINISTIC", "RULE_BASED", "FAQ", "DATABASE", "BACKEND"]):
-        return prepend_source_prefix(answer, "LOCAL", model_name)
-    elif any(k in s_upper for k in ["LLM", "GEMINI", "GROQ"]):
-        return prepend_source_prefix(answer, "LLM", model_name)
-    return answer.strip()
 
 
 

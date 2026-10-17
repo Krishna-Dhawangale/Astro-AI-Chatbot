@@ -48,6 +48,15 @@ function parseSafeMarkdownToFragment(text, doc = document) {
   return fragment;
 }
 
+function cleanBotText(rawText) {
+  if (!rawText || typeof rawText !== "string") return "";
+  return rawText
+    .replace(/^\s*\[(?:Local Database(?:\s*\+\s*LLM(?::\s*[^\]]+)?)?|LLM(?::\s*[^\]]+)?|Backend|DIRECT|RULE_BASED|Deterministic[^\]]*|Hybrid[^\]]*|Timing[^\]]*|FAQ[^\]]*)\]\s*/i, "")
+    .replace(/\n*\s*\*?\[Calculation:[^\]]+\]\*?/gi, "")
+    .replace(/\*/g, "")
+    .trim();
+}
+
 /**
  * Renders bot message container with bold prefix and safely parsed content.
  * Clears and populates using only DOM methods; never touches innerHTML.
@@ -63,8 +72,9 @@ function renderSafeBotMessage(container, rawText, doc = document) {
   container.appendChild(prefix);
   container.appendChild(doc.createTextNode(" "));
 
-  if (rawText) {
-    container.appendChild(parseSafeMarkdownToFragment(rawText, doc));
+  const cleaned = cleanBotText(rawText);
+  if (cleaned) {
+    container.appendChild(doc.createTextNode(cleaned));
   }
 }
 
@@ -119,7 +129,7 @@ function finalizeStreamedText(streamText) {
       displayText = displayText.slice(0, endIdx).trim();
     }
   }
-  return displayText;
+  return cleanBotText(displayText);
 }
 
 async function sendChatMessage() {
