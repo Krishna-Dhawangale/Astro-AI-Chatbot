@@ -200,153 +200,72 @@ def build_compact_evidence_package(
         if sun_data.get("rashi") or sun_data.get("sign"):
             verified_facts["Sun"] = sun_data.get("rashi") or sun_data.get("sign")
 
-    # Domain and query-specific dynamic house evidence extraction
-    # 1. Career (10H)
-    if dom == "career" or any(k in q_low for k in ["career", "job", "profession", "work", "working", "10th house", "10th"]):
-        tenth_lord_rule = next(
-            (
-                rule for rule in matched_rules
-                if rule.get("rule_id") == "CAREER_10TH_LORD_PLACEMENT"
-                and rule.get("matched", True)
-            ),
-            None,
-        )
-        rule_evidence = tenth_lord_rule.get("evidence", {}) if tenth_lord_rule else {}
-        if isinstance(rule_evidence, dict):
-            house_sign = rule_evidence.get("house_rashi")
-            lord = rule_evidence.get("lord")
-            if isinstance(house_sign, str) and house_sign and isinstance(lord, str) and lord:
-                verified_facts["10H"] = house_sign
-                verified_facts["10L"] = lord
-                lord_house = rule_evidence.get("lord_natal_house")
-                if lord_house is not None:
-                    verified_facts["10L_placement"] = f"{lord_house}H"
-                    lord_sign = rule_evidence.get("lord_natal_rashi")
-                    if isinstance(lord_sign, str) and lord_sign:
-                        verified_facts["10L_placement"] += f" ({lord_sign})"
-        if "10H" not in verified_facts:
-            h10 = get_house_details(chart_data, 10)
-            if h10["data_available"]:
-                verified_facts["10H"] = h10["sign"]
-                if h10["lord_placement_available"]:
-                    verified_facts["10L"] = f"{h10['lord']}@{h10['lord_house']}H"
-                if h10["occupants"]:
-                    verified_facts["10H_occupants"] = ", ".join(h10["occupants"])
+    # Domain and query-specific dynamic house evidence extraction for all 12 houses (1..12)
+    try:
+        from backend.router.semantic_parser import extract_all_houses
+        target_houses = extract_all_houses(q_low)
+    except Exception:
+        target_houses = []
 
-    # 2. Property & Conveyance (4H)
-    is_prop_query = dom == "property" or any(k in q_low for k in ["property", "real estate", "house purchase", "buying a house", "purchasing a house", "buy a house", "purchase a house", "land", "flat", "plot", "conveyance", "vehicle", "4th house", "4h"])
-    if is_prop_query:
-        h4 = get_house_details(chart_data, 4)
-        if h4["data_available"]:
-            verified_facts["4H"] = h4["sign"]
-            if h4["lord_placement_available"]:
-                verified_facts["4L"] = f"{h4['lord']}@{h4['lord_house']}H"
-            if h4["occupants"]:
-                verified_facts["4H_occupants"] = ", ".join(h4["occupants"])
+    # Domain default primary houses
+    domain_default_map = {
+        "career": [10],
+        "marriage": [7],
+        "finance": [2, 11],
+        "property": [4],
+        "education": [5, 9],
+    }
+    for dh in domain_default_map.get(dom, []):
+        if dh not in target_houses:
+            target_houses.append(dh)
+
+    # Inject verified facts for EVERY target house (1..12)
+    for h in target_houses:
+        if isinstance(h, int) and 1 <= h <= 12:
+            h_det = get_house_details(chart_data, h)
+            if h_det.get("data_available"):
+                if f"{h}H" not in verified_facts:
+                    verified_facts[f"{h}H"] = h_det["sign"]
+                if h_det.get("lord_placement_available") and f"{h}L" not in verified_facts:
+                    verified_facts[f"{h}L"] = f"{h_det['lord']}@{h_det['lord_house']}H"
+                if h_det.get("occupants_available") and f"{h}H_occupants" not in verified_facts:
+                    if h_det["occupants"]:
+                        verified_facts[f"{h}H_occupants"] = ", ".join(h_det["occupants"])
+                    else:
+                        verified_facts[f"{h}H_occupants"] = "None (empty)"
+
+    # Special domain aliases and Karakas
+    if 6 in target_houses and (any(k in q_low for k in ["loan", "debt", "borrow", "emi"]) or "6H" in verified_facts):
+        if "6H" in verified_facts:
+            verified_facts["6H_Loan"] = verified_facts["6H"]
+        if "6L" in verified_facts:
+            verified_facts["6L_Loan"] = verified_facts["6L"]
+
+    # Natural Karakas when relevant domain or houses are present
+    if 4 in target_houses or dom == "property":
         mars_data = planets.get("Mars", {}) if isinstance(planets, dict) else {}
         if isinstance(mars_data, dict) and mars_data.get("house"):
             verified_facts["Mars_Property_Karaka"] = f"{mars_data.get('rashi', '')}@{mars_data.get('house')}H"
 
-
-    # 3. Debt, Loans & Financial Obstacles (6H)
-    is_loan_query = any(k in q_low for k in ["loan", "debt", "emi", "mortgage", "borrow", "karz", "6th house", "6h"])
-    if is_loan_query:
-        h6 = get_house_details(chart_data, 6)
-        if h6["data_available"]:
-            verified_facts["6H_Loan"] = h6["sign"]
-            if h6["lord_placement_available"]:
-                verified_facts["6L_Loan"] = f"{h6['lord']}@{h6['lord_house']}H"
-            if h6["occupants"]:
-                verified_facts["6H_occupants"] = ", ".join(h6["occupants"])
-
-    # 4. Higher Education, Study Abroad, Fortune & Long Travel (9H)
-    is_nine_query = any(k in q_low for k in ["higher education", "study abroad", "studying abroad", "travel", "father", "fortune", "dharma", "9th house", "9h"])
-    if is_nine_query:
-        h9 = get_house_details(chart_data, 9)
-        if h9["data_available"]:
-            verified_facts["9H"] = h9["sign"]
-            if h9["lord_placement_available"]:
-                verified_facts["9L"] = f"{h9['lord']}@{h9['lord_house']}H"
-            if h9["occupants"]:
-                verified_facts["9H_occupants"] = ", ".join(h9["occupants"])
-
-    # 5. Foreign Settlement, Relocation & Sleep (12H)
-    is_twelve_query = any(k in q_low for k in ["foreign", "abroad", "relocat", "overseas", "country", "another country", "sleep", "neend", "insomnia", "restlessness", "expense", "12th house", "12h"]) or bool(re.search(r"\b12\s*th\s*house\b", q_low))
-    if is_twelve_query:
-        h12 = get_house_details(chart_data, 12)
-        if h12["data_available"]:
-            verified_facts["12H"] = h12["sign"]
-            if h12["lord_placement_available"]:
-                verified_facts["12L"] = f"{h12['lord']}@{h12['lord_house']}H"
-            if h12["occupants"]:
-                verified_facts["12H_occupants"] = ", ".join(h12["occupants"])
-
-    # 6. Financial Gains & Income (11H)
-    is_eleven_query = any(k in q_low for k in ["gain", "income", "profit", "wealth expansion", "11th house", "11h"])
-    if is_eleven_query:
-        h11 = get_house_details(chart_data, 11)
-        if h11["data_available"]:
-            verified_facts["11H"] = h11["sign"]
-            if h11["lord_placement_available"]:
-                verified_facts["11L"] = f"{h11['lord']}@{h11['lord_house']}H"
-            if h11["occupants"]:
-                verified_facts["11H_occupants"] = ", ".join(h11["occupants"])
-        jup_data = planets.get("Jupiter", {}) if isinstance(planets, dict) else {}
-        if isinstance(jup_data, dict) and jup_data.get("house"):
-            verified_facts["Jupiter_Gains_Karaka"] = f"{jup_data.get('rashi', '')}@{jup_data.get('house')}H"
-
-    # 7. Marriage & Relationships (7H)
-    is_marriage_query = dom == "marriage" or any(k in q_low for k in ["marriage", "relationship", "spouse", "partner", "love life", "7th house", "7h"])
-    if is_marriage_query:
-        h7 = get_house_details(chart_data, 7)
-        if h7["data_available"]:
-            verified_facts["7H"] = h7["sign"]
-            if h7["lord_placement_available"]:
-                verified_facts["7L"] = f"{h7['lord']}@{h7['lord_house']}H"
-            if h7["occupants"]:
-                verified_facts["7H_occupants"] = ", ".join(h7["occupants"])
+    if 7 in target_houses or dom == "marriage":
         ven_data = planets.get("Venus", {}) if isinstance(planets, dict) else {}
         if isinstance(ven_data, dict) and ven_data.get("house"):
             verified_facts["Venus_Marriage_Karaka"] = f"Venus@{ven_data.get('house')}H"
 
-    # 8. Wealth & Savings (2H)
-    is_finance_query = dom == "finance" or any(k in q_low for k in ["wealth", "saving", "finance", "money", "2nd house", "2h"])
-    if is_finance_query:
-        h2 = get_house_details(chart_data, 2)
-        if h2["data_available"]:
-            verified_facts["2H"] = h2["sign"]
-            if h2["lord_placement_available"]:
-                verified_facts["2L"] = f"{h2['lord']}@{h2['lord_house']}H"
-            if h2["occupants"]:
-                verified_facts["2H_occupants"] = ", ".join(h2["occupants"])
+    if 11 in target_houses or any(k in q_low for k in ["gain", "income", "profit"]):
+        jup_data = planets.get("Jupiter", {}) if isinstance(planets, dict) else {}
+        if isinstance(jup_data, dict) and jup_data.get("house"):
+            verified_facts["Jupiter_Gains_Karaka"] = f"{jup_data.get('rashi', '')}@{jup_data.get('house')}H"
+
+    if 2 in target_houses or dom == "finance":
         jup_data = planets.get("Jupiter", {}) if isinstance(planets, dict) else {}
         if isinstance(jup_data, dict) and jup_data.get("house"):
             verified_facts["Jupiter_Wealth_Karaka"] = f"Jupiter@{jup_data.get('house')}H"
 
-    # 9. Intellect & Education (5H)
-    is_five_query = dom == "education" or any(k in q_low for k in ["intellect", "buddhi", "memory", "discernment", "speculation", "children", "5th house", "5h", "5th-house"]) or bool(re.search(r"\b5\s*th\s*house\b", q_low))
-    if is_five_query:
-        h5 = get_house_details(chart_data, 5)
-        if h5["data_available"]:
-            verified_facts["5H"] = h5["sign"]
-            if h5["lord_placement_available"]:
-                verified_facts["5L"] = f"{h5['lord']}@{h5['lord_house']}H"
-            if h5["occupants"]:
-                verified_facts["5H_occupants"] = ", ".join(h5["occupants"])
-
-    # 10. Direct Numbered House Fallback (for any other house 1..12 e.g. 1H, 3H, 8H)
-    m_house = re.search(r"\b(?:what does my|what is my|in my|tell me about my)?\s*(first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth|\d{1,2}\s*(?:st|nd|rd|th)?)\s*house\b", q_low)
-    if m_house:
-        from backend.reasoning.direct_fact_engine import WORD_TO_HOUSE
-        h_num = WORD_TO_HOUSE.get(re.sub(r"\s+", "", m_house.group(1).lower()))
-        if h_num and f"{h_num}H" not in verified_facts:
-            hn = get_house_details(chart_data, h_num)
-            if hn["data_available"]:
-                verified_facts[f"{h_num}H"] = hn["sign"]
-                if hn["lord_placement_available"]:
-                    verified_facts[f"{h_num}L"] = f"{hn['lord']}@{hn['lord_house']}H"
-                if hn["occupants"]:
-                    verified_facts[f"{h_num}H_occupants"] = ", ".join(hn["occupants"])
+    if 5 in target_houses or dom == "education":
+        merc_data = planets.get("Mercury", {}) if isinstance(planets, dict) else {}
+        if isinstance(merc_data, dict) and merc_data.get("house"):
+            verified_facts["Mercury_Intellect_Karaka"] = f"Mercury@{merc_data.get('house')}H"
 
     # 11. All Planetary Placements Fallback
     if any(k in q_low for k in ["which planet", "planetary placements", "planet positions", "where are my planets", "which house"]):

@@ -215,6 +215,18 @@ except ImportError:
     from reasoning.direct_fact_engine import is_direct_fact_query, extract_direct_fact
 
 try:
+    from backend.router.semantic_parser import analyze_query_intent
+    from backend.router.capability_gate import evaluate_capability, ExecutionPath
+except ImportError:
+    try:
+        from router.semantic_parser import analyze_query_intent
+        from router.capability_gate import evaluate_capability, ExecutionPath
+    except ImportError:
+        analyze_query_intent = None
+        evaluate_capability = None
+        ExecutionPath = None
+
+try:
     from backend.llm_router import stream_cascading_router, trim_to_last_sentence
 except ImportError:
     from llm_router import stream_cascading_router, trim_to_last_sentence
@@ -3287,7 +3299,23 @@ async def _handle_chat_response(request: ChatRequest, session_id: Optional[str] 
     ev_audit = evaluate_evidence_availability(required_ev_keys, norm_chart, dasha_hierarchy)
 
     direct_fact = None
-    if is_direct_fact_query(normalized_query):
+    # Semantic Intent Analysis & Capability Gate Evaluation across all 12 houses (1..12)
+    semantic_profile = None
+    cap_decision = None
+    if analyze_query_intent and evaluate_capability:
+        try:
+            semantic_profile = analyze_query_intent(normalized_query)
+            cap_decision = evaluate_capability(
+                intent_profile=semantic_profile,
+                chart_data=norm_chart,
+                dasha_hierarchy=dasha_hierarchy
+            )
+        except Exception as gate_err:
+            logger.warning("Capability gate evaluation failed: %s", gate_err)
+
+    if cap_decision and cap_decision.path == ExecutionPath.LOCAL_DIRECT_FACT and cap_decision.direct_answer:
+        direct_fact = cap_decision.direct_answer
+    elif is_direct_fact_query(normalized_query):
         direct_fact = extract_direct_fact(normalized_query, norm_chart, norm_dasha)
     if direct_fact:
         ans_text = direct_fact["answer"]

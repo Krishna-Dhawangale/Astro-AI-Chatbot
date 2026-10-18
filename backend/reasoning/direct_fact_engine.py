@@ -10,6 +10,7 @@ and Dasha data without invoking heavy Stage 8 reasoning or LLM API calls.
 import re
 from typing import Dict, Any, Optional, Tuple, List
 from backend.reasoning.lordship import get_house_details, RASHI_LORDS
+from backend.router.capability_gate import ordinal_house
 
 
 DIRECT_FACT_PATTERNS = {
@@ -545,11 +546,13 @@ def extract_direct_fact(question: str, chart_data: Dict[str, Any], dasha_hierarc
             }
         lord_name = h_details["lord"]
         h_sign = h_details["sign"]
+        ord_str = ordinal_house(h_lord_target)
         placement_clause = ""
         if h_details["lord_placement_available"]:
-            placement_clause = f" In your birth chart, {lord_name} is placed in your **{h_details['lord_house']}th house** in **{h_details['lord_sign']}**."
+            lord_ord = ordinal_house(h_details["lord_house"])
+            placement_clause = f" In your birth chart, {lord_name} is placed in your **{lord_ord} house** in **{h_details['lord_sign']}**."
         return {
-            "answer": f"Your **{h_lord_target}th house** is in **{h_sign}**, which is ruled by **{lord_name}**.{placement_clause}",
+            "answer": f"Your **{ord_str} house** is in **{h_sign}**, which is ruled by **{lord_name}**.{placement_clause}",
             "fact_type": "house_lord",
             "answer_mode": "DIRECT",
             "gemini_calls": 0,
@@ -560,10 +563,11 @@ def extract_direct_fact(question: str, chart_data: Dict[str, Any], dasha_hierarc
     # 7b. House Sign Lookup
     h_sign_target = extract_house_sign_query(q_lower)
     if h_sign_target is not None:
+        ord_str = ordinal_house(h_sign_target)
         h_details = get_house_details(chart_data, h_sign_target)
         if not h_details["data_available"]:
             return {
-                "answer": f"Your {h_sign_target}th house sign data is unavailable in the current birth chart data.",
+                "answer": f"Your {ord_str} house sign data is unavailable in the current birth chart data.",
                 "fact_type": "house_sign",
                 "answer_mode": "UNRESOLVED",
                 "gemini_calls": 0,
@@ -571,7 +575,7 @@ def extract_direct_fact(question: str, chart_data: Dict[str, Any], dasha_hierarc
                 "fact_sources": {"house_sign": "MISSING"}
             }
         return {
-            "answer": f"The zodiac sign occupying your **{h_sign_target}th house** is **{h_details['sign']}** (ruled by **{h_details['lord']}**).",
+            "answer": f"The zodiac sign occupying your **{ord_str} house** is **{h_details['sign']}** (ruled by **{h_details['lord']}**).",
             "fact_type": "house_sign",
             "answer_mode": "DIRECT",
             "gemini_calls": 0,
@@ -582,18 +586,20 @@ def extract_direct_fact(question: str, chart_data: Dict[str, Any], dasha_hierarc
     # 7c. House Lord Placement Lookup
     h_placement_target = extract_house_lord_placement_query(q_lower)
     if h_placement_target is not None:
+        ord_str = ordinal_house(h_placement_target)
         h_details = get_house_details(chart_data, h_placement_target)
         if not h_details["data_available"] or not h_details["lord_placement_available"]:
             return {
-                "answer": f"The placement of your {h_placement_target}th house lord is unavailable in the current birth chart data.",
+                "answer": f"The placement of your {ord_str} house lord is unavailable in the current birth chart data.",
                 "fact_type": "house_lord_placement",
                 "answer_mode": "UNRESOLVED",
                 "gemini_calls": 0,
                 "evidence_complete": False,
                 "fact_sources": {"house_lord_placement": "MISSING"}
             }
+        lord_ord = ordinal_house(h_details["lord_house"])
         return {
-            "answer": f"Your **{h_placement_target}th house lord ({h_details['lord']})** is placed in your **{h_details['lord_house']}th house** in **{h_details['lord_sign']}**.",
+            "answer": f"Your **{ord_str} house lord ({h_details['lord']})** is placed in your **{lord_ord} house** in **{h_details['lord_sign']}**.",
             "fact_type": "house_lord_placement",
             "answer_mode": "DIRECT",
             "gemini_calls": 0,
@@ -604,10 +610,11 @@ def extract_direct_fact(question: str, chart_data: Dict[str, Any], dasha_hierarc
     # 7d. House Occupants Lookup
     h_occ_target = extract_house_occupants_query(q_lower)
     if h_occ_target is not None:
+        ord_str = ordinal_house(h_occ_target)
         h_details = get_house_details(chart_data, h_occ_target)
         if not h_details["occupants_available"]:
             return {
-                "answer": f"Planet occupancy data for your {h_occ_target}th house is unavailable or incomplete in the current birth chart data.",
+                "answer": f"Planet occupancy data for your {ord_str} house is unavailable or incomplete in the current birth chart data.",
                 "fact_type": "house_occupants",
                 "answer_mode": "UNRESOLVED",
                 "gemini_calls": 0,
@@ -616,7 +623,7 @@ def extract_direct_fact(question: str, chart_data: Dict[str, Any], dasha_hierarc
             }
         if h_details["is_empty"]:
             return {
-                "answer": f"There are no natal planets positioned in your **{h_occ_target}th house**.",
+                "answer": f"There are no natal planets positioned in your **{ord_str} house**.",
                 "fact_type": "house_occupants",
                 "answer_mode": "DIRECT",
                 "gemini_calls": 0,
@@ -625,7 +632,7 @@ def extract_direct_fact(question: str, chart_data: Dict[str, Any], dasha_hierarc
             }
         occ_str = ", ".join(f"**{p}**" for p in h_details["occupants"])
         return {
-            "answer": f"The planets positioned in your **{h_occ_target}th house** are: {occ_str}.",
+            "answer": f"The planets positioned in your **{ord_str} house** are: {occ_str}.",
             "fact_type": "house_occupants",
             "answer_mode": "DIRECT",
             "gemini_calls": 0,
