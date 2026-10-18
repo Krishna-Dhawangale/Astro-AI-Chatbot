@@ -63,13 +63,13 @@ def extract_house_sign_query(q_low: str) -> Optional[int]:
     """Extracts target house number for house sign lookups, ignoring multi-request / compound queries."""
     if any(w in q_low for w in ["purchas", "buy", "loan", "stress", "invest", "abroad", "and will", "and should", "should i", "will it", "timing"]):
         return None
-    m = re.search(r"\b(?:what|which)\s*(?:zodiac\s*)?(?:sign|rashi)\s*(?:is\s*)?(?:in\s*)?(?:my\s*)?" + HOUSE_ORDINAL_PATTERN + r"(?:\s*house)?\b", q_low)
+    m = re.search(r"\b(?:what|which)\s*(?:zodiac\s*)?(?:sign|rashi)\s*(?:is\s*|occupies\s*|governs\s*|falls\s*in\s*|rules\s*)?(?:in\s*)?(?:my\s*|the\s*)?" + HOUSE_ORDINAL_PATTERN + r"(?:\s*house)?\b", q_low)
     if m:
         return WORD_TO_HOUSE.get(re.sub(r"\s+", "", m.group(1).lower()))
     m = re.search(HOUSE_ORDINAL_PATTERN + r"\s*house\s*(?:sign|rashi)\b", q_low)
     if m:
         return WORD_TO_HOUSE.get(re.sub(r"\s+", "", m.group(1).lower()))
-    m = re.search(r"\bsign\s*(?:is\s*)?(?:in\s*)?(?:my\s*)?" + HOUSE_ORDINAL_PATTERN + r"\s*house\b", q_low)
+    m = re.search(r"\bsign\s*(?:is\s*|occupies\s*|governs\s*)?(?:in\s*)?(?:my\s*|the\s*)?" + HOUSE_ORDINAL_PATTERN + r"\s*house\b", q_low)
     if m:
         return WORD_TO_HOUSE.get(re.sub(r"\s+", "", m.group(1).lower()))
     return None
