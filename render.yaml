@@ -1,0 +1,40 @@
+services:
+  - type: web
+    name: astro-ai-backend
+    runtime: python
+    plan: free
+    region: oregon
+    branch: krishna
+    buildCommand: "pip install --upgrade pip && pip install -r requirements.txt"
+    startCommand: "uvicorn backend.main:app --host 0.0.0.0 --port $PORT"
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      # Python environment
+      - key: PYTHON_VERSION
+        value: 3.11.9
+
+      # Remote PostgreSQL connection string (Supabase / Neon)
+      # e.g.: postgresql+asyncpg://postgres:[PASSWORD]@[HOST]:[PORT]/[DB]
+      - key: DATABASE_URL
+        sync: false
+
+      # Primary Gemini LLM API Key
+      - key: GEMINI_API_KEY
+        sync: false
+
+      # Groq Multi-Account API Keys (High-speed Llama / Qwen inference)
+      - key: GROQ_API_KEY_1
+        sync: false
+      - key: GROQ_API_KEY_2
+        sync: false
+
+      # Optional LLM & Astrology API Providers
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: FREE_ASTROLOGY_API_KEY
+        sync: false
+      - key: PROKERALA_CLIENT_ID
+        sync: false
+      - key: PROKERALA_CLIENT_SECRET
+        sync: false

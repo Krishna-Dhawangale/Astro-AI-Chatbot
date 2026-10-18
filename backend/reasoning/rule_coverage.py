@@ -39,6 +39,7 @@ CLINICAL_DIAGNOSTIC_PATTERNS = [
 
 # Explicit Intents that HAVE exact local rule coverage in our Stage 8 engine
 EXACT_LOCAL_RULE_INTENTS = {
+    "multi_domain",
     "current_dasha",
     "dasha_career_interaction",
     "dasha_marriage_interaction",
@@ -210,6 +211,8 @@ def evaluate_rule_coverage(
             rules_assigned = ["EDUCATION_4TH_LORD_PLACEMENT", "EDUCATION_5TH_LORD_PLACEMENT", "EDUCATION_KARAKA_PRESENCE"]
         elif is_prop_query and not rules_assigned:
             rules_assigned = ["PROPERTY_4TH_LORD_PLACEMENT", "PROPERTY_KARAKA_MARS", "PROPERTY_KARAKA_VENUS"]
+        elif ent == "multi_domain" and not rules_assigned:
+            rules_assigned = ["MULTI_DOMAIN_RULE_MERGER"]
         return {
             "domain_match": domain_match,
             "intent_match": True,

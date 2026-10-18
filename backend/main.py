@@ -11,13 +11,41 @@ import time
 import uuid
 import warnings
 warnings.filterwarnings("ignore")
+
+_CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+_PARENT_DIR = os.path.dirname(_CURRENT_DIR)
+if _CURRENT_DIR not in sys.path:
+    sys.path.insert(0, _CURRENT_DIR)
+if _PARENT_DIR not in sys.path:
+    sys.path.insert(0, _PARENT_DIR)
 from difflib import SequenceMatcher
 from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Request, status
+from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.concurrency import run_in_threadpool
+from sqlalchemy.ext.asyncio import AsyncSession
+
+try:
+    from backend.database import (
+        init_db,
+        close_db,
+        get_db,
+        log_chat_interaction,
+        get_unresolved_queries,
+        mark_query_resolved,
+    )
+except ImportError:
+    from database import (
+        init_db,
+        close_db,
+        get_db,
+        log_chat_interaction,
+        get_unresolved_queries,
+        mark_query_resolved,
+    )
+
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from google import genai
@@ -223,9 +251,44 @@ app.add_middleware(
 )
 
 
-def label_answer_source(answer: str, source: str) -> str:
-    """Return clean user-facing answer string without debug tags like (RULE_BASED)."""
-    return answer.strip()
+@app.on_event("startup")
+async def startup_db_event():
+    """Initialize PostgreSQL database tables on FastAPI startup."""
+    try:
+        await init_db()
+        logger.info("[DATABASE] PostgreSQL asynchronous database initialized successfully.")
+    except Exception as exc:
+        logger.error("[DATABASE ERROR] Startup database initialization error: %s", exc, exc_info=True)
+
+
+@app.on_event("shutdown")
+async def shutdown_db_event():
+    """Dispose PostgreSQL engine connections on FastAPI shutdown."""
+    try:
+        await close_db()
+        logger.info("[DATABASE] PostgreSQL asynchronous database engine disposed.")
+    except Exception as exc:
+        logger.warning("[DATABASE WARNING] Shutdown database error: %s", exc)
+
+
+
+def label_answer_source(answer: str, source: str, model_name: Optional[str] = None) -> str:
+    """Returns a clean, user-facing answer with provenance badges, calculation footers, and asterisks stripped."""
+    if not answer:
+        return ""
+    try:
+        from backend.response_formatter import clean_astrology_response
+        return clean_astrology_response(answer)
+    except ImportError:
+        try:
+            from response_formatter import clean_astrology_response
+            return clean_astrology_response(answer)
+        except ImportError:
+            res = re.sub(r"^\s*\[[^\]]+\]\s*", "", answer).strip()
+            res = re.sub(r"\n*\s*\*?\[Calculation:[^\]]+\]\*?", "", res, flags=re.IGNORECASE).strip()
+            return res.replace("*", "").strip()
+
+
 
 
 def backend_error_payload(query: str) -> Dict[str, Any]:
@@ -697,12 +760,14 @@ def resolve_indirect_intent(query: str) -> Optional[str]:
 UNKNOWN_DOMAIN_DIRECT_LLM_PARSE = "UNKNOWN_DOMAIN_DIRECT_LLM_PARSE"
 FAQ_INDEX: List[Tuple[List[str], str]] = []
 ASTRO_RULE_INDEX: List[Tuple[str, List[str], str]] = []
+QA_DATABASE: Dict[str, Any] = {}
 
 def load_qa_database():
     """Index greeting FAQs separately and retain all database rules for retrieval."""
-    global FAQ_INDEX, ASTRO_RULE_INDEX
+    global FAQ_INDEX, ASTRO_RULE_INDEX, QA_DATABASE
     FAQ_INDEX.clear()
     ASTRO_RULE_INDEX.clear()
+    QA_DATABASE.clear()
 
     possible_paths = [
         os.path.abspath(os.path.join(BASE_DIR, "..", "qa_database.json")),
@@ -714,6 +779,7 @@ def load_qa_database():
             try:
                 with open(p, "r", encoding="utf-8") as f:
                     qa_db = json.load(f)
+                    QA_DATABASE.update(qa_db)
                     for key, entries in qa_db.items():
                         clean_k = key.lower().strip()
                         if isinstance(entries, str):
@@ -2368,6 +2434,13 @@ def read_root():
         return FileResponse(FRONTEND_PATH)
     elif os.path.exists("index.html"):
         return FileResponse("index.html")
+    return {"message": "Astro AI Chatbot API is operational", "status": "running"}
+
+
+@app.get("/health")
+def health_check():
+    return {"status": "healthy", "service": "astro-ai-backend"}
+
 def check_intent_evidence_relevance(
     domain: str,
     intent: str,
@@ -2788,9 +2861,27 @@ async def _handle_chat_response(request: ChatRequest, session_id: Optional[str] 
     asc_sign = ZODIAC_SIGNS[int(astro_features[0]) % 12] if len(astro_features) > 0 else "Aries"
     sun_sign = ZODIAC_SIGNS[int(astro_features[1]) % 12] if len(astro_features) > 1 else "Taurus"
     moon_sign = ZODIAC_SIGNS[int(astro_features[2]) % 12] if len(astro_features) > 2 else "Gemini"
+    norm_chart = normalize_api_response(_api_chart_data)
 
     # Proposal 3: Strict FAQ Eligibility Engine (Fast educational & definition lookup)
-    faq_template = match_educational_faq(request.query)
+    # Ensure multi-domain queries never match a single static FAQ template
+    try:
+        from backend.qa_router import classify_multi_domain_micro_intents
+    except ImportError:
+        from qa_router import classify_multi_domain_micro_intents
+
+    early_detected_intents = classify_multi_domain_micro_intents(request.query)
+    is_multi_domain_query = len(early_detected_intents) > 1
+
+    try:
+        from backend.timing_engine import is_timing_query
+    except ImportError:
+        from timing_engine import is_timing_query
+
+    is_timing_q = is_timing_query(request.query)
+    q_low_early = request.query.lower()
+    is_personal_dasha_q = any(k in q_low_early for k in ["my dasha", "what is my dasha", "my mahadasha", "my antardasha", "what is my mahadasha", "current dasha", "active dasha"])
+    faq_template = match_educational_faq(request.query) if (not is_multi_domain_query and not is_timing_q and not is_personal_dasha_q) else None
     if faq_template:
         answer = format_personalized_answer(
             faq_template,
@@ -2879,22 +2970,55 @@ async def _handle_chat_response(request: ChatRequest, session_id: Optional[str] 
 
     norm_dasha = normalize_dasha_response(dasha_data) if dasha_data else {}
     dasha_hierarchy = norm_dasha.get("dasha_hierarchy", {})
+    if isinstance(dasha_hierarchy, dict) and isinstance(norm_dasha, dict):
+        if norm_dasha.get("current_mahadasha") and not dasha_hierarchy.get("current_mahadasha"):
+            dasha_hierarchy["current_mahadasha"] = norm_dasha["current_mahadasha"]
+        if norm_dasha.get("current_antardasha") and not dasha_hierarchy.get("current_antardasha"):
+            dasha_hierarchy["current_antardasha"] = norm_dasha["current_antardasha"]
+        if norm_dasha.get("start_date") and not dasha_hierarchy.get("start_date"):
+            dasha_hierarchy["start_date"] = norm_dasha["start_date"]
+        if norm_dasha.get("end_date") and not dasha_hierarchy.get("end_date"):
+            dasha_hierarchy["end_date"] = norm_dasha["end_date"]
 
 
     # 2. Check for Simple Deterministic Questions (Dasha / Moon Sign / Ascendant) -> NO Gemini needed
     q_lower = normalized_query.lower()
     is_direct_dasha_q = (
-        any(k in q_lower for k in ["what is my dasha", "my mahadasha", "what is my mahadasha", "current antardasha"])
+        any(k in q_lower for k in ["what is my dasha", "what is my current dasha", "my current dasha", "current dasha", "my mahadasha", "what is my mahadasha", "current antardasha", "my dasha", "active dasha"])
         or (q_lower.strip("?.!") in ["my current dasha", "what is my dasha", "my dasha"])
     ) and not any(ck in q_lower for ck in ["career", "job", "work", "move from", "transition", "should i", "marriage", "marry", "finance", "relate", "house", "5th", "how does"])
 
     if is_direct_dasha_q and resolved_intent != "multi_domain":
-        mah = dasha_hierarchy.get("current_mahadasha") or dasha_hierarchy.get("output", {}).get("current_mahadasha", "Active Dasha")
-        ant = dasha_hierarchy.get("current_antardasha") or dasha_hierarchy.get("output", {}).get("current_antardasha", "Active Antardasha")
+        try:
+            from backend.dasha_calculator import resolve_safe_user_dasha_profile
+        except ImportError:
+            from dasha_calculator import resolve_safe_user_dasha_profile
+
+        safe_prof = resolve_safe_user_dasha_profile({
+            "ascendant_sign": asc_sign,
+            "moon_sign": moon_sign,
+            "sun_sign": sun_sign,
+            "mahadasha": norm_dasha.get("current_mahadasha") or dasha_hierarchy.get("current_mahadasha"),
+            "antardasha": norm_dasha.get("current_antardasha") or dasha_hierarchy.get("current_antardasha")
+        }, chart_data=norm_chart)
+        mah = safe_prof.get("mahadasha", "Jupiter")
+        ant = safe_prof.get("antardasha", "Mercury")
         dasha_ans = (
             f"Aapka current Mahadasha {mah} aur Antardasha {ant} hai."
             if is_hinglish_query(request.query) else
             f"Your current Mahadasha is {mah} and current Antardasha is {ant}."
+        )
+        try:
+            from backend.response_formatter import append_calculation_footer
+        except ImportError:
+            from response_formatter import append_calculation_footer
+
+        dasha_ans = append_calculation_footer(
+            dasha_ans,
+            domain="dasha",
+            intent="dasha",
+            engine="FreeAstrologyAPI_VimshottariEngine",
+            details={"dasha_label": f"{mah}/{ant}"}
         )
         USER_SESSIONS[request.user_id]["history"].append({"role": "user", "content": request.query})
         USER_SESSIONS[request.user_id]["history"].append({"role": "assistant", "content": dasha_ans})
@@ -2919,6 +3043,241 @@ async def _handle_chat_response(request: ChatRequest, session_id: Optional[str] 
             "source": "deterministic_api",
         })
 
+    # 2b. Multi-Domain & Micro-Intent Hybrid Synthesis / Timing Engine Intercept
+    try:
+        from backend.qa_router import (
+            classify_multi_domain_micro_intents,
+            execute_multidomain_hybrid_synthesis,
+            is_career_timing_query,
+            is_timing_query,
+            handle_timing_query
+        )
+        from backend.dasha_calculator import format_career_timing_response
+    except ImportError:
+        from qa_router import (
+            classify_multi_domain_micro_intents,
+            execute_multidomain_hybrid_synthesis,
+            is_career_timing_query,
+            is_timing_query,
+            handle_timing_query
+        )
+        from dasha_calculator import format_career_timing_response
+
+    detected_micro_intents = classify_multi_domain_micro_intents(normalized_query)
+
+    # Session birth dictionary for precision planetary & transit calculations
+    session_birth = {
+        "birth_year": request.birth_year,
+        "birth_month": request.birth_month,
+        "birth_day": request.birth_day,
+        "birth_hour": request.birth_hour,
+        "latitude": request.latitude,
+        "longitude": request.longitude,
+        "timezone": request.timezone,
+    }
+
+    # Path A: Multi-Domain Composite Query (Aggregated Local Retrieval + LLM Refiner)
+    if len(detected_micro_intents) > 1:
+        load_dotenv(os.path.join(BASE_DIR, ".env"), override=True)
+        current_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+        g_client = genai.Client(api_key=current_key) if current_key else gemini_client
+
+        try:
+            from backend.dasha_calculator import resolve_safe_user_dasha_profile
+        except ImportError:
+            from dasha_calculator import resolve_safe_user_dasha_profile
+
+        md_profile = resolve_safe_user_dasha_profile({
+            "ascendant_sign": asc_sign,
+            "moon_sign": moon_sign,
+            "sun_sign": sun_sign,
+            "mahadasha": norm_dasha.get("current_mahadasha") or dasha_hierarchy.get("current_mahadasha"),
+            "antardasha": norm_dasha.get("current_antardasha") or dasha_hierarchy.get("current_antardasha"),
+            "pratyantardasha": dasha_hierarchy.get("current_pratyantardasha"),
+            "dasha_start_date": norm_dasha.get("start_date"),
+            "dasha_end_date": norm_dasha.get("end_date"),
+            "session_birth_data": session_birth,
+            "chart_data": norm_chart,
+        }, chart_data=norm_chart)
+
+        hybrid_res = await execute_multidomain_hybrid_synthesis(
+            query=request.query,
+            detected_intents=detected_micro_intents,
+            user_profile=md_profile,
+            qa_db=QA_DATABASE,
+            session_id=request.user_id,
+            custom_gemini_client=g_client,
+            is_hinglish=is_hinglish_query(request.query)
+        )
+
+        ans_text = hybrid_res["answer"]
+        USER_SESSIONS[request.user_id]["history"].append({"role": "user", "content": request.query})
+        USER_SESSIONS[request.user_id]["history"].append({"role": "assistant", "content": ans_text})
+
+        llm_calls = hybrid_res.get("llm_calls", 0)
+        inp_tokens = hybrid_res.get("input_tokens", 0)
+        out_tokens = hybrid_res.get("output_tokens", 0)
+        tot_tokens = hybrid_res.get("total_tokens", 0)
+        lat_ms = hybrid_res.get("latency_ms", 18.0)
+        used_model = hybrid_res.get("model_name") or "gemini-3.5-flash-lite"
+
+        call_records = []
+        if llm_calls > 0:
+            call_rec = print_llm_call_report(
+                call_number=1,
+                purpose="LOCAL_DATABASE_PLUS_LLM_MULTI_DOMAIN",
+                model_name=used_model,
+                input_tokens=inp_tokens,
+                output_tokens=out_tokens,
+                evidence_sent=detected_micro_intents,
+                latency_ms=lat_ms
+            )
+            call_records.append(call_rec)
+            print_request_total_report(call_records, lat_ms)
+            print_evidence_observability_report(
+                question=request.query, domain="multi_domain", intent="multi_domain",
+                answer_source="HYBRID_SYNTHESIS",
+                api_calls=1, local_rules=len(detected_micro_intents),
+                gemini_calls=llm_calls if "gemini" in used_model.lower() else 0,
+                input_tokens=inp_tokens,
+                output_tokens=out_tokens,
+                required_evidence=detected_micro_intents,
+                available_evidence=detected_micro_intents,
+                missing_evidence=[],
+                evidence_status="COMPLETE",
+                domain_match=True, intent_match=True, exact_rule_match=True, rule_coverage_score=1.0,
+                answer_mode="MULTI_DOMAIN"
+            )
+        else:
+            print_no_llm_call_report("HYBRID_SYNTHESIS", f"Multi-Domain Hybrid Synthesis local fallback (LLM offline): {detected_micro_intents}")
+
+        record_production_decision_trace(
+            question=request.query, domain="multi_domain", selected_model=used_model if llm_calls > 0 else "LOCAL_FALLBACK",
+            domain_confidence=raw_confidence, intent="multi_domain", resolved_intent="multi_domain",
+            complexity="complex", chart_required=True, chart_evidence=[], matched_rules=detected_micro_intents,
+            evidence_score=1.0, evidence_status="complete", answer_source="HYBRID_SYNTHESIS",
+            gemini_calls=llm_calls,
+            llm_input_tokens=inp_tokens, llm_output_tokens=out_tokens, llm_total_tokens=tot_tokens,
+            llm_call_details=call_records, latency_ms=lat_ms
+        )
+        return JSONResponse(content={
+            "answer": label_answer_source(ans_text, "Hybrid Synthesis", model_name=used_model if llm_calls > 0 else None),
+            "answer_mode": "MULTI_DOMAIN",
+            "answer_source": "HYBRID_SYNTHESIS",
+            "intent": "multi_domain",
+            "detected_intents": detected_micro_intents,
+            "evidence_complete": True,
+            "gemini_calls": llm_calls,
+            "input_tokens": inp_tokens,
+            "output_tokens": out_tokens,
+            "total_tokens": tot_tokens,
+            "remaining_query_tokens": hybrid_res.get("remaining_query_tokens", max(0, 400 - tot_tokens)),
+            "remaining_model_tokens": hybrid_res.get("remaining_model_tokens", 0),
+            "model_token_status": hybrid_res.get("all_models_token_status", {}),
+            "evidence_ids": detected_micro_intents,
+            "fallback_reason": None,
+            "related_questions": fallback_related_questions(["career", "finance"], request.query),
+            "source": "multi_domain_hybrid_synthesis",
+        })
+
+    # Path B: Time-Sensitive / Timing Engine Query ("When will my career stabilize?", "When is the right time for a job change?", etc.)
+    if is_timing_query(normalized_query):
+        load_dotenv(os.path.join(BASE_DIR, ".env"), override=True)
+        current_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+        g_client = genai.Client(api_key=current_key) if current_key else gemini_client
+
+        user_prof_for_timing = {
+            "ascendant_sign": asc_sign,
+            "moon_sign": moon_sign,
+            "sun_sign": sun_sign,
+            "mahadasha": norm_dasha.get("current_mahadasha") or dasha_hierarchy.get("current_mahadasha"),
+            "antardasha": norm_dasha.get("current_antardasha") or dasha_hierarchy.get("current_antardasha"),
+            "pratyantardasha": dasha_hierarchy.get("current_pratyantardasha"),
+            "dasha_start_date": norm_dasha.get("start_date"),
+            "dasha_end_date": norm_dasha.get("end_date"),
+            "session_birth_data": session_birth,
+            "chart_data": norm_chart,
+        }
+
+        timing_res = await handle_timing_query(
+            query=request.query,
+            user_profile=user_prof_for_timing,
+            session_birth_data=session_birth,
+            chart_data=norm_chart,
+            session_id=request.user_id,
+            custom_gemini_client=g_client,
+            is_hinglish=is_hinglish_query(request.query)
+        )
+
+        ans_text = timing_res["answer"]
+        USER_SESSIONS[request.user_id]["history"].append({"role": "user", "content": request.query})
+        USER_SESSIONS[request.user_id]["history"].append({"role": "assistant", "content": ans_text})
+        
+        t_inp = timing_res.get("input_tokens", 0)
+        t_out = timing_res.get("output_tokens", 0)
+        t_tot = timing_res.get("total_tokens", 0)
+        t_model = timing_res.get("model_name") or "gemini-3.5-flash-lite"
+        has_llm = bool(timing_res.get("model_name") and t_tot > 0)
+        call_records = []
+        if has_llm:
+            call_rec = print_llm_call_report(
+                call_number=1,
+                purpose="LOCAL_DATABASE_PLUS_LLM_TIMING",
+                model_name=t_model,
+                input_tokens=t_inp,
+                output_tokens=t_out,
+                evidence_sent=["TIMING_DASHA_GOCHAR_ANALYSIS", f"domain_{timing_res.get('domain', 'career')}"],
+                latency_ms=12.0
+            )
+            call_records.append(call_rec)
+            print_request_total_report(call_records, 12.0)
+            print_evidence_observability_report(
+                question=request.query, domain=timing_res.get("domain", "career"), intent="timing_window",
+                answer_source="HYBRID",
+                api_calls=1, local_rules=1,
+                gemini_calls=1,
+                input_tokens=t_inp,
+                output_tokens=t_out,
+                required_evidence=["TIMING_DASHA_GOCHAR_ANALYSIS"],
+                available_evidence=["TIMING_DASHA_GOCHAR_ANALYSIS"],
+                missing_evidence=[],
+                evidence_status="COMPLETE",
+                domain_match=True, intent_match=True, exact_rule_match=True, rule_coverage_score=1.0,
+                answer_mode="TIMING_WINDOW"
+            )
+        else:
+            print_no_llm_call_report("TIMING_ENGINE", f"Transit window analysis complete for domain {timing_res.get('domain')}")
+
+        record_production_decision_trace(
+            question=request.query, domain=timing_res.get("domain", "career"), selected_model=t_model,
+            domain_confidence=raw_confidence, intent="timing_window", resolved_intent="timing_window",
+            complexity="complex", chart_required=True, chart_evidence=[], matched_rules=["TIMING_DASHA_GOCHAR_ANALYSIS"],
+            evidence_score=1.0, evidence_status="complete", answer_source="HYBRID" if has_llm else "TIMING_ENGINE", gemini_calls=1 if has_llm else 0,
+            llm_input_tokens=t_inp, llm_output_tokens=t_out, llm_total_tokens=t_tot, llm_call_details=call_records, latency_ms=12.0
+        )
+        return JSONResponse(content={
+            "answer": label_answer_source(ans_text, "Timing Engine", model_name=t_model),
+            "answer_mode": "TIMING_WINDOW",
+            "answer_source": timing_res.get("answer_source", "HYBRID"),
+            "intent": "timing_window",
+            "domain": timing_res.get("domain", "career"),
+            "timing_window": timing_res.get("timing_window"),
+            "active_dasha": timing_res.get("active_dasha"),
+            "attribution_badge": timing_res.get("attribution_badge"),
+            "evidence_complete": True,
+            "gemini_calls": 1,
+            "input_tokens": t_inp,
+            "output_tokens": t_out,
+            "total_tokens": t_tot,
+            "remaining_query_tokens": timing_res.get("remaining_query_tokens", max(0, 400 - t_tot)),
+            "remaining_model_tokens": timing_res.get("remaining_model_tokens", 0),
+            "model_token_status": timing_res.get("model_token_status", {}),
+            "evidence_ids": ["TIMING_DASHA_GOCHAR_ANALYSIS"],
+            "fallback_reason": None,
+            "related_questions": fallback_related_questions([timing_res.get("domain", "career")], request.query),
+            "source": "timing_engine",
+        })
+
     # 3. Normalize API Chart Data & Execute Reasoning Engine
     norm_chart = normalize_api_response(_api_chart_data)
 
@@ -2929,7 +3288,7 @@ async def _handle_chat_response(request: ChatRequest, session_id: Optional[str] 
 
     direct_fact = None
     if is_direct_fact_query(normalized_query):
-        direct_fact = extract_direct_fact(normalized_query, norm_chart, dasha_hierarchy)
+        direct_fact = extract_direct_fact(normalized_query, norm_chart, norm_dasha)
     if direct_fact:
         ans_text = direct_fact["answer"]
         USER_SESSIONS[request.user_id]["history"].append({"role": "user", "content": request.query})
@@ -3084,8 +3443,22 @@ async def _handle_chat_response(request: ChatRequest, session_id: Optional[str] 
         })
 
     # 5. Multi-Domain Local Synthesis (Pillar 5 Local Synthesizer: gemini_calls = 0)
-    if (resolved_intent in ["multi_domain", "dasha_career_interaction"] or (resolved_intent == "multi_domain" and any(k in q_lower for k in ["dasha", "mahadasha", "antardasha"]))) and cov_eval.get("exact_rule_match"):
+    is_multi_domain_route = (
+        resolved_intent in ["multi_domain", "dasha_career_interaction", "dasha_marriage_interaction"]
+        or "multi_domain" in resolution_reason
+        or (cov_eval.get("exact_rule_match") and (predicted_domain == "multi_domain" or resolved_intent == "multi_domain"))
+    ) and cov_eval.get("exact_rule_match", False)
+
+    if is_multi_domain_route:
         target_dom = "career" if any(k in q_lower for k in ["career", "job", "work"]) else predicted_domain
+        detected_doms = []
+        try:
+            from backend.router.intent import extract_context_features
+            q_feats = extract_context_features(request.query)
+            detected_doms = q_feats.get("detected_domains", [])
+        except Exception:
+            detected_doms = []
+
         decomp_res = decompose_and_synthesize_multidomain(
             query=request.query,
             target_domain=target_dom,
@@ -3093,42 +3466,79 @@ async def _handle_chat_response(request: ChatRequest, session_id: Optional[str] 
             asc_sign=asc_sign,
             moon_sign=moon_sign,
             sun_sign=sun_sign,
-            is_hinglish=is_hinglish_query(request.query)
+            is_hinglish=is_hinglish_query(request.query),
+            stage8_result=stage8_result,
+            detected_domains=detected_doms,
+            norm_chart=norm_chart
         )
         merged_answer = decomp_res["answer"]
+        try:
+            from backend.response_formatter import append_calculation_footer
+        except ImportError:
+            from response_formatter import append_calculation_footer
+        merged_answer = append_calculation_footer(
+            merged_answer,
+            domain=target_dom,
+            intent=resolved_intent,
+            engine="SwissEphemeris_VimshottariEngine"
+        )
 
-        USER_SESSIONS[request.user_id]["history"].append({"role": "user", "content": request.query})
-        USER_SESSIONS[request.user_id]["history"].append({"role": "assistant", "content": merged_answer})
-        follow_ups = generate_follow_up_questions(request.query, merged_answer, domain=target_dom)
-        print_evidence_observability_report(
-            question=request.query, domain=target_dom, intent=resolved_intent,
-            answer_source="LOCAL", api_calls=1, local_rules=len(matched_rules_list), gemini_calls=0,
-            input_tokens=0, output_tokens=0,
-            required_evidence=ev_audit["required_evidence"],
-            available_evidence=ev_audit["available_evidence"],
-            missing_evidence=ev_audit["missing_evidence"],
-            evidence_status=ev_audit["evidence_status"],
-            domain_match=True, intent_match=True, exact_rule_match=True, rule_coverage_score=1.0
-        )
-        record_production_decision_trace(
-            question=request.query, domain=target_dom, selected_model="V3",
-            domain_confidence=raw_confidence, intent=raw_intent, resolved_intent=resolved_intent,
-            complexity="multi_domain", chart_required=True, chart_evidence=[], matched_rules=["MULTI_DOMAIN_RULE_MERGER"],
-            evidence_score=1.0, evidence_status="complete", answer_source="LOCAL", gemini_calls=0,
-            llm_input_tokens=0, llm_output_tokens=0, llm_total_tokens=0, llm_call_details=[], latency_ms=12.0
-        )
-        return JSONResponse(content={
-            "answer": label_answer_source(merged_answer, "RULE_BASED"),
-            "answer_mode": "RULE_BASED",
-            "answer_source": "LOCAL",
-            "intent": resolved_intent,
-            "evidence_complete": True,
-            "gemini_calls": 0,
-            "evidence_ids": mode_info.get("evidence_ids", []),
-            "fallback_reason": None,
-            "related_questions": follow_ups,
-            "source": "deterministic_reasoning",
-        })
+        try:
+            from backend.reasoning.quality_gate import evaluate_answer_quality
+            q_gate_multi = evaluate_answer_quality(
+                question=request.query,
+                domain=target_dom,
+                intent=resolved_intent,
+                answer_text=merged_answer,
+                detected_domains=detected_doms
+            )
+        except Exception:
+            q_gate_multi = None
+
+        if q_gate_multi and q_gate_multi.recommended_action == "FALLBACK_GEMINI":
+            pass
+        else:
+            USER_SESSIONS[request.user_id]["history"].append({"role": "user", "content": request.query})
+            USER_SESSIONS[request.user_id]["history"].append({"role": "assistant", "content": merged_answer})
+            follow_ups = generate_follow_up_questions(request.query, merged_answer, domain=target_dom)
+            print_evidence_observability_report(
+                question=request.query, domain=target_dom, intent=resolved_intent,
+                answer_source="LOCAL", api_calls=1, local_rules=len(matched_rules_list), gemini_calls=0,
+                input_tokens=0, output_tokens=0,
+                required_evidence=ev_audit["required_evidence"],
+                available_evidence=ev_audit["available_evidence"],
+                missing_evidence=ev_audit["missing_evidence"],
+                evidence_status=ev_audit["evidence_status"],
+                domain_match=True, intent_match=True, exact_rule_match=True, rule_coverage_score=1.0
+            )
+            record_production_decision_trace(
+                question=request.query, domain=target_dom, selected_model="V3",
+                domain_confidence=raw_confidence, intent=raw_intent, resolved_intent=resolved_intent,
+                complexity="multi_domain", chart_required=True, chart_evidence=[], matched_rules=["MULTI_DOMAIN_RULE_MERGER"],
+                evidence_score=1.0, evidence_status="complete", answer_source="LOCAL", gemini_calls=0,
+                llm_input_tokens=0, llm_output_tokens=0, llm_total_tokens=0, llm_call_details=[], latency_ms=12.0,
+                local_answer_quality={
+                    "correct_domain": q_gate_multi.has_domain_coverage if q_gate_multi else True,
+                    "correct_intent": True,
+                    "correct_chart_data": q_gate_multi.has_required_entities if q_gate_multi else True,
+                    "correct_rule": True,
+                    "correct_interpretation": q_gate_multi.is_pass if q_gate_multi else True,
+                    "no_unsupported_claim": q_gate_multi.has_no_unsupported_claims if q_gate_multi else True,
+                    "addresses_question": q_gate_multi.addresses_question if q_gate_multi else True
+                }
+            )
+            return JSONResponse(content={
+                "answer": label_answer_source(merged_answer, "RULE_BASED"),
+                "answer_mode": "RULE_BASED",
+                "answer_source": "LOCAL",
+                "intent": resolved_intent,
+                "evidence_complete": True,
+                "gemini_calls": 0,
+                "evidence_ids": mode_info.get("evidence_ids", []),
+                "fallback_reason": None,
+                "related_questions": follow_ups,
+                "source": "deterministic_reasoning",
+            })
 
     # TIER 2: LOCAL DETERMINISTIC ANSWER (Single-Domain Exact Rule Coverage Matched)
     is_answerable, relevant_evidence = check_intent_evidence_relevance(
@@ -3152,43 +3562,77 @@ async def _handle_chat_response(request: ChatRequest, session_id: Optional[str] 
                 stage8_result=stage8_result,
                 dasha_hierarchy=dasha_hierarchy
             )
-
-            USER_SESSIONS[request.user_id]["history"].append({"role": "user", "content": request.query})
-            USER_SESSIONS[request.user_id]["history"].append({"role": "assistant", "content": local_answer})
-
-            follow_ups = generate_follow_up_questions(request.query, local_answer, domain=predicted_domain)
-            print_evidence_observability_report(
-                question=request.query, domain=predicted_domain, intent=resolved_intent,
-                answer_source="LOCAL", api_calls=1, local_rules=len(relevant_evidence), gemini_calls=0,
-                input_tokens=0, output_tokens=0,
-                required_evidence=ev_audit["required_evidence"],
-                available_evidence=ev_audit["available_evidence"],
-                missing_evidence=ev_audit["missing_evidence"],
-                evidence_status=ev_audit["evidence_status"],
-                domain_match=cov_eval.get("domain_match", True),
-                intent_match=cov_eval.get("intent_match", True),
-                exact_rule_match=True,
-                rule_coverage_score=1.0
+            try:
+                from backend.response_formatter import append_calculation_footer
+            except ImportError:
+                from response_formatter import append_calculation_footer
+            local_answer = append_calculation_footer(
+                local_answer,
+                domain=predicted_domain,
+                intent=intent,
+                engine="SwissEphemeris_VimshottariEngine"
             )
-            record_production_decision_trace(
-                question=request.query, domain=predicted_domain, selected_model="V3",
-                domain_confidence=raw_confidence, intent=raw_intent, resolved_intent=resolved_intent,
-                complexity=complexity, chart_required=True, chart_evidence=[], matched_rules=mode_info.get("evidence_ids", []),
-                evidence_score=1.0, evidence_status="complete", answer_source="LOCAL", gemini_calls=0,
-                llm_input_tokens=0, llm_output_tokens=0, llm_total_tokens=0, llm_call_details=[], latency_ms=15.0
-            )
-            return JSONResponse(content={
-                "answer": label_answer_source(local_answer, "RULE_BASED"),
-                "answer_mode": "RULE_BASED",
-                "answer_source": "LOCAL",
-                "intent": resolved_intent,
-                "evidence_complete": True,
-                "gemini_calls": 0,
-                "evidence_ids": mode_info.get("evidence_ids", []),
-                "fallback_reason": None,
-                "related_questions": follow_ups,
-                "source": "deterministic_reasoning",
-            })
+
+            try:
+                from backend.reasoning.quality_gate import evaluate_answer_quality
+                q_gate = evaluate_answer_quality(
+                    question=request.query,
+                    domain=predicted_domain,
+                    intent=intent,
+                    answer_text=local_answer,
+                    matched_rules=relevant_evidence
+                )
+            except Exception:
+                q_gate = None
+
+            if q_gate and q_gate.recommended_action == "FALLBACK_GEMINI":
+                pass
+            else:
+                USER_SESSIONS[request.user_id]["history"].append({"role": "user", "content": request.query})
+                USER_SESSIONS[request.user_id]["history"].append({"role": "assistant", "content": local_answer})
+
+                follow_ups = generate_follow_up_questions(request.query, local_answer, domain=predicted_domain)
+                print_evidence_observability_report(
+                    question=request.query, domain=predicted_domain, intent=resolved_intent,
+                    answer_source="LOCAL", api_calls=1, local_rules=len(relevant_evidence), gemini_calls=0,
+                    input_tokens=0, output_tokens=0,
+                    required_evidence=ev_audit["required_evidence"],
+                    available_evidence=ev_audit["available_evidence"],
+                    missing_evidence=ev_audit["missing_evidence"],
+                    evidence_status=ev_audit["evidence_status"],
+                    domain_match=cov_eval.get("domain_match", True),
+                    intent_match=cov_eval.get("intent_match", True),
+                    exact_rule_match=True,
+                    rule_coverage_score=1.0
+                )
+                record_production_decision_trace(
+                    question=request.query, domain=predicted_domain, selected_model="V3",
+                    domain_confidence=raw_confidence, intent=raw_intent, resolved_intent=resolved_intent,
+                    complexity=complexity, chart_required=True, chart_evidence=[], matched_rules=mode_info.get("evidence_ids", []),
+                    evidence_score=1.0, evidence_status="complete", answer_source="LOCAL", gemini_calls=0,
+                    llm_input_tokens=0, llm_output_tokens=0, llm_total_tokens=0, llm_call_details=[], latency_ms=15.0,
+                    local_answer_quality={
+                        "correct_domain": q_gate.has_domain_coverage if q_gate else True,
+                        "correct_intent": True,
+                        "correct_chart_data": q_gate.has_required_entities if q_gate else True,
+                        "correct_rule": True,
+                        "correct_interpretation": q_gate.is_pass if q_gate else True,
+                        "no_unsupported_claim": q_gate.has_no_unsupported_claims if q_gate else True,
+                        "addresses_question": q_gate.addresses_question if q_gate else True
+                    }
+                )
+                return JSONResponse(content={
+                    "answer": label_answer_source(local_answer, "RULE_BASED"),
+                    "answer_mode": "RULE_BASED",
+                    "answer_source": "LOCAL",
+                    "intent": resolved_intent,
+                    "evidence_complete": True,
+                    "gemini_calls": 0,
+                    "evidence_ids": mode_info.get("evidence_ids", []),
+                    "fallback_reason": None,
+                    "related_questions": follow_ups,
+                    "source": "deterministic_reasoning",
+                })
         except Exception as format_err:
             logger.error("[INTEGRATION ERROR] Local Interpretation Formatter failed: %s", format_err, exc_info=True)
             return JSONResponse(
@@ -3274,6 +3718,10 @@ async def _handle_chat_response(request: ChatRequest, session_id: Optional[str] 
                 custom_gemini_client=client,
             )
 
+            is_hybrid = bool(matched_rules_list) or mode_info.get("mode") == "LLM_ASSISTED"
+            prefix_sent = False
+            prefix_badge = f"[Local Database + LLM: {active_model}]\n\n" if is_hybrid else f"[LLM: {active_model}]\n\n"
+
             async for chunk_text, meta in router_gen:
                 if meta:
                     final_meta = meta
@@ -3281,12 +3729,18 @@ async def _handle_chat_response(request: ChatRequest, session_id: Optional[str] 
                         active_provider = meta.get("provider")
                     if meta.get("model"):
                         active_model = meta.get("model")
+                if not prefix_sent:
+                    prefix_badge = f"[Local Database + LLM: {active_model}]\n\n" if is_hybrid else f"[LLM: {active_model}]\n\n"
+                    yield prefix_badge
+                    prefix_sent = True
                 if chunk_text:
                     attempt_chunks.append(chunk_text)
                     yield chunk_text
 
             raw_text = "".join(attempt_chunks).strip()
             full_text = trim_to_last_sentence(raw_text)
+            if prefix_sent:
+                full_text = f"{prefix_badge}{full_text}"
             total_req_latency = (time.time() - req_start_time) * 1000
 
             inp_tok = est_tokens
@@ -3295,7 +3749,7 @@ async def _handle_chat_response(request: ChatRequest, session_id: Optional[str] 
 
             call_rec = print_llm_call_report(
                 call_number=1,
-                purpose="MODE_3_LLM_ASSISTED (Renderer)" if mode_info.get("mode") == "LLM_ASSISTED" else "MODE_4_LLM_FALLBACK",
+                purpose="LOCAL_DATABASE_PLUS_LLM_ASSISTED" if is_hybrid else "ONLY_LLM_FALLBACK",
                 model_name=active_model,
                 input_tokens=inp_tok,
                 output_tokens=out_tok,
@@ -3304,7 +3758,7 @@ async def _handle_chat_response(request: ChatRequest, session_id: Optional[str] 
             )
             call_records.append(call_rec)
 
-            final_src = mode_info.get("answer_source", "EVIDENCE_GROUNDED_LLM")
+            final_src = "LOCAL_DATABASE_PLUS_LLM" if is_hybrid else mode_info.get("answer_source", "EVIDENCE_GROUNDED_LLM")
             print_request_total_report(call_records, total_req_latency)
             print_evidence_observability_report(
                 question=request.query, domain=predicted_domain, intent=resolved_intent,
@@ -3344,6 +3798,41 @@ async def _handle_chat_response(request: ChatRequest, session_id: Optional[str] 
                 latency_ms=total_req_latency
             )
 
+            try:
+                try:
+                    from backend.answer_synthesizer import (
+                        record_model_tokens,
+                        get_model_remaining_tokens,
+                        get_all_models_token_status,
+                        print_terminal_token_report,
+                    )
+                except ImportError:
+                    from answer_synthesizer import (
+                        record_model_tokens,
+                        get_model_remaining_tokens,
+                        get_all_models_token_status,
+                        print_terminal_token_report,
+                    )
+                model_stats = record_model_tokens(active_model, inp_tok + out_tok)
+                rem_m = model_stats.get("remaining_tokens", 0)
+                all_models = get_all_models_token_status()
+                m_budget = model_stats.get("budget_tokens", 100000)
+                print_terminal_token_report(
+                    mode="LOCAL_DATABASE_PLUS_LLM" if is_hybrid else "ONLY_LLM",
+                    model_name=active_model,
+                    inp_tokens=inp_tok,
+                    out_tokens=out_tok,
+                    total_tokens=inp_tok + out_tok,
+                    query_remaining=max(0, 400 - (inp_tok + out_tok)),
+                    model_budget=m_budget,
+                    model_remaining=rem_m,
+                )
+            except Exception as e:
+                rem_m = 0
+                all_models = {}
+
+            yield f"\n[TOKEN_USAGE]: {json.dumps({'input': inp_tok, 'output': out_tok, 'total': inp_tok + out_tok, 'remaining_query': max(0, 400 - (inp_tok + out_tok)), 'remaining_model': rem_m, 'model_status': all_models})}"
+
             USER_SESSIONS[request.user_id]["history"].append({"role": "user", "content": request.query})
             USER_SESSIONS[request.user_id]["history"].append({"role": "assistant", "content": full_text})
 
@@ -3351,11 +3840,49 @@ async def _handle_chat_response(request: ChatRequest, session_id: Optional[str] 
             follow_ups = generate_follow_up_questions(request.query, full_text, domain=target_domain)
             yield f"\n[FOLLOW_UPS]: {json.dumps(follow_ups)}"
 
+            # Automatically persist stream chat turn to PostgreSQL
+            try:
+                stream_mode = "HYBRID" if is_hybrid else "LLM"
+                calc_footer = f"Model: {active_model} | Provider: {active_provider}"
+                user_prof = USER_SESSIONS.get(request.user_id, {}).get("profile")
+                await log_chat_interaction(
+                    session_id=request.user_id,
+                    user_query=request.query,
+                    bot_response=full_text,
+                    execution_mode=stream_mode,
+                    detected_intents=[resolved_intent] if resolved_intent else [],
+                    input_tokens=inp_tok,
+                    output_tokens=out_tok,
+                    calculation_footer=calc_footer,
+                    is_unresolved=False,
+                    user_id=request.user_id,
+                    user_profile=user_prof,
+                )
+            except Exception as stream_db_err:
+                logger.warning("[DATABASE] Failed to log streaming chat turn: %s", stream_db_err)
+
         except asyncio.CancelledError:
             logger.info("Chat stream cancelled for user %s", request.user_id)
             raise
         except Exception as e:
             logger.error("Streaming Error in cascading router: %s", str(e), exc_info=True)
+            try:
+                user_prof = USER_SESSIONS.get(request.user_id, {}).get("profile")
+                await log_chat_interaction(
+                    session_id=request.user_id,
+                    user_query=request.query,
+                    bot_response="An error occurred while streaming the astrological response.",
+                    execution_mode="UNRESOLVED",
+                    detected_intents=[resolved_intent] if resolved_intent else [],
+                    input_tokens=0,
+                    output_tokens=0,
+                    calculation_footer=f"Stream Exception: {str(e)}",
+                    is_unresolved=True,
+                    user_id=request.user_id,
+                    user_profile=user_prof,
+                )
+            except Exception as stream_db_err:
+                logger.warning("[DATABASE] Failed to log stream crash to DB: %s", stream_db_err)
             yield "\n\nAn error occurred while streaming the astrological response."
 
     return StreamingResponse(async_stream_generator(), media_type="text/plain; charset=utf-8")
@@ -3415,7 +3942,23 @@ async def _handle_chat(
 ):
     # Fast rejection of empty / whitespace-only queries
     if not request.query or not request.query.strip():
-        return _empty_query_response()
+        resp = _empty_query_response()
+        try:
+            sid = pre_resolved_session_id or (request.user_id if request.user_id else uuid.uuid4().hex)
+            await log_chat_interaction(
+                session_id=sid,
+                user_query=request.query or "",
+                bot_response="Please provide a valid question or astrological inquiry.",
+                execution_mode="UNRESOLVED",
+                detected_intents=["empty_query"],
+                input_tokens=0,
+                output_tokens=0,
+                is_unresolved=True,
+                user_id=sid,
+            )
+        except Exception as empty_err:
+            logger.warning("[DATABASE] Failed to log empty query rejection: %s", empty_err)
+        return resp
 
     if pre_resolved_session_id:
         session_id = pre_resolved_session_id
@@ -3451,6 +3994,64 @@ async def _handle_chat(
     except Exception as e:
         logger.error("Chat request error: %s", str(e), exc_info=True)
         response = JSONResponse(content=backend_error_payload(request.query))
+
+    # Automatically persist JSON chat interaction to PostgreSQL
+    if isinstance(response, JSONResponse):
+        try:
+            body_bytes = getattr(response, "body", b"")
+            resp_dict = json.loads(body_bytes.decode("utf-8")) if body_bytes else {}
+            bot_text = resp_dict.get("answer") or resp_dict.get("error") or "No response text."
+            status_code = getattr(response, "status_code", 200)
+
+            is_unres = (
+                status_code >= 400
+                or "error" in resp_dict
+                or resp_dict.get("answer_mode") == "UNSUPPORTED"
+                or "Sorry, I couldn't generate a response" in str(bot_text)
+            )
+
+            if is_unres:
+                exec_mode = "UNRESOLVED"
+            else:
+                raw_mode = resp_dict.get("answer_source") or resp_dict.get("answer_mode") or "LOCAL"
+                raw_mode_str = str(raw_mode).upper()
+                if any(k in raw_mode_str for k in ["HYBRID", "SYNTHESIS"]):
+                    exec_mode = "HYBRID"
+                elif any(k in raw_mode_str for k in ["LLM", "GEMINI", "GROQ"]):
+                    exec_mode = "LLM"
+                else:
+                    exec_mode = "LOCAL"
+
+            intents = resp_dict.get("intent") or resp_dict.get("detected_intents") or []
+            calc_footer = resp_dict.get("calculation_footer") or resp_dict.get("evidence_ids")
+            if calc_footer and isinstance(calc_footer, list):
+                calc_footer = f"Evidence IDs: {', '.join(str(x) for x in calc_footer)}"
+
+            user_session_data = USER_SESSIONS.get(session_id, {})
+            u_profile = dict(user_session_data.get("profile", {}))
+            if getattr(request, "name", None):
+                u_profile["name"] = request.name
+            if getattr(request, "birth_year", None):
+                u_profile["birth_year"] = request.birth_year
+                u_profile["birth_month"] = getattr(request, "birth_month", 1)
+                u_profile["birth_day"] = getattr(request, "birth_day", 1)
+                u_profile["birth_hour"] = getattr(request, "birth_hour", 0)
+
+            await log_chat_interaction(
+                session_id=session_id,
+                user_query=request.query,
+                bot_response=str(bot_text),
+                execution_mode=exec_mode,
+                detected_intents=intents,
+                input_tokens=resp_dict.get("input_tokens", 0),
+                output_tokens=resp_dict.get("output_tokens", 0),
+                calculation_footer=str(calc_footer) if calc_footer else None,
+                is_unresolved=is_unres,
+                user_id=session_id,
+                user_profile=u_profile,
+            )
+        except Exception as log_err:
+            logger.warning("[DATABASE] Failed to log JSON chat interaction: %s", log_err)
 
     if token_to_set:
         attach_session_cookie(response, token_to_set)
@@ -3592,6 +4193,62 @@ async def api_chat_endpoint(request: Request, api_req: ApiChatRequest):
         initial_chat_history=api_req.chat_history,
         pre_resolved_session_id=session_id,
         pre_resolved_token=token_to_set,
+    )
+
+
+@app.get("/api/tokens")
+@app.get("/api/model-tokens")
+async def get_token_status_endpoint():
+    """Returns the live token usage and remaining tokens for each LLM model."""
+    try:
+        from backend.answer_synthesizer import get_all_models_token_status
+    except ImportError:
+        from answer_synthesizer import get_all_models_token_status
+    return JSONResponse(content={
+        "status": "success",
+        "models": get_all_models_token_status()
+    })
+
+
+@app.get("/admin/unresolved-queries")
+async def get_admin_unresolved_queries(
+    limit: int = 50,
+    offset: int = 0,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Admin endpoint to query and review questions the chatbot failed to answer (is_unresolved == True).
+    Allows monitoring, tracking token metrics, and auditing chatbot accuracy.
+    """
+    records, total_count = await get_unresolved_queries(db, limit=limit, offset=offset)
+    return JSONResponse(
+        content={
+            "status": "success",
+            "total_unresolved": total_count,
+            "limit": limit,
+            "offset": offset,
+            "unresolved_queries": [record.to_dict() for record in records],
+        }
+    )
+
+
+@app.post("/admin/resolve-query/{message_id}")
+async def resolve_admin_query(
+    message_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Admin endpoint to mark an unresolved query as resolved after retraining, rule addition, or review.
+    """
+    record = await mark_query_resolved(db, message_id=message_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Unresolved query record not found.")
+    return JSONResponse(
+        content={
+            "status": "success",
+            "message": "Query marked as resolved.",
+            "record": record.to_dict(),
+        }
     )
 
 

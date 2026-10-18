@@ -48,6 +48,15 @@ function parseSafeMarkdownToFragment(text, doc = document) {
   return fragment;
 }
 
+function cleanBotText(rawText) {
+  if (!rawText || typeof rawText !== "string") return "";
+  return rawText
+    .replace(/^\s*\[(?:Local Database(?:\s*\+\s*LLM(?::\s*[^\]]+)?)?|LLM(?::\s*[^\]]+)?|Backend|DIRECT|RULE_BASED|Deterministic[^\]]*|Hybrid[^\]]*|Timing[^\]]*|FAQ[^\]]*)\]\s*/i, "")
+    .replace(/\n*\s*\*?\[Calculation:[^\]]+\]\*?/gi, "")
+    .replace(/\*/g, "")
+    .trim();
+}
+
 /**
  * Renders bot message container with bold prefix and safely parsed content.
  * Clears and populates using only DOM methods; never touches innerHTML.
@@ -63,8 +72,9 @@ function renderSafeBotMessage(container, rawText, doc = document) {
   container.appendChild(prefix);
   container.appendChild(doc.createTextNode(" "));
 
-  if (rawText) {
-    container.appendChild(parseSafeMarkdownToFragment(rawText, doc));
+  const cleaned = cleanBotText(rawText);
+  if (cleaned) {
+    container.appendChild(doc.createTextNode(cleaned));
   }
 }
 
@@ -119,7 +129,7 @@ function finalizeStreamedText(streamText) {
       displayText = displayText.slice(0, endIdx).trim();
     }
   }
-  return displayText;
+  return cleanBotText(displayText);
 }
 
 async function sendChatMessage() {
@@ -137,10 +147,13 @@ async function sendChatMessage() {
   const payload = {
     user_id: "user_session_123", // Unique session identifier
     query: query,
+    name: "Seeker",
     birth_year: 2000,
     birth_month: 5,
     birth_day: 15,
     birth_hour: 14.5, // 2:30 PM
+    birth_place: "New Delhi, India",
+    place: "New Delhi, India",
     latitude: 28.6139,
     longitude: 77.2090
   };
@@ -167,7 +180,12 @@ async function sendChatMessage() {
   }
 
   try {
-    const response = await fetch("/chat", {
+    const isLocalhost = typeof window !== "undefined" && (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1");
+    const backendOrigin = (typeof window !== "undefined" && (window.__BACKEND_URL__ || localStorage.getItem("astro_backend_url")))
+      || (isLocalhost ? "http://127.0.0.1:8000" : "https://astro-ai-chatbot.onrender.com");
+    const endpoint = `${backendOrigin.replace(/\/+$/, "")}/chat`;
+
+    const response = await fetch(endpoint, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
