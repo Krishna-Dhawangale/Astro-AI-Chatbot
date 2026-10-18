@@ -308,25 +308,79 @@ def synthesize_local_answer(
             )
 
     # General Domain Overview ("What does my chart indicate about my career/marriage/finances?")
-    pos_bullet = positives[0] if positives else ("Your 10th-house indicators highlight natural strengths in analytical management." if domain == "career" else "Your placements emphasize mutual trust and long-term stability.")
-    pos_bullet_2 = positives[1] if len(positives) > 1 else ("Planetary alignments support steady professional advancement." if domain == "career" else "Planetary alignments favor building an enduring relationship foundation.")
-    
-    chal_bullet = challenges[0] if challenges else ("Current transit influences suggest progress comes through consistent effort rather than sudden shifts." if domain == "career" else "Patient communication strengthens long-term partnership bond.")
+    domain_fallbacks = {
+        "career": (
+            "Your 10th-house indicators highlight natural strengths in analytical management",
+            "Planetary alignments support steady professional advancement",
+            "Current transit influences suggest progress comes through consistent effort rather than sudden shifts"
+        ),
+        "marriage": (
+            "Your 7th house placements emphasize mutual understanding and long-term stability",
+            "Planetary alignments favor building an enduring relationship foundation",
+            "Patient communication strengthens long-term partnership bonds"
+        ),
+        "finance": (
+            "Your 2nd and 11th house indicators emphasize structured wealth accumulation",
+            "Planetary alignments support prudent financial management and disciplined growth",
+            "Consistent financial planning tends to yield stable long-term results"
+        ),
+        "property": (
+            "Your 4th house indicators emphasize foundational domestic stability and real estate planning",
+            "Planetary alignments support structured property investments and asset security",
+            "Long-term property decisions benefit from careful verification and patience"
+        ),
+        "education": (
+            "Your 4th and 5th house significators emphasize foundational learning and conceptual clarity",
+            "Planetary alignments favor disciplined intellectual focus and analytical skills",
+            "Consistent academic study builds long-term competence"
+        ),
+        "health": (
+            "Your Lagna and 6th house indicators highlight physical vitality and constitutional resilience",
+            "Planetary alignments favor maintaining a balanced daily routine and regular rest",
+            "Attentiveness to physical rhythm and stress management supports sustained energy"
+        ),
+    }
+
+    d_key = (domain or "general").lower()
+    default_pos_1, default_pos_2, default_chal = domain_fallbacks.get(
+        d_key,
+        (
+            f"Your {asc} Ascendant indicators highlight focused planning and self-awareness",
+            "Planetary alignments favor methodical progress and practical decision-making",
+            "Patience and disciplined habits strengthen outcomes over time"
+        )
+    )
+
+    pos_bullet = positives[0] if positives else default_pos_1
+    pos_bullet_2 = positives[1] if len(positives) > 1 else default_pos_2
+    chal_bullet = challenges[0] if challenges else default_chal
+
+    def format_bullet(b_text: str) -> str:
+        s = (b_text or "").strip()
+        if not s:
+            return ""
+        s = s[0].upper() + s[1:] if len(s) > 1 else s.upper()
+        return s.rstrip(".") + "."
+
+    b1 = format_bullet(pos_bullet)
+    b2 = format_bullet(pos_bullet_2)
+    b3 = format_bullet(chal_bullet)
 
     if is_hinglish:
         return (
             f"Based on your birth chart ({asc} Lagna, {moon} Moon sign):\n\n"
-            f"- {pos_bullet.capitalize()}.\n"
-            f"- {pos_bullet_2.capitalize()}.\n"
-            f"- {chal_bullet.capitalize()}."
+            f"- {b1}\n"
+            f"- {b2}\n"
+            f"- {b3}"
         )
 
     return (
         f"Based on your birth chart ({asc} Ascendant, {moon} Moon sign):\n\n"
-        f"- {pos_bullet.capitalize()}.\n"
-        f"- {pos_bullet_2.capitalize()}.\n"
-        f"- {chal_bullet.capitalize()}."
+        f"- {b1}\n"
+        f"- {b2}\n"
+        f"- {b3}"
     )
+
 
 
 def build_auditable_answer_trace(
