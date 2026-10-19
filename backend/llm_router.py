@@ -982,6 +982,7 @@ STRICT INSTRUCTIONS:
 **Astrological Insight:** [Synthesized multi-domain insight explaining how the queried domains interact and align]
 **Actionable Advice:** [Grounded next steps and practical guidance across the queried areas]
 4. Brevity: Keep the total output to 5-7 lines (~55-80 words). Do NOT add extra chit-chat, conversational filler, or trailing notes.
+5. Absolute Prohibition: You ARE the qualified Vedic Astrologer. NEVER instruct the user to consult another astrologer or say 'kisi qualified Vedic astrologer se sampark karein'. Deliver the full interpretation directly.
 {lang_rule}
 """
 

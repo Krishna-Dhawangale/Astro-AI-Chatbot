@@ -41,6 +41,7 @@ from starlette.responses import Response
 # ---------------------------------------------------------------------------
 WARNING_TEMPLATE = "⚠️ Warning ({count}/3): Inappropriate or vulgar language is not permitted."
 TERMINATED_MESSAGE = "🚫 Session Terminated: You have exceeded the limit for inappropriate language."
+PROFANITY_REFUSAL_MESSAGE = "⚠️ Warning (1/3): Inappropriate or vulgar language is not permitted."
 
 SESSION_COOKIE_NAME = "astro_session_id"
 TOKEN_MAX_AGE = 86400  # 24 hours in seconds
@@ -105,6 +106,7 @@ RAW_ABUSE_PATTERNS = [
     # Hindi / Hinglish Profanity
     r"\b(?:behen|bhen|bhn)\s*c+h+o+d+\b",
     r"\bb+s+d+k+\b",
+    r"\bb+k+l+\b",
     r"\bb+h+o+s+[a-z]*d+i+k+e+\b",
     r"\bb+h+o+s+[a-z]*d+i+(?:wala|wali|wale)?\b",
     r"\bb+h+o+s+d+a+\b",
@@ -112,30 +114,44 @@ RAW_ABUSE_PATTERNS = [
     r"\bmadarja+t+\b",
     r"\bc+h+u+t+i+y+a+(?:s|n|pan)?\b",
     r"\bc+h+u+t+i+y+e+\b",
+    r"\bc+h+u+t+y+a+\b",
     r"\bc+h+u+t+i+y+a+p+a*\b",
     r"\bc+h+o+o+t+i+y+a+\b",
+    r"\bc+h+o+o+t+\b",
+    r"\bc+h+u+t+\b",
     r"\bg+a+n+d+u+(?:s)?\b",
+    r"\bg+a+a+n+d+u+(?:s)?\b",
+    r"\bg+a+n+d+\b",
+    r"\bg+a+a+n+d+\b",
     r"\bg+a+a+n+d+\s*(?:marna|mara|mari|faad|fat|masti|chhed)?\b",
     r"\bh+a+r+a+m+i+(?:yo|pan)?\b",
     r"\bh+a+r+a+m+k+h+o+r+\b",
+    r"\bh+a+r+a+m+z+a+d+[ae]\b",
     r"\bk+a+m+i+n+e+\b",
     r"\bk+a+m+i+n+a+\b",
+    r"\bk+a+m+i+n+i+\b",
     r"\bl+a+u+d+[aeiu]+\b",
     r"\bl+o+d+[aeiu]+\b",
     r"\bl+a+v+d+[aeiu]+\b",
     r"\bl+u+n+d+(?:s)?\b",
     r"\bc+h+i+n+a+l+\b",
+    r"\bc+h+i+n+a+r+\b",
     r"\bt+a+t+t+e+\b",
+    r"\bt+a+t+t+a+\b",
     r"\bj+h+a+a*t+\b",
+    r"\bj+h+a+a*t+u+\b",
+    r"\br+a+n+d+w+a+\b",
+    r"\br+a+a+n+d+\b",
     r"\bteri\s+(?:maa|ma|behen|bhen)\s+ki\b",
     r"\bmaa\s+ki\s+choot\b",
     r"\bmaa\s+ka\s+bhosda\b",
+    r"\bteri\s+maa\s+ka\b",
     r"\bsaale\s+kutte\b",
-    r"\b(?:chudai|chodna|chodo|chode|muthal)\b",
+    r"\b(?:chudai|chodna|chodo|chode|chuda|chudwa|muthal|mutthal)\b",
 
     # Devanagari Hindi
-    r"मादरचोद", r"बहनचोद", r"भोसड़ीके", r"भोसड़ी", r"चूतिया", r"चूतिये",
-    r"गांडू", r"हरामी", r"कमीने", r"लौड़े", r"लौड़ा", r"लंड", r"रंडी",
+    r"मादरचोद", r"बहनचोद", r"भोसड़ीके", r"भोसड़ी", r"भोसड़ा", r"चूतिया", r"चूतिये",
+    r"गांडू", r"गांड", r"हरामी", r"कमीने", r"लौड़े", r"लौड़ा", r"लंड", r"रंडी",
     r"साले\s*कुत्ते", r"चोदना", r"चुदाई", r"मुठ", r"सेक्स"
 ]
 
@@ -212,6 +228,12 @@ def is_contextual_abusive_language(query: str) -> Tuple[bool, Optional[str]]:
         has_author_title = any(t in words for t in {"author", "book", "writer", "person", "mr", "ms", "dr"})
         if not (is_proper_name and has_author_title):
             return True, match_randi.group(0)
+
+    # 6. Dot-separated swear acronyms (b.s.d.k, b.k.l)
+    dot_clean = re.sub(r"\.", "", q_low)
+    for bad_acronym in ["bsdk", "bkl"]:
+        if re.search(r"\b" + bad_acronym + r"\b", dot_clean):
+            return True, bad_acronym
 
     return False, None
 

@@ -219,6 +219,40 @@ try:
 except ImportError:
     from llm_router import stream_cascading_router, trim_to_last_sentence
 
+try:
+    from backend.intent_router import (
+        classify_query_intent,
+        is_garbage_or_special_char_input,
+        check_profanity_guardrail,
+        is_hinglish_query,
+        GARBAGE_REFUSAL_MESSAGE,
+        PROFANITY_REFUSAL_MESSAGE,
+        IntentClassificationResult,
+    )
+except ImportError:
+    from intent_router import (
+        classify_query_intent,
+        is_garbage_or_special_char_input,
+        check_profanity_guardrail,
+        is_hinglish_query,
+        GARBAGE_REFUSAL_MESSAGE,
+        PROFANITY_REFUSAL_MESSAGE,
+        IntentClassificationResult,
+    )
+
+try:
+    from backend.astrology.house_engine import (
+        is_house_query,
+        extract_house_number,
+        synthesize_house_analysis,
+    )
+except ImportError:
+    from astrology.house_engine import (
+        is_house_query,
+        extract_house_number,
+        synthesize_house_analysis,
+    )
+
 FRONTEND_PATH = os.path.join(BASE_DIR, "..", "frontend", "index.html")
 
 load_dotenv(os.path.join(BASE_DIR, ".env"), override=True)
@@ -458,17 +492,21 @@ def normalize_hinglish(text: str) -> str:
 
 
 def is_hinglish_query(text: str) -> bool:
-    """Detect Hinglish using normalized vocabulary and common Hindi markers."""
-    if normalize_hinglish(text).casefold() != text.casefold():
-        return True
-    hindi_markers = {
-        "aap", "aapka", "aapki", "aapke", "hai", "hain", "ho", "hoga", "hogi",
-        "ka", "ki", "ke", "ko", "kya", "kab", "kaise", "kyun", "mein", "nahi",
-        "raha", "rahi", "rahe", "mujhe", "mera", "meri", "mere", "chahiye",
-        "sakta", "sakti", "sakte", "badhega", "badhegi", "milega", "milega",
-    }
-    words = set(re.findall(r"\b[\w']+\b", text.casefold()))
-    return bool(words & hindi_markers)
+    """Detect Hinglish using normalized vocabulary, comprehensive Hindi markers, and phrase patterns."""
+    try:
+        from backend.intent_router import is_hinglish_query as _enhanced_hinglish
+        return _enhanced_hinglish(text)
+    except Exception:
+        if normalize_hinglish(text).casefold() != text.casefold():
+            return True
+        hindi_markers = {
+            "aap", "aapka", "aapki", "aapke", "hai", "hain", "ho", "hoga", "hogi",
+            "ka", "ki", "ke", "ko", "kya", "kab", "kaise", "kyun", "mein", "nahi",
+            "raha", "rahi", "rahe", "mujhe", "mera", "meri", "mere", "chahiye",
+            "sakta", "sakti", "sakte", "badhega", "badhegi", "milega", "batao",
+        }
+        words = set(re.findall(r"\b[\w']+\b", text.casefold()))
+        return bool(words & hindi_markers)
 
 
 SEMANTIC_DOMAIN_SENTENCES = {
@@ -1206,10 +1244,34 @@ def format_personalized_answer(
     astro_features: Optional[List[int]] = None,
 ) -> str:
     """Personalize every FAQ answer using user's name, calculated signs, and chart placements."""
-    try:
-        formatted = template.format(ascendant=asc, sun_sign=sun, moon_sign=moon)
-    except (KeyError, IndexError, ValueError):
-        formatted = template
+    HINGLISH_FAQ_ADAPTATIONS = {
+        "lagna": "Vedic astrology mein Lagna (Ascendant) vah rashi hoti hai jo aapke janm ke samay purvi kshitij (eastern horizon) par uday ho rahi thi. Yeh aapke shareerik banawat, aatmavishwas aur jeevan ki mukhya disha ko darshata hai.",
+        "moon sign": "Vedic astrology mein Moon sign (Chandra Rashi) vah rashi hai jisme janm ke samay Moon (Chandra) sthit the. Yeh aapke man, bhavnaon aur aantarik soch ko nirdharit karta hai.",
+        "rashi": "Vedic astrology mein Moon sign (Chandra Rashi) vah rashi hai jisme janm ke samay Moon (Chandra) sthit the. Yeh aapke man, bhavnaon aur aantarik soch ko nirdharit karta hai.",
+        "sade sati": "Sade Sati Shani Dev ka lagbhag 7.5 saal ka transit hota hai jo aapki Moon sign se 12ve, 1st aur 2nd house se guzarta hai. Yeh anushasan, parishram aur aatmik vikas ka samay hota hai.",
+        "nakshatra": "Vedic astrology mein 360 degree ke zodiac ko 27 Nakshatron mein baanta gaya hai. Janm Nakshatra aapke swabhav aur dasha timeline ko decide karta hai.",
+        "mangal dosha": "Mangal Dosha (Kuja Dosha) tab banta hai jab Mars (Mangal) kundali ke 1st, 4th, 7th, 8th ya 12th house mein sthit ho. Yeh vivah aur rishton mein energy balance ko darshata hai.",
+        "manglik": "Manglik dosha tab banta hai jab Mars (Mangal) kundali ke 1st, 4th, 7th, 8th ya 12th house mein sthit ho. Yeh marriage aur relationship energy ko prabhavit karta hai.",
+        "birth chart": "Janam Kundali (Birth chart) aapke janm ke exact time aur sthan par aakash mein grahon aur rashiyon ki sthiti ka naksha hota hai.",
+        "kundali": "Janam Kundali aapke janm ke exact time aur sthan par aakash mein grahon aur rashiyon ki sthiti ka naksha hota hai.",
+    }
+
+    if hinglish:
+        q_low_faq = (query or "").lower()
+        for k_term, h_text in HINGLISH_FAQ_ADAPTATIONS.items():
+            if k_term in q_low_faq or k_term in template.lower():
+                formatted = h_text
+                break
+        else:
+            try:
+                formatted = template.format(ascendant=asc, sun_sign=sun, moon_sign=moon)
+            except (KeyError, IndexError, ValueError):
+                formatted = template
+    else:
+        try:
+            formatted = template.format(ascendant=asc, sun_sign=sun, moon_sign=moon)
+        except (KeyError, IndexError, ValueError):
+            formatted = template
 
     # Inject calculated chart signs if placeholders or defaults are in text
     if "Moon Sign" in formatted or "Rashi" in formatted:
@@ -1513,6 +1575,7 @@ def build_gemini_prompt(
         f"   - Explicitly connect your guidance to their Lagna in {asc_sign}, Sun in {sun_sign}, or Moon in {moon_sign}.\n"
         f"   - Give a concrete, actionable directive or risk assessment based on their specific placements.\n\n"
         f"3. STRICT BANS (ZERO TOLERANCE FOR BOILERPLATE):\n"
+        f"   - NEVER tell the user to consult a professional astrologer or say 'Kripya kisi qualified Vedic astrologer se sampark karein'. You ARE their Master Vedic Astrologer; deliver the direct astrological guidance yourself based on their chart.\n"
         f"   - NEVER refuse with statements like 'Domain unknown' or 'I cannot answer this'. Autonomously resolve the intent and answer directly.\n"
         f"   - NEVER output repetitive template phrases like 'Isse reflection ki tarah lijiye', 'practical evidence par decision kijiye', or 'Update your CV'.\n"
         f"   - Make this response distinct from previous assistant turns; do not reuse their opening, phrasing, metaphors, or recommendation structure.\n"
@@ -2765,6 +2828,7 @@ async def _handle_chat_response(request: ChatRequest, session_id: Optional[str] 
             "answer_mode": "UNSUPPORTED",
             "answer_source": "UNSUPPORTED",
             "intent": "unsupported",
+            "detected_intents": ["safety_boundary"],
             "evidence_complete": False,
             "gemini_calls": 0,
             "evidence_ids": [],
@@ -2795,7 +2859,8 @@ async def _handle_chat_response(request: ChatRequest, session_id: Optional[str] 
             "answer": label_answer_source(abuse_msg, "GUARDRAIL"),
             "answer_mode": ans_mode,
             "answer_source": ans_source,
-            "intent": "abuse",
+            "intent": "profanity",
+            "detected_intents": ["profanity"],
             "evidence_complete": False,
             "gemini_calls": 0,
             "evidence_ids": [],
@@ -2824,6 +2889,7 @@ async def _handle_chat_response(request: ChatRequest, session_id: Optional[str] 
             "answer_mode": "UNSUPPORTED",
             "answer_source": "OUT_OF_SCOPE_PREFILTER",
             "intent": "out_of_scope",
+            "detected_intents": ["out_of_scope"],
             "evidence_complete": False,
             "gemini_calls": 0,
             "evidence_ids": [],
@@ -2846,6 +2912,52 @@ async def _handle_chat_response(request: ChatRequest, session_id: Optional[str] 
     sun_sign = ZODIAC_SIGNS[int(astro_features[1]) % 12] if len(astro_features) > 1 else "Taurus"
     moon_sign = ZODIAC_SIGNS[int(astro_features[2]) % 12] if len(astro_features) > 2 else "Gemini"
     norm_chart = normalize_api_response(_api_chart_data)
+
+    # ---------------------------------------------------------------------------
+    # Requirement 4: Astrological House-Related Query Handling (Bhava Karakas)
+    # ---------------------------------------------------------------------------
+    if is_house_query(request.query):
+        is_hinglish_user = is_hinglish_query(request.query)
+        house_res = synthesize_house_analysis(
+            query=request.query,
+            chart_data=norm_chart,
+            is_hinglish=is_hinglish_user,
+            asc_sign=asc_sign,
+        )
+        house_ans = house_res["answer"]
+        USER_SESSIONS[request.user_id]["history"].append({"role": "user", "content": request.query})
+        USER_SESSIONS[request.user_id]["history"].append({"role": "assistant", "content": house_ans})
+        h_target = house_res["house_num"]
+        print_no_llm_call_report("HOUSE_ANALYSIS", f"Vedic House Analysis complete for house {h_target}")
+        record_production_decision_trace(
+            question=request.query, domain="house_analysis", selected_model="VEDIC_HOUSE_ENGINE",
+            domain_confidence=1.0, intent="house_analysis", resolved_intent="house_analysis",
+            complexity="simple", chart_required=True, chart_evidence=[], matched_rules=[f"BHAVA_{h_target}_ANALYSIS"],
+            evidence_score=1.0, evidence_status="complete", answer_source="VEDIC_HOUSE_ENGINE", gemini_calls=0,
+            llm_input_tokens=0, llm_output_tokens=0, llm_total_tokens=0, llm_call_details=[], latency_ms=1.5
+        )
+        return JSONResponse(content={
+            "answer": label_answer_source(house_ans, "Vedic House Engine"),
+            "answer_mode": "HOUSE_ANALYSIS",
+            "answer_source": "VEDIC_HOUSE_ENGINE",
+            "intent": "house_analysis",
+            "detected_intents": ["house_analysis"],
+            "house_number": h_target,
+            "sanskrit_name": house_res.get("sanskrit_name"),
+            "house_sign": house_res.get("sign"),
+            "house_lord": house_res.get("lord"),
+            "occupants": house_res.get("occupants", []),
+            "evidence_complete": True,
+            "gemini_calls": 0,
+            "evidence_ids": [f"BHAVA_{h_target}_ANALYSIS"],
+            "fallback_reason": None,
+            "related_questions": [
+                f"What does my {h_target}th house lord ({house_res.get('lord')}) signify?",
+                f"How will upcoming transits affect my {h_target}th house?",
+                "What remedies strengthen my birth chart houses?"
+            ],
+            "source": "house_engine",
+        })
 
     # Proposal 3: Strict FAQ Eligibility Engine (Fast educational & definition lookup)
     # Ensure multi-domain queries never match a single static FAQ template
@@ -2893,6 +3005,7 @@ async def _handle_chat_response(request: ChatRequest, session_id: Optional[str] 
             "answer_mode": "FAQ",
             "answer_source": "FAQ_EDUCATIONAL",
             "intent": "educational_faq",
+            "detected_intents": ["educational_faq"],
             "evidence_complete": True,
             "gemini_calls": 0,
             "evidence_ids": [],
@@ -3018,6 +3131,7 @@ async def _handle_chat_response(request: ChatRequest, session_id: Optional[str] 
             "answer_mode": "DIRECT",
             "answer_source": "LOCAL",
             "intent": resolved_intent,
+            "detected_intents": ["dasha"],
             "evidence_complete": True,
             "gemini_calls": 0,
             "evidence_ids": ["DIRECT_DASHA_LOOKUP"],
@@ -3241,8 +3355,10 @@ async def _handle_chat_response(request: ChatRequest, session_id: Optional[str] 
         return JSONResponse(content={
             "answer": label_answer_source(ans_text, "Timing Engine", model_name=t_model),
             "answer_mode": "TIMING_WINDOW",
-            "answer_source": timing_res.get("answer_source", "HYBRID"),
-            "intent": "timing_window",
+            "intent": f"{timing_res.get('domain', 'general')}_timing" if timing_res.get("domain") in ["career", "marriage", "finance", "property", "travel"] else "timing_window",
+            "detected_intents": [
+                f"{timing_res.get('domain', 'general')}_timing" if timing_res.get("domain") in ["career", "marriage", "finance", "property", "travel"] else "timing_window"
+            ],
             "domain": timing_res.get("domain", "career"),
             "timing_window": timing_res.get("timing_window"),
             "active_dasha": timing_res.get("active_dasha"),
@@ -3297,6 +3413,7 @@ async def _handle_chat_response(request: ChatRequest, session_id: Optional[str] 
             "answer_mode": "DIRECT",
             "answer_source": "LOCAL",
             "intent": resolved_intent,
+            "detected_intents": ["direct_fact"],
             "evidence_complete": True,
             "gemini_calls": 0,
             "evidence_ids": ["DIRECT_FACT_LOOKUP"],
@@ -3515,6 +3632,7 @@ async def _handle_chat_response(request: ChatRequest, session_id: Optional[str] 
                 "answer_mode": "RULE_BASED",
                 "answer_source": "LOCAL",
                 "intent": resolved_intent,
+                "detected_intents": detected_doms or ["multi_domain"],
                 "evidence_complete": True,
                 "gemini_calls": 0,
                 "evidence_ids": mode_info.get("evidence_ids", []),
@@ -3609,6 +3727,7 @@ async def _handle_chat_response(request: ChatRequest, session_id: Optional[str] 
                     "answer_mode": "RULE_BASED",
                     "answer_source": "LOCAL",
                     "intent": resolved_intent,
+                    "detected_intents": [resolved_intent],
                     "evidence_complete": True,
                     "gemini_calls": 0,
                     "evidence_ids": mode_info.get("evidence_ids", []),
@@ -3675,7 +3794,7 @@ async def _handle_chat_response(request: ChatRequest, session_id: Optional[str] 
         question=request.query
     )
     llm_prompt_text, est_tokens = format_llm_assisted_prompt(request.query, compact_evidence_pkg)
-    system_instruction = get_renderer_system_instruction(word_limit_str)
+    system_instruction = get_renderer_system_instruction(word_limit_str, is_hinglish=is_hinglish_query(request.query))
 
     load_dotenv(os.path.join(BASE_DIR, ".env"), override=True)
     current_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
@@ -3952,6 +4071,108 @@ async def _handle_chat(
     # Guarantee canonical identity is bound to authenticated session_id
     request.user_id = session_id
 
+    # ---------------------------------------------------------------------------
+    # Requirement 3: Strict Profanity & Vulgarity Guardrail (Hindi / Hinglish / English)
+    # ---------------------------------------------------------------------------
+    abuse_decision = abuse_tracker.check_message(session_id, request.query)
+    if not abuse_decision:
+        is_profane, flagged_term = check_profanity_guardrail(request.query)
+        if is_profane:
+            state = abuse_tracker.get_session_state(session_id)
+            strikes = state.get("abuse_strikes", 0) + 1
+            is_term = strikes >= 3
+            abuse_decision = {
+                "blocked": True,
+                "terminated": is_term,
+                "strikes": strikes,
+                "message": TERMINATED_MESSAGE if is_term else WARNING_TEMPLATE.format(count=strikes),
+                "flagged_term": flagged_term
+            }
+            state["abuse_strikes"] = strikes
+            state["last_activity"] = time.time()
+            if is_term:
+                state["is_terminated"] = True
+                state["locked_at"] = time.time()
+            with abuse_tracker._lock:
+                abuse_tracker._sessions[session_id] = state
+
+    if abuse_decision and abuse_decision.get("blocked"):
+        abuse_msg = abuse_decision.get("message", TERMINATED_MESSAGE)
+        is_term = abuse_decision.get("terminated", False)
+        ans_mode = "TERMINATED" if is_term else "WARNING"
+        ans_source = "ABUSE_LOCKOUT" if is_term else "ABUSE_WARNING"
+        refusal_content = {
+            "answer": abuse_msg,
+            "answer_mode": ans_mode,
+            "answer_source": ans_source,
+            "intent": "profanity",
+            "detected_intents": ["profanity"],
+            "evidence_complete": False,
+            "gemini_calls": 0,
+            "evidence_ids": [],
+            "related_questions": [],
+            "source": "profanity_guardrail",
+            "strikes": abuse_decision.get("strikes", 1),
+        }
+        resp = JSONResponse(status_code=200, content=refusal_content)
+        if token_to_set:
+            attach_session_cookie(resp, token_to_set)
+        try:
+            await log_chat_interaction(
+                session_id=session_id,
+                user_query=request.query,
+                bot_response=abuse_msg,
+                execution_mode="UNRESOLVED",
+                detected_intents=["profanity"],
+                input_tokens=0,
+                output_tokens=0,
+                is_unresolved=True,
+                user_id=session_id,
+            )
+        except Exception as log_err:
+            logger.warning("[DATABASE] Failed to log profanity rejection: %s", log_err)
+        return resp
+
+    # ---------------------------------------------------------------------------
+    # Requirement 2: Input Sanitization & Garbage / Special Character Filtering
+    # ---------------------------------------------------------------------------
+    is_garbage, garbage_reason = is_garbage_or_special_char_input(request.query)
+    if is_garbage:
+        refusal_content = {
+            "answer": GARBAGE_REFUSAL_MESSAGE,
+            "answer_mode": "REFUSAL",
+            "answer_source": "INPUT_SANITIZER",
+            "intent": "garbage_input",
+            "detected_intents": ["garbage_input"],
+            "evidence_complete": False,
+            "gemini_calls": 0,
+            "evidence_ids": [],
+            "related_questions": [
+                "What is my Moon sign?",
+                "What does the 7th house signify?",
+                "When will I get a job promotion?"
+            ],
+            "source": "sanitization_guardrail",
+        }
+        resp = JSONResponse(status_code=200, content=refusal_content)
+        if token_to_set:
+            attach_session_cookie(resp, token_to_set)
+        try:
+            await log_chat_interaction(
+                session_id=session_id,
+                user_query=request.query,
+                bot_response=GARBAGE_REFUSAL_MESSAGE,
+                execution_mode="UNRESOLVED",
+                detected_intents=["garbage_input"],
+                input_tokens=0,
+                output_tokens=0,
+                is_unresolved=True,
+                user_id=session_id,
+            )
+        except Exception as log_err:
+            logger.warning("[DATABASE] Failed to log garbage rejection: %s", log_err)
+        return resp
+
     # Intra-process concurrency safety: atomic history seeding
     if initial_chat_history and isinstance(initial_chat_history, list):
         async with SESSION_LOCK:
@@ -4004,8 +4225,13 @@ async def _handle_chat(
                     exec_mode = "LLM"
                 else:
                     exec_mode = "LOCAL"
-
-            intents = resp_dict.get("intent") or resp_dict.get("detected_intents") or []
+            raw_intents = resp_dict.get("detected_intents") or resp_dict.get("intent") or []
+            if isinstance(raw_intents, str):
+                intents = [raw_intents]
+            elif isinstance(raw_intents, list):
+                intents = [str(x) for x in raw_intents]
+            else:
+                intents = []
             calc_footer = resp_dict.get("calculation_footer") or resp_dict.get("evidence_ids")
             if calc_footer and isinstance(calc_footer, list):
                 calc_footer = f"Evidence IDs: {', '.join(str(x) for x in calc_footer)}"

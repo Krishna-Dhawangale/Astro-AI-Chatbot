@@ -50,11 +50,27 @@ function parseSafeMarkdownToFragment(text, doc = document) {
 
 function cleanBotText(rawText) {
   if (!rawText || typeof rawText !== "string") return "";
-  return rawText
+  let cleaned = rawText
     .replace(/^\s*\[(?:Local Database(?:\s*\+\s*LLM(?::\s*[^\]]+)?)?|LLM(?::\s*[^\]]+)?|Backend|DIRECT|RULE_BASED|Deterministic[^\]]*|Hybrid[^\]]*|Timing[^\]]*|FAQ[^\]]*)\]\s*/i, "")
     .replace(/\n*\s*\*?\[Calculation:[^\]]+\]\*?/gi, "")
     .replace(/\*/g, "")
     .trim();
+
+  // Strip disclaimers asking the user to consult an external astrologer
+  const disclaimerRegexes = [
+    /(?:please\s+)?(?:consult|seek|reach\s+out\s+to|speak\s+with)\s+(?:a|an)?\s*(?:qualified|professional|experienced|certified|practicing)?\s*(?:vedic\s+)?astrologer(?:\s+for\s+[^.!?\n]+)?[.!?]?/gi,
+    /(?:for\s+(?:a\s+)?(?:detailed|comprehensive|in-depth|personalized)\s+(?:analysis|reading|interpretation)[^.!?\n]*,?\s*)?(?:please\s+)?(?:consult|speak\s+with|reach\s+out\s+to)\s+(?:a|an)?\s*(?:professional|qualified|experienced|vedic)?\s*astrologer[.!?]?/gi,
+    /(?:it\s+is\s+(?:recommended|advised|best)\s+to\s+)?consult\s+(?:with\s+)?(?:a|an)?\s*(?:qualified|professional|experienced|vedic)?\s*astrologer(?:\s+for\s+[^.!?\n]+)?[.!?]?/gi,
+    /consult\s+a\s+professional\s+astrologer\s+for\s+a\s+detailed,?\s*personalized\s+analysis\s+of\s+your\s+chart[.!?]?/gi,
+    /(?:kripya\s+)?(?:kisi\s+)?(?:qualified|professional|experienced)?\s*(?:vedic\s+)?astrologer\s+se\s+(?:sampark|paramarsh|consult|baat)\s*(?:karein|kare|kijiye|karna\s+chahiye)[.!?]?/gi,
+    /(?:detailed|personalized)\s*(?:chart\s*)?(?:analysis|reading)?\s*ke\s+liye\s*(?:kisi\s+)?(?:qualified\s+)?astrologer\s+se\s+(?:sampark|paramarsh|consult)\s*(?:karein|kare|kijiye)[.!?]?/gi,
+    /(?:kripya\s+)?(?:kisi\s+)?(?:jyotishi|pandit\s*ji|vidwan)\s+se\s+(?:sampark|paramarsh)\s*(?:karein|kare|kijiye)[.!?]?/gi,
+    /kripya\s+kisi\s+qualified\s+vedic\s+astrologer\s+se\s+sampark\s+karein[.!?]?/gi
+  ];
+  for (const re of disclaimerRegexes) {
+    cleaned = cleaned.replace(re, "");
+  }
+  return cleaned.replace(/\s+/g, " ").trim();
 }
 
 /**
