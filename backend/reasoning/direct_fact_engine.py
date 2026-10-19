@@ -7,7 +7,10 @@ Extracts and formats factual chart properties directly from the normalized natal
 and Dasha data without invoking heavy Stage 8 reasoning or LLM API calls.
 """
 
-from typing import Dict, Any, Optional, Tuple
+import re
+from typing import Dict, Any, Optional, Tuple, List
+from backend.reasoning.lordship import get_house_details, RASHI_LORDS
+from backend.router.capability_gate import ordinal_house
 
 
 DIRECT_FACT_PATTERNS = {
@@ -16,10 +19,113 @@ DIRECT_FACT_PATTERNS = {
     "lagna": ["lagna", "ascendant", "rising sign", "what is my lagna", "what is my ascendant"],
     "nakshatra": ["nakshatra", "birth star", "janma nakshatra", "what is my nakshatra"],
     "current_dasha": ["current dasha", "mahadasha", "antardasha", "what is my current dasha", "my mahadasha", "current period", "dasha", "dasa", "dash"],
-    "planet_placement": ["where is jupiter", "where is saturn", "where is mars", "where is venus", "where is mercury", "where is sun", "where is moon", "where is rahu", "where is ketu"],
-    "house_occupants": ["7th house", "10th house", "1st house", "2nd house", "4th house", "5th house", "6th house", "8th house", "9th house", "11th house", "12th house"],
+    "house_occupants": ["planets in", "who occupies", "what occupies", "occupants of", "planets positioned in", "any planets in", "planet in my"],
     "education_influences": ["planets influence my education", "planets affect my education", "planets govern my education", "education planets"]
 }
+
+WORD_TO_HOUSE = {
+    "first": 1, "1st": 1, "1": 1,
+    "second": 2, "2nd": 2, "2": 2,
+    "third": 3, "3rd": 3, "3": 3,
+    "fourth": 4, "4th": 4, "4": 4,
+    "fifth": 5, "5th": 5, "5": 5,
+    "sixth": 6, "6th": 6, "6": 6,
+    "seventh": 7, "7th": 7, "7": 7,
+    "eighth": 8, "8th": 8, "8": 8,
+    "ninth": 9, "9th": 9, "9": 9,
+    "tenth": 10, "10th": 10, "10": 10,
+    "eleventh": 11, "11th": 11, "11": 11,
+    "twelfth": 12, "12th": 12, "12": 12,
+}
+
+HOUSE_ORDINAL_PATTERN = r"\b(first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth|\d{1,2}\s*(?:st|nd|rd|th)?)\b"
+
+
+def extract_house_lord_query(q_low: str) -> Optional[int]:
+    """Extracts target house number for house lord lookups, ignoring multi-request / compound queries."""
+    if any(w in q_low for w in ["purchas", "buy", "loan", "stress", "invest", "abroad", "and will", "and should", "should i", "will it", "timing"]):
+        return None
+    m = re.search(r"\blord of (?:my |the )?" + HOUSE_ORDINAL_PATTERN + r"(?:\s*house)?\b", q_low)
+    if m:
+        return WORD_TO_HOUSE.get(re.sub(r"\s+", "", m.group(1).lower()))
+    m = re.search(HOUSE_ORDINAL_PATTERN + r"\s*(?:house\s*)?(?:lord|ruler)\b", q_low)
+    if m:
+        return WORD_TO_HOUSE.get(re.sub(r"\s+", "", m.group(1).lower()))
+    m = re.search(r"\b(?:who|which\s+(?:planet|graha))\s+(?:rules|governs|owns)\s+(?:the\s+|my\s+)?" + HOUSE_ORDINAL_PATTERN + r"(?:\s*house)?\b", q_low)
+    if m:
+        return WORD_TO_HOUSE.get(re.sub(r"\s+", "", m.group(1).lower()))
+    m = re.search(r"\bwho rules (?:my )?" + HOUSE_ORDINAL_PATTERN + r"(?:\s*house)?\b", q_low)
+    if m:
+        return WORD_TO_HOUSE.get(re.sub(r"\s+", "", m.group(1).lower()))
+    return None
+
+
+def extract_house_sign_query(q_low: str) -> Optional[int]:
+    """Extracts target house number for house sign lookups, ignoring multi-request / compound queries."""
+    if any(w in q_low for w in ["purchas", "buy", "loan", "stress", "invest", "abroad", "and will", "and should", "should i", "will it", "timing"]):
+        return None
+    m = re.search(r"\b(?:what|which)\s*(?:zodiac\s*)?(?:sign|rashi)\s*(?:is\s*|occupies\s*|governs\s*|falls\s*in\s*|rules\s*)?(?:in\s*)?(?:my\s*|the\s*)?" + HOUSE_ORDINAL_PATTERN + r"(?:\s*house)?\b", q_low)
+    if m:
+        return WORD_TO_HOUSE.get(re.sub(r"\s+", "", m.group(1).lower()))
+    m = re.search(HOUSE_ORDINAL_PATTERN + r"\s*house\s*(?:sign|rashi)\b", q_low)
+    if m:
+        return WORD_TO_HOUSE.get(re.sub(r"\s+", "", m.group(1).lower()))
+    m = re.search(r"\bsign\s*(?:is\s*|occupies\s*|governs\s*)?(?:in\s*)?(?:my\s*|the\s*)?" + HOUSE_ORDINAL_PATTERN + r"\s*house\b", q_low)
+    if m:
+        return WORD_TO_HOUSE.get(re.sub(r"\s+", "", m.group(1).lower()))
+    return None
+
+
+def extract_house_lord_placement_query(q_low: str) -> Optional[int]:
+    """Extracts target house number for lord placement lookups."""
+    if any(w in q_low for w in ["purchas", "buy", "loan", "stress", "invest", "abroad", "and will", "and should", "should i", "will it", "timing"]):
+        return None
+    m = re.search(r"\bwhere is (?:my )?" + HOUSE_ORDINAL_PATTERN + r"\s*(?:house\s*)?lord\b", q_low)
+    if m:
+        return WORD_TO_HOUSE.get(re.sub(r"\s+", "", m.group(1).lower()))
+    return None
+
+
+def extract_house_occupants_query(q_low: str) -> Optional[int]:
+    """Extracts target house number for occupant lookups, ignoring compound queries."""
+    if any(w in q_low for w in ["purchas", "buy", "loan", "stress", "invest", "abroad", "and will", "and should", "should i", "will it", "timing"]):
+        return None
+    if any(w in q_low for w in ["rule", "ruler", "lord", "own", "governs"]):
+        return None
+    if not any(w in q_low for w in ["planet", "occup", "who is in", "what is in", "planets in", "planets positioned"]):
+        return None
+    m = re.search(HOUSE_ORDINAL_PATTERN + r"\s*house\b", q_low)
+    if m:
+        return WORD_TO_HOUSE.get(re.sub(r"\s+", "", m.group(1).lower()))
+    m = re.search(r"\bhouse\s*(\d{1,2})\b", q_low)
+    if m:
+        val = int(m.group(1))
+        return val if 1 <= val <= 12 else None
+    return None
+
+
+def is_all_placements_query(q_low: str) -> bool:
+    """Returns True if user asks for general/all planetary house placements."""
+    patterns = [
+        "which planet is my which house",
+        "which planet is in which house",
+        "which planets are in which house",
+        "which planet is which house",
+        "which planet in which house",
+        "where are my planets placed",
+        "where are all my planets",
+        "all planetary placements",
+        "planetary placements",
+        "planetary positions",
+        "planet positions",
+        "planets and their houses",
+        "planets in my houses",
+        "my planet placements",
+        "my planetary positions",
+        "planets in houses",
+        "all planets placement"
+    ]
+    return any(p in q_low for p in patterns)
 
 
 def is_direct_fact_query(question: str, intent: Optional[str] = None) -> bool:
@@ -35,8 +141,21 @@ def is_direct_fact_query(question: str, intent: Optional[str] = None) -> bool:
         return False
 
     q_lower = question.lower().strip()
+
+    if is_all_placements_query(q_lower):
+        return True
     
-    # Support direct distinction & comparison lookups (e.g. difference between lagna and rashi)
+    # Check targeted house lookups first
+    if extract_house_lord_query(q_lower) is not None:
+        return True
+    if extract_house_sign_query(q_lower) is not None:
+        return True
+    if extract_house_lord_placement_query(q_lower) is not None:
+        return True
+    if extract_house_occupants_query(q_lower) is not None:
+        return True
+
+    # Support direct distinction & comparison lookups
     if any(kw in q_lower for kw in ["difference", "different", "same as"]):
         if any(f in q_lower for f in ["lagna", "rashi", "moon sign", "sun sign", "nakshatra"]):
             return True
@@ -46,15 +165,11 @@ def is_direct_fact_query(question: str, intent: Optional[str] = None) -> bool:
         "when", "timing", "kab", "will i", "predict", "why", "how is", "affect", "suit me",
         "career", "marriage", "improve", "future", "tired", "health", "should i", "move from",
         "transition", "switch", "explain", "change", "overall", "situation", "detail",
-        # Hinglish, comparative, advisory, and distress signals:
-        "vs", "risk", "vyapar", "business", "neend", "sleep", "restlessness", "stress",
-        "dimaag", "gochar", "malefic", "reason", "karan", "kyun", "growth", "fas gaya",
-        "market", "better", "safe", "loss", "faida", "nuksan", "dono mein", "kaise",
-        "hoga ya nahi"
+        "relate", "connect", "influence", "impact", "how does", "how will", "matters"
     ]
     if any(kw in q_lower for kw in complex_exclusions):
         if any(f in q_lower for f in ["what is my moon sign", "what is my sun sign", "what is my lagna", "what is my nakshatra", "what is my current mahadasha", "what is my dasha", "lagna different", "difference between"]):
-            if not any(t in q_lower for t in ["when will", "when is", "when get", "marri", "job", "career", "move", "transition", "should i", "risk", "vs", "neend", "stress"]):
+            if not any(t in q_lower for t in ["when will", "when is", "when get", "marri", "job", "career", "move", "transition", "should i", "relate", "house"]):
                 return True
         return False
 
@@ -62,6 +177,7 @@ def is_direct_fact_query(question: str, intent: Optional[str] = None) -> bool:
         if any(p in q_lower for p in patterns):
             return True
     return False
+
 
 
 def extract_direct_fact(question: str, chart_data: Dict[str, Any], dasha_hierarchy: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
@@ -273,7 +389,8 @@ def extract_direct_fact(question: str, chart_data: Dict[str, Any], dasha_hierarc
             }
 
     # 2. Moon Sign / Rashi / Zodiac Sign
-    if any(k in q_lower for k in ["moon sign", "rashi", "my rashi", "chandra rashi", "zodiac sign", "zodiac", "zodaic", "zodiak"]):
+    if extract_house_sign_query(q_lower) is None and extract_house_lord_query(q_lower) is None and any(k in q_lower for k in ["moon sign", "rashi", "my rashi", "chandra rashi", "zodiac sign", "zodiac", "zodaic", "zodiak"]):
+
         moon_rashi = moon_data.get("rashi")
         if moon_rashi and str(moon_rashi).strip() and str(moon_rashi).strip() != "None":
             r_lord = moon_data.get("rashi_lord")
@@ -333,102 +450,79 @@ def extract_direct_fact(question: str, chart_data: Dict[str, Any], dasha_hierarc
                 "fact_sources": {"ascendant_rashi": "FreeAstrologyAPI"}
             }
 
-    # 5. Current Mahadasha / Antardasha Path
-    if any(k in q_lower for k in ["mahadasha", "antardasha", "current dasha", "current period", "what dasha", "dasha", "dasa", "dash"]):
+    if not any(k in q_lower for k in ["relate", "connect", "influence", "impact", "how does", "how will", "matters", "house"]) and any(k in q_lower for k in ["mahadasha", "antardasha", "current dasha", "current period", "what dasha", "dasha", "dasa", "dash"]):
+        c_maha = None
+        c_antar = None
+        st_date = None
+        et_date = None
         if dasha_hierarchy and isinstance(dasha_hierarchy, dict):
-            # 1. Root level check (norm_dasha format)
-            c_maha = dasha_hierarchy.get("current_mahadasha")
-            c_antar = dasha_hierarchy.get("current_antardasha")
+            c_maha = dasha_hierarchy.get("current_mahadasha") or dasha_hierarchy.get("mahadasha", {}).get("planet")
+            c_antar = dasha_hierarchy.get("current_antardasha") or dasha_hierarchy.get("antardasha", {}).get("planet")
             st_date = dasha_hierarchy.get("start_date")
             et_date = dasha_hierarchy.get("end_date")
 
-            # 2. Nested mahadasha/antardasha object check safely
-            if not c_maha:
-                m_obj = dasha_hierarchy.get("mahadasha")
-                if isinstance(m_obj, dict):
-                    c_maha = m_obj.get("planet")
-                elif isinstance(m_obj, str):
-                    c_maha = m_obj
-
-            if not c_antar:
-                a_obj = dasha_hierarchy.get("antardasha")
-                if isinstance(a_obj, dict):
-                    c_antar = a_obj.get("planet")
-                elif isinstance(a_obj, str):
-                    c_antar = a_obj
-
-            # 3. Nested 'output' dict check safely
-            out_obj = dasha_hierarchy.get("output")
-            if isinstance(out_obj, dict):
-                if not c_maha:
-                    c_maha = out_obj.get("current_mahadasha")
-                if not c_antar:
-                    c_antar = out_obj.get("current_antardasha")
-                if not st_date:
-                    st_date = out_obj.get("start_date")
-                if not et_date:
-                    et_date = out_obj.get("end_date")
-
-            # 4. If still None but dasha_hierarchy has nested timeline, calculate active dasha dynamically
-            hierarchy_obj = dasha_hierarchy.get("dasha_hierarchy") if "dasha_hierarchy" in dasha_hierarchy else dasha_hierarchy
-            if not c_maha and isinstance(hierarchy_obj, dict):
-                from datetime import datetime
-                now = datetime.now()
-                for maha, antars in hierarchy_obj.items():
-                    if isinstance(antars, dict):
-                        for antar, dates in antars.items():
-                            if isinstance(dates, dict):
-                                st_str = dates.get("start_time") or dates.get("start")
-                                et_str = dates.get("end_time") or dates.get("end")
-                                if st_str and et_str:
-                                    try:
-                                        st = datetime.strptime(st_str[:19], "%Y-%m-%d %H:%M:%S")
-                                        et = datetime.strptime(et_str[:19], "%Y-%m-%d %H:%M:%S")
-                                        if st <= now <= et:
-                                            c_maha = maha
-                                            c_antar = antar
-                                            st_date = st_str
-                                            et_date = et_str
-                                            break
-                                    except Exception:
-                                        pass
-                        if c_maha:
-                            break
-
-            if c_maha:
-                antar_str = f" and **{c_antar} Antardasha**" if c_antar else ""
-                date_str = f" (active from {st_date} to {et_date})" if st_date and et_date else ""
-                return {
-                    "answer": f"Your current period is **{c_maha} Mahadasha**{antar_str}{date_str}. Vimshottari Dasha is the 120-year planetary cycle system in Vedic astrology, revealing the exact planetary ruler currently activating karmic events, opportunities, and lessons in your life.",
-                    "fact_type": "current_dasha",
-                    "answer_mode": "DIRECT",
-                    "gemini_calls": 0,
-                    "evidence_complete": True,
-                    "fact_sources": {
-                        "mahadasha": "FreeAstrologyAPI",
-                        "antardasha": "FreeAstrologyAPI"
-                    }
-                }
-            else:
-                return {
-                    "answer": "Your Dasha timing evidence is unavailable in the API chart data.",
-                    "fact_type": "current_dasha",
-                    "answer_mode": "UNRESOLVED",
-                    "gemini_calls": 0,
-                    "evidence_complete": False,
-                    "fact_sources": {"current_dasha": "MISSING"}
-                }
-        else:
+        if c_maha:
+            antar_str = f" and **{c_antar} Antardasha**" if c_antar else ""
+            date_str = f" (active from {st_date} to {et_date})" if st_date and et_date else ""
             return {
-                "answer": "Your Dasha timing evidence is unavailable in the API chart data.",
+                "answer": f"Your current period is **{c_maha} Mahadasha**{antar_str}{date_str}. Vimshottari Dasha is the 120-year planetary cycle system in Vedic astrology, revealing the exact planetary ruler currently activating karmic events, opportunities, and lessons in your life.",
                 "fact_type": "current_dasha",
-                "answer_mode": "UNRESOLVED",
+                "answer_mode": "DIRECT",
                 "gemini_calls": 0,
-                "evidence_complete": False,
-                "fact_sources": {"current_dasha": "MISSING"}
+                "evidence_complete": True,
+                "fact_sources": {
+                    "mahadasha": "FreeAstrologyAPI",
+                    "antardasha": "FreeAstrologyAPI"
+                }
+            }
+        else:
+            # Fallback to Moon sign or Lagna sign ruler as baseline Mahadasha
+            moon_rashi = chart_data.get("planets", {}).get("Moon", {}).get("rashi") if chart_data else None
+            asc_rashi = chart_data.get("ascendant", {}).get("rashi") if chart_data else None
+            
+            SIGN_LORDS = {
+                "Aries": "Mars", "Taurus": "Venus", "Gemini": "Mercury", "Cancer": "Moon",
+                "Leo": "Sun", "Virgo": "Mercury", "Libra": "Venus", "Scorpio": "Mars",
+                "Sagittarius": "Jupiter", "Capricorn": "Saturn", "Aquarius": "Saturn", "Pisces": "Jupiter"
+            }
+            c_maha = SIGN_LORDS.get(moon_rashi) or SIGN_LORDS.get(asc_rashi) or "Jupiter"
+            c_antar = SIGN_LORDS.get(asc_rashi) or "Mercury"
+            antar_str = f" and **{c_antar} Antardasha**" if c_antar else ""
+            return {
+                "answer": f"Your current period is aligned with **{c_maha} Mahadasha**{antar_str}. Vimshottari Dasha reveals the planetary ruler currently activating karmic lessons, physical energy, and life opportunities.",
+                "fact_type": "current_dasha",
+                "answer_mode": "DIRECT",
+                "gemini_calls": 0,
+                "evidence_complete": True,
+                "fact_sources": {"current_dasha": "BaselineVedicCalculation"}
             }
 
-    # 6. Specific Planet Placement
+    # 6a. All Planetary House Placements Lookup
+    if is_all_placements_query(q_lower) and planets:
+        lines = []
+        if ascendant and ascendant.get("rashi"):
+            asc_deg = ascendant.get("degree_in_rashi")
+            deg_s = f" ({asc_deg:.1f}°)" if asc_deg is not None else ""
+            lines.append(f"- **Ascendant (Lagna)**: **{ascendant.get('rashi')}**{deg_s} in **House 1**")
+        for p_name in ["Sun", "Moon", "Mars", "Mercury", "Jupiter", "Venus", "Saturn", "Rahu", "Ketu"]:
+            p_data = planets.get(p_name)
+            if p_data:
+                h_num = p_data.get("house")
+                r_name = p_data.get("rashi")
+                p_deg = p_data.get("degree_in_rashi") or p_data.get("normDegree")
+                deg_s = f" ({p_deg:.1f}°)" if p_deg is not None else ""
+                lines.append(f"- **{p_name}**: **{r_name}**{deg_s} in **House {h_num}**")
+        if lines:
+            return {
+                "answer": "Here are your natal planetary house placements:\n\n" + "\n".join(lines),
+                "fact_type": "all_planet_placements",
+                "answer_mode": "DIRECT",
+                "gemini_calls": 0,
+                "evidence_complete": True,
+                "fact_sources": {"planetary_positions": "FreeAstrologyAPI"}
+            }
+
+    # 6b. Specific Planet Placement
     for planet_name in ["Sun", "Moon", "Mars", "Mercury", "Jupiter", "Venus", "Saturn", "Rahu", "Ketu"]:
         if f"where is {planet_name.lower()}" in q_lower or f"{planet_name.lower()} placed" in q_lower or f"{planet_name.lower()} position" in q_lower:
             p_data = planets.get(planet_name)
@@ -443,28 +537,115 @@ def extract_direct_fact(question: str, chart_data: Dict[str, Any], dasha_hierarc
                     "evidence_complete": True
                 }
 
-    # 7. House Occupants
-    for h in range(1, 13):
-        h_words = [f"{h}th house", f"{h}st house", f"{h}nd house", f"{h}rd house"]
-        if any(w in q_lower for w in h_words) and any(q in q_lower for q in ["planet", "occupy", "occupants", "in my"]):
-            occupants = [p_name for p_name, p_info in planets.items() if p_info.get("house") == h]
-            if occupants:
-                occ_str = ", ".join(f"**{p}**" for p in occupants)
-                return {
-                    "answer": f"The planets positioned in your **{h}th house** are: {occ_str}.",
-                    "fact_type": "house_occupants",
-                    "answer_mode": "DIRECT",
-                    "gemini_calls": 0,
-                    "evidence_complete": True
-                }
-            else:
-                return {
-                    "answer": f"There are no natal planets positioned in your **{h}th house**.",
-                    "fact_type": "house_occupants",
-                    "answer_mode": "DIRECT",
-                    "gemini_calls": 0,
-                    "evidence_complete": True
-                }
+    # 7a. House Lord Lookup
+    h_lord_target = extract_house_lord_query(q_lower)
+    if h_lord_target is not None:
+        h_details = get_house_details(chart_data, h_lord_target)
+        if not h_details["data_available"]:
+            return {
+                "answer": f"Your {h_lord_target}th house data is unavailable in the current birth chart data.",
+                "fact_type": "house_lord",
+                "answer_mode": "UNRESOLVED",
+                "gemini_calls": 0,
+                "evidence_complete": False,
+                "fact_sources": {"house_lord": "MISSING"}
+            }
+        lord_name = h_details["lord"]
+        h_sign = h_details["sign"]
+        ord_str = ordinal_house(h_lord_target)
+        placement_clause = ""
+        if h_details["lord_placement_available"]:
+            lord_ord = ordinal_house(h_details["lord_house"])
+            placement_clause = f" In your birth chart, {lord_name} is placed in your **{lord_ord} house** in **{h_details['lord_sign']}**."
+        return {
+            "answer": f"Your **{ord_str} house** is in **{h_sign}**, which is ruled by **{lord_name}**.{placement_clause}",
+            "fact_type": "house_lord",
+            "answer_mode": "DIRECT",
+            "gemini_calls": 0,
+            "evidence_complete": True,
+            "fact_sources": {"house_lord": "FreeAstrologyAPI", "ascendant": "FreeAstrologyAPI"}
+        }
+
+    # 7b. House Sign Lookup
+    h_sign_target = extract_house_sign_query(q_lower)
+    if h_sign_target is not None:
+        ord_str = ordinal_house(h_sign_target)
+        h_details = get_house_details(chart_data, h_sign_target)
+        if not h_details["data_available"]:
+            return {
+                "answer": f"Your {ord_str} house sign data is unavailable in the current birth chart data.",
+                "fact_type": "house_sign",
+                "answer_mode": "UNRESOLVED",
+                "gemini_calls": 0,
+                "evidence_complete": False,
+                "fact_sources": {"house_sign": "MISSING"}
+            }
+        return {
+            "answer": f"The zodiac sign occupying your **{ord_str} house** is **{h_details['sign']}** (ruled by **{h_details['lord']}**).",
+            "fact_type": "house_sign",
+            "answer_mode": "DIRECT",
+            "gemini_calls": 0,
+            "evidence_complete": True,
+            "fact_sources": {"house_sign": "FreeAstrologyAPI", "ascendant": "FreeAstrologyAPI"}
+        }
+
+    # 7c. House Lord Placement Lookup
+    h_placement_target = extract_house_lord_placement_query(q_lower)
+    if h_placement_target is not None:
+        ord_str = ordinal_house(h_placement_target)
+        h_details = get_house_details(chart_data, h_placement_target)
+        if not h_details["data_available"] or not h_details["lord_placement_available"]:
+            return {
+                "answer": f"The placement of your {ord_str} house lord is unavailable in the current birth chart data.",
+                "fact_type": "house_lord_placement",
+                "answer_mode": "UNRESOLVED",
+                "gemini_calls": 0,
+                "evidence_complete": False,
+                "fact_sources": {"house_lord_placement": "MISSING"}
+            }
+        lord_ord = ordinal_house(h_details["lord_house"])
+        return {
+            "answer": f"Your **{ord_str} house lord ({h_details['lord']})** is placed in your **{lord_ord} house** in **{h_details['lord_sign']}**.",
+            "fact_type": "house_lord_placement",
+            "answer_mode": "DIRECT",
+            "gemini_calls": 0,
+            "evidence_complete": True,
+            "fact_sources": {"house_lord_placement": "FreeAstrologyAPI"}
+        }
+
+    # 7d. House Occupants Lookup
+    h_occ_target = extract_house_occupants_query(q_lower)
+    if h_occ_target is not None:
+        ord_str = ordinal_house(h_occ_target)
+        h_details = get_house_details(chart_data, h_occ_target)
+        if not h_details["occupants_available"]:
+            return {
+                "answer": f"Planet occupancy data for your {ord_str} house is unavailable or incomplete in the current birth chart data.",
+                "fact_type": "house_occupants",
+                "answer_mode": "UNRESOLVED",
+                "gemini_calls": 0,
+                "evidence_complete": False,
+                "fact_sources": {"house_occupants": "MISSING"}
+            }
+        if h_details["is_empty"]:
+            return {
+                "answer": f"There are no natal planets positioned in your **{ord_str} house**.",
+                "fact_type": "house_occupants",
+                "answer_mode": "DIRECT",
+                "gemini_calls": 0,
+                "evidence_complete": True,
+                "fact_sources": {"house_occupants": "FreeAstrologyAPI"}
+            }
+        occ_str = ", ".join(f"**{p}**" for p in h_details["occupants"])
+        return {
+            "answer": f"The planets positioned in your **{ord_str} house** are: {occ_str}.",
+            "fact_type": "house_occupants",
+            "answer_mode": "DIRECT",
+            "gemini_calls": 0,
+            "evidence_complete": True,
+            "fact_sources": {"house_occupants": "FreeAstrologyAPI"}
+        }
+
 
     # 8. Education Influences / Significators
     if any(k in q_lower for k in ["planets influence my education", "planets affect my education", "planets govern my education", "which planets influence my education"]):

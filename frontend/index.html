@@ -955,10 +955,15 @@
 
   <script>
     // ── Global Configurations & Constants ─────────────────────────
-    const isBackendOrigin = ['8000', '8001'].includes(window.location.port);
-    const BACKEND_ORIGIN = isBackendOrigin
-      ? window.location.origin
-      : 'http://127.0.0.1:8000';
+    const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+    const isBackendPort = ['8000', '8001'].includes(window.location.port);
+    const customBackend = window.__BACKEND_URL__ || localStorage.getItem('astro_backend_url');
+
+    const BACKEND_ORIGIN = customBackend
+      ? customBackend.replace(/\/+$/, '')
+      : (isLocalhost
+          ? (isBackendPort ? window.location.origin : 'http://127.0.0.1:8000')
+          : 'https://astro-ai-chatbot.onrender.com'); // Live Render Backend with full CORS support
     const BACKEND_URL = `${BACKEND_ORIGIN}/chat`;
     
     let USER_ID = localStorage.getItem('astro_user_id') || ('user_' + Math.random().toString(36).substring(2, 9));
@@ -1125,8 +1130,14 @@
       toggleModal('birthModal', false);
       if (landing) landing.style.display = 'none';
       if (chatPage) chatPage.style.display = 'flex';
+
+      // Clear previous chat messages so questions/answers apply to new profile
+      const chatContainer = document.getElementById('chatContainer');
+      if (chatContainer) chatContainer.replaceChildren();
+
       initChatGreeting();
     }
+
 
     function handleKeyPress(e) { if (e.key === 'Enter') sendMessage(); }
     
@@ -1369,9 +1380,14 @@
             const chunk = decoder.decode(value, { stream: true });
             streamText += chunk;
 
-            // Strip [FOLLOW_UPS] metadata from visible bubble
-            const markerIdx = streamText.indexOf('[FOLLOW_UPS]:');
-            const displayText = markerIdx !== -1 ? streamText.slice(0, markerIdx).trim() : streamText;
+            // Strip [FOLLOW_UPS] and [TOKEN_USAGE] metadata from visible bubble
+            let cutIdx = streamText.indexOf('[FOLLOW_UPS]:');
+            const tokenIdx = streamText.indexOf('[TOKEN_USAGE]:');
+            if (tokenIdx !== -1 && (cutIdx === -1 || tokenIdx < cutIdx)) {
+              cutIdx = tokenIdx;
+            }
+            const rawDisplayText = cutIdx !== -1 ? streamText.slice(0, cutIdx).trim() : streamText;
+            const displayText = cleanBotText(rawDisplayText);
 
             if (!botMsgContainer) {
               if (typingIndicator) typingIndicator.remove();
@@ -1425,6 +1441,19 @@
       }
     }
 
+    // ── Helper to format and clean bot responses ───────────────────
+    function cleanBotText(rawText) {
+      if (!rawText || typeof rawText !== 'string') return '';
+      return rawText
+        // 1. Remove provenance prefix [Local Database + LLM: ...], [Local Database], [LLM: ...]
+        .replace(/^\s*\[(?:Local Database(?:\s*\+\s*LLM(?::\s*[^\]]+)?)?|LLM(?::\s*[^\]]+)?|Backend|DIRECT|RULE_BASED|Deterministic[^\]]*|Hybrid[^\]]*|Timing[^\]]*|FAQ[^\]]*)\]\s*/i, '')
+        // 2. Remove calculation footers *[Calculation: ...]* or [Calculation: ...]
+        .replace(/\n*\s*\*?\[Calculation:[^\]]+\]\*?/gi, '')
+        // 3. Remove asterisks (* and **) from text
+        .replace(/\*/g, '')
+        .trim();
+    }
+
     // ── DOM Helper Functions ───────────────────────────────────────
     function appendMessage(text, sender) {
       const container = document.getElementById('chatContainer');
@@ -1435,7 +1464,7 @@
       
       const msg = document.createElement('div'); 
       msg.className = `message ${sender}`; 
-      msg.innerText = text;
+      msg.innerText = (sender === 'bot') ? cleanBotText(text) : text;
 
       const timeDiv = document.createElement('div'); 
       timeDiv.className = 'time'; 

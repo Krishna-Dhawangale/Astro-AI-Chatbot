@@ -136,8 +136,33 @@ def build_structured_evidence(
 
     h7_lord = ZODIAC_LORDS.get(h7_sign, "Jupiter")
 
-    c_maha = (dasha_hierarchy or {}).get("current_mahadasha") or (dasha_hierarchy or {}).get("mahadasha", {}).get("planet", "")
-    c_antar = (dasha_hierarchy or {}).get("current_antardasha") or (dasha_hierarchy or {}).get("antardasha", {}).get("planet", "")
+    d_hier = dasha_hierarchy if isinstance(dasha_hierarchy, dict) else {}
+    c_maha = (
+        d_hier.get("current_mahadasha")
+        or (d_hier.get("mahadasha", {}).get("planet", "") if isinstance(d_hier.get("mahadasha"), dict) else "")
+        or (d_hier.get("output", {}).get("current_mahadasha", "") if isinstance(d_hier.get("output"), dict) else "")
+        or ""
+    )
+    c_antar = (
+        d_hier.get("current_antardasha")
+        or (d_hier.get("antardasha", {}).get("planet", "") if isinstance(d_hier.get("antardasha"), dict) else "")
+        or (d_hier.get("output", {}).get("current_antardasha", "") if isinstance(d_hier.get("output"), dict) else "")
+        or ""
+    )
+
+    if not c_maha and isinstance(stage8_result, dict):
+        d_timing = stage8_result.get("stage_8_20_dasha_timing", {})
+        if isinstance(d_timing, dict):
+            c_maha = d_timing.get("current_mahadasha") or ""
+            c_antar = d_timing.get("current_antardasha") or ""
+            if not c_maha:
+                for w in d_timing.get("current_dasha_windows", []):
+                    if isinstance(w, dict):
+                        lvl = str(w.get("dasha_level", "")).lower()
+                        if lvl == "mahadasha" and not c_maha:
+                            c_maha = w.get("planet", "")
+                        elif lvl == "antardasha" and not c_antar:
+                            c_antar = w.get("planet", "")
 
     # Layer 1: FACTS
     facts = {

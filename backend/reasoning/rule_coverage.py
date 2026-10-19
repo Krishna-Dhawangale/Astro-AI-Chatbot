@@ -39,6 +39,7 @@ CLINICAL_DIAGNOSTIC_PATTERNS = [
 
 # Explicit Intents that HAVE exact local rule coverage in our Stage 8 engine
 EXACT_LOCAL_RULE_INTENTS = {
+    "multi_domain",
     "current_dasha",
     "dasha_career_interaction",
     "dasha_marriage_interaction",
@@ -81,8 +82,14 @@ EXACT_LOCAL_RULE_INTENTS = {
     "lagna_vitality",
     "6th_lord_wellness",
     "12th_house_rest",
-    "dasha_energy"
+    "dasha_energy",
+    "property_general",
+    "property_purchase",
+    "4th_lord_placement",
+    "property_indicators",
+    "property"
 }
+
 
 
 def is_unsupported_boundary_query(question: str) -> bool:
@@ -231,22 +238,53 @@ def evaluate_rule_coverage(
     edu_kws = ["education", "study", "learning", "college", "degree", "higher education", "technical education", "school", "academic", "5th house", "4th house"]
     is_edu_query = dom == "education" or ent.startswith("education") or any(k in q_low for k in edu_kws)
 
+    prop_kws = ["property", "real estate", "house purchase", "buying a house", "purchasing a house", "land", "plot", "conveyance", "vehicle", "flat", "home"]
+    is_prop_query = dom == "property" or ent.startswith("property") or any(k in q_low for k in prop_kws)
+
     intent_match = (
         ent in EXACT_LOCAL_RULE_INTENTS
         or is_health_query
         or is_edu_query
-        or any(k in q_low for k in ["dasha", "mahadasha", "lagna", "10th lord", "7th lord", "2nd lord", "5th house", "10th house", "moon sign", "which career", "technical education", "higher education"])
+        or is_prop_query
+        or any(k in q_low for k in ["dasha", "mahadasha", "lagna", "10th lord", "7th lord", "2nd lord", "4th lord", "5th house", "10th house", "4th house", "moon sign", "which career", "technical education", "higher education"])
     )
 
-    # 3. Task Requirement vs Local Template Capability
-    # Distinguish general domain overview vs comparative, causal delay, or decision dilemmas
-    task = analyze_question_task(question)
-    is_synthesis_gap = task["is_synthesis_gap"]
+    # 3. Exact Rule Match Evaluation
+    # Local rule match requires intent match + active matched rules + complete evidence
+    # AND must NOT be a complex custom/transition query or compound multi-topic request beyond local scope
+    complex_uncovered_keywords = [
+        "transition", "move from", "switch from", "should i change", "explain my overall",
+        "detail about my future", "tell me everything about", "career story", "guidance for my",
+        "product management", "software engineering", "move to", "should i move",
+        "business environment", "approach a career transition", "influence each other",
+        "how should i approach"
+    ]
+    is_complex_uncovered = any(k in q_low for k in complex_uncovered_keywords)
+
+    # Compound multi-topic or multi-request check:
+    # A single Stage 8 rule engine cannot answer when multiple distinct life topics are combined
+    has_loan = any(k in q_low for k in ["loan", "debt", "emi", "mortgage", "borrow", "karz"])
+    has_foreign = any(k in q_low for k in ["foreign", "abroad", "overseas", "relocat", "visa", "settle in"])
+    has_career = any(k in q_low for k in ["career", "job", "business", "promotion", "profession"])
+    has_marriage = any(k in q_low for k in ["marriage", "spouse", "wedding", "husband", "wife", "relationship"])
+    has_property = any(k in q_low for k in ["property", "real estate", "flat", "land", "buying a house", "purchasing a house"])
+    has_finance = any(k in q_low for k in ["income", "gains", "wealth", "invest", "stock"])
+
+    distinct_topics = [t for t, present in [
+        ("loan", has_loan),
+        ("foreign", has_foreign),
+        ("career", has_career),
+        ("marriage", has_marriage),
+        ("property", has_property),
+        ("finance", has_finance),
+    ] if present]
+
+    is_compound_uncovered = len(distinct_topics) >= 2 or any(k in q_low for k in ["should i buy or rent", "better to buy or rent", "will it cause stress"])
 
     exact_rule_match = False
-    if evidence_complete and intent_match and not is_synthesis_gap:
+    if evidence_complete and intent_match and not is_complex_uncovered and not is_compound_uncovered:
         exact_rule_match = True
-    elif evidence_complete and not is_synthesis_gap and ("which career" in q_low or "what is my lagna" in q_low or q_low.strip("?.!") == "my current dasha"):
+    elif evidence_complete and not is_complex_uncovered and not is_compound_uncovered and ("which career" in q_low or "what is my lagna" in q_low or q_low.strip("?.!") == "my current dasha"):
         exact_rule_match = True
 
     if exact_rule_match:
@@ -255,6 +293,10 @@ def evaluate_rule_coverage(
             rules_assigned = ["HEALTH_LAGNA_VITALITY", "HEALTH_6TH_LORD_WELLNESS", "HEALTH_12TH_HOUSE_REST", "HEALTH_DASHA_ENERGY"]
         elif is_edu_query and not rules_assigned:
             rules_assigned = ["EDUCATION_4TH_LORD_PLACEMENT", "EDUCATION_5TH_LORD_PLACEMENT", "EDUCATION_KARAKA_PRESENCE"]
+        elif is_prop_query and not rules_assigned:
+            rules_assigned = ["PROPERTY_4TH_LORD_PLACEMENT", "PROPERTY_KARAKA_MARS", "PROPERTY_KARAKA_VENUS"]
+        elif ent == "multi_domain" and not rules_assigned:
+            rules_assigned = ["MULTI_DOMAIN_RULE_MERGER"]
         return {
             "domain_match": domain_match,
             "intent_match": True,
@@ -266,7 +308,8 @@ def evaluate_rule_coverage(
             "reason": "Exact deterministic rule coverage available for intent"
         }
 
-    # 4. Valid Domain Question but Local Capability Gap (Triggers Tier 3: EVIDENCE_GROUNDED_LLM)
+
+    # 4. Valid Domain Question but No Specific Local Rule (Triggers Tier 3: EVIDENCE_GROUNDED_LLM)
     return {
         "domain_match": domain_match,
         "intent_match": domain_match,

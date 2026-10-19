@@ -1,38 +1,23 @@
-import joblib
-import numpy as np
+import os
+import sys
 
-class IntentRouter:
-    def __init__(self, model_path: str = "astrology_predict_model.pkl"):
-        """
-        Loads the pre-trained Logistic Regression model from the local environment.
-        """
-        try:
-            self.model = joblib.load(model_path)
-            print(f" Loaded model successfully from '{model_path}'")
-        except Exception as e:
-            print(f" Error loading model file '{model_path}': {e}")
-            self.model = None
+# Forward imports to backend.router to ensure absolute consistency
+backend_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "backend")
+if backend_dir not in sys.path:
+    sys.path.insert(0, backend_dir)
 
-    def classify_and_predict(self, query: str, astro_features: list) -> dict:
-        """
-        Runs prediction using the trained model on incoming chart features.
-        """
-        if self.model is None:
-            return {"predicted_domain": "general", "confidence_score": 0.0}
+from backend.router import (
+    DOMAIN_KEYWORDS,
+    OUT_OF_SCOPE_RESPONSE,
+    IntentRouter,
+    is_astrology_query,
+    validate_astrology_domain,
+)
 
-        # Convert features to 2D numpy array for scikit-learn
-        feature_vector = np.array(astro_features).reshape(1, -1)
-        
-        # Predict class and probability
-        prediction = self.model.predict(feature_vector)[0]
-        
-        if hasattr(self.model, "predict_proba"):
-            probabilities = self.model.predict_proba(feature_vector)[0]
-            confidence = float(np.max(probabilities))
-        else:
-            confidence = 1.0
-
-        return {
-            "predicted_domain": str(prediction),
-            "confidence_score": confidence
-        }
+__all__ = [
+    "DOMAIN_KEYWORDS",
+    "OUT_OF_SCOPE_RESPONSE",
+    "IntentRouter",
+    "is_astrology_query",
+    "validate_astrology_domain",
+]
