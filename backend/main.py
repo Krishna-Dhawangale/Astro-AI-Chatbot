@@ -2452,12 +2452,14 @@ def get_chart_from_api(req: BirthDetailsRequest) -> Tuple[List[int], Dict[str, A
             logger.error("Local ephemeris calculation failed: %s; using default features", local_err)
             features = [2, 8, 2, 10, 8, 0, 7, 0, 3, 9]
 
+        asc_idx = features[0] % 12 if features else 0
         api_response = {
             "statusCode": 200,
             "output": {
                 name: {
                     "zodiac_sign_name": ZODIAC_SIGNS[features[i] % 12],
                     "current_sign": (features[i] % 12) + 1,
+                    "house_number": ((features[i] % 12 - asc_idx) % 12) + 1,
                 }
                 for i, name in enumerate([
                     "Ascendant", "Sun", "Moon", "Mars", "Mercury",
@@ -2906,7 +2908,21 @@ async def _handle_chat_response(request: ChatRequest, session_id: Optional[str] 
     except Exception as e:
         logger.warning("Error obtaining chart features: %s; using local defaults", e)
         astro_features = [2, 8, 2, 10, 8, 0, 7, 0, 3, 9]
-        _api_chart_data = {}
+        fallback_asc_idx = astro_features[0] % 12
+        _api_chart_data = {
+            "statusCode": 200,
+            "output": {
+                name: {
+                    "zodiac_sign_name": ZODIAC_SIGNS[astro_features[i] % 12],
+                    "current_sign": (astro_features[i] % 12) + 1,
+                    "house_number": ((astro_features[i] % 12 - fallback_asc_idx) % 12) + 1,
+                }
+                for i, name in enumerate([
+                    "Ascendant", "Sun", "Moon", "Mars", "Mercury",
+                    "Jupiter", "Venus", "Saturn", "Rahu", "Ketu"
+                ])
+            }
+        }
 
     asc_sign = ZODIAC_SIGNS[int(astro_features[0]) % 12] if len(astro_features) > 0 else "Aries"
     sun_sign = ZODIAC_SIGNS[int(astro_features[1]) % 12] if len(astro_features) > 1 else "Taurus"
@@ -3082,7 +3098,8 @@ async def _handle_chat_response(request: ChatRequest, session_id: Optional[str] 
     q_lower = normalized_query.lower()
     is_direct_dasha_q = (
         any(k in q_lower for k in ["what is my dasha", "what is my current dasha", "my current dasha", "current dasha", "my mahadasha", "what is my mahadasha", "current antardasha", "my dasha", "active dasha"])
-    ) and not any(ck in q_lower for ck in ["career", "job", "work", "move from", "transition", "should i", "marriage", "marry", "finance"])
+        or (q_lower.strip("?.!") in ["my current dasha", "what is my dasha", "my dasha"])
+    ) and not any(ck in q_lower for ck in ["career", "job", "work", "move from", "transition", "should i", "marriage", "marry", "finance", "relate", "house", "5th", "how does"])
 
     if is_direct_dasha_q and resolved_intent != "multi_domain":
         try:

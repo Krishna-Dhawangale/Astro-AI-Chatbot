@@ -404,16 +404,21 @@ async def _stream_gemini(
         max_output_tokens=max_tokens,
     )
 
-    response_stream = await client.aio.models.generate_content_stream(
-        model=model,
-        contents=prompt,
-        config=config,
-    )
-
-    async for chunk in response_stream:
-        chunk_text = getattr(chunk, "text", None)
-        if chunk_text:
-            yield chunk_text
+    try:
+        response_stream = await asyncio.wait_for(
+            client.aio.models.generate_content_stream(
+                model=model,
+                contents=prompt,
+                config=config,
+            ),
+            timeout=8.0
+        )
+        async for chunk in response_stream:
+            chunk_text = getattr(chunk, "text", None)
+            if chunk_text:
+                yield chunk_text
+    except asyncio.TimeoutError:
+        raise TimeoutError(f"Gemini streaming timed out after 8s for model {model}")
 
 
 # ---------------------------------------------------------------------------
