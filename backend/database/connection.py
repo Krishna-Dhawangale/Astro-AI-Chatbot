@@ -3,7 +3,7 @@ import os
 import re
 import traceback
 from typing import Any, AsyncGenerator, Dict, Tuple
-from urllib.parse import quote_plus, unquote
+from urllib.parse import parse_qsl, quote_plus, unquote, urlencode, urlparse, urlunparse
 
 from dotenv import load_dotenv
 from sqlalchemy.ext.asyncio import (
@@ -75,11 +75,15 @@ def normalize_database_url(url: str) -> Tuple[str, Dict[str, Any]]:
         or os.getenv("ENVIRONMENT") == "production"
     )
 
-    # asyncpg dialect does not accept 'sslmode' query param directly in URL
-    if "sslmode=" in normalized:
-        normalized = re.sub(r"[\?&]sslmode=[^&]+", "", normalized)
-        if "?" not in normalized and "&" in normalized:
-            normalized = normalized.replace("&", "?", 1)
+    # 4. Fix for asyncpg: Remove unsupported query parameters like channel_binding and sslmode
+    if "channel_binding" in normalized or "sslmode" in normalized:
+        parsed = urlparse(normalized)
+        if parsed.query:
+            query_params = dict(parse_qsl(parsed.query))
+            query_params.pop("channel_binding", None)
+            query_params.pop("sslmode", None)
+            parsed = parsed._replace(query=urlencode(query_params))
+            normalized = urlunparse(parsed)
 
     if requires_ssl:
         connect_args["ssl"] = "require"
@@ -89,6 +93,14 @@ def normalize_database_url(url: str) -> Tuple[str, Dict[str, Any]]:
 
 RAW_DATABASE_URL = os.getenv("DATABASE_URL", DEFAULT_DATABASE_URL)
 DATABASE_URL, CONNECT_ARGS = normalize_database_url(RAW_DATABASE_URL)
+
+# Fix for asyncpg: Remove unsupported query parameters like channel_binding if present
+if "channel_binding" in DATABASE_URL:
+    parsed = urlparse(DATABASE_URL)
+    query_params = dict(parse_qsl(parsed.query))
+    query_params.pop("channel_binding", None)
+    parsed = parsed._replace(query=urlencode(query_params))
+    DATABASE_URL = urlunparse(parsed)
 
 engine: AsyncEngine = create_async_engine(
     DATABASE_URL,
