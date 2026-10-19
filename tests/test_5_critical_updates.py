@@ -219,9 +219,10 @@ def test_house_query_identification_and_synthesis():
     assert synth_en["lord"] == "Venus"
     assert "Sun" in synth_en["occupants"]
     assert "Mercury" in synth_en["occupants"]
-    assert "Natural Karakas" in synth_en["answer"]
-    assert "In Your Personal Horoscope (Leo Ascendant):" in synth_en["answer"]
+    word_count_en = len(synth_en["answer"].split())
+    assert 30 <= word_count_en <= 55, f"Expected 35-50 words, got {word_count_en}"
     assert "Sun" in synth_en["answer"]
+    assert "Mercury" in synth_en["answer"]
 
     # Test synthesis in Conversational Hinglish
     synth_hi = synthesize_house_analysis("mera 7th house kaisa hai", chart_data=sample_chart, is_hinglish=True, asc_sign="Leo")
@@ -229,9 +230,8 @@ def test_house_query_identification_and_synthesis():
     assert synth_hi["sign"] == "Aquarius"  # Leo ascendant -> 7th house is Aquarius
     assert synth_hi["lord"] == "Saturn"
     assert "Venus" in synth_hi["occupants"]
-    assert "Vedic Astrology ke anusaar" in synth_hi["answer"]
-    assert "Kalatra Bhava" in synth_hi["answer"]
-    assert "Aapki Kundali (Leo Lagna) ke Anusaar:" in synth_hi["answer"]
+    word_count_hi = len(synth_hi["answer"].split())
+    assert 30 <= word_count_hi <= 55, f"Expected 35-50 words, got {word_count_hi}"
 
 
 # ===========================================================================

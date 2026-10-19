@@ -280,6 +280,39 @@ def build_compact_evidence_package(
                     else:
                         verified_facts[f"{h}H_occupants"] = "None (empty)"
 
+    # Dynamic Natural Karakas when relevant domain or houses are present
+    if 4 in target_houses or dom == "property":
+        mars_data = planets.get("Mars", {}) if isinstance(planets, dict) else {}
+        if isinstance(mars_data, dict) and mars_data.get("house"):
+            verified_facts["Mars_Property_Karaka"] = f"{mars_data.get('rashi', '')}@{mars_data.get('house')}H"
+
+    if 7 in target_houses or dom == "marriage":
+        ven_data = planets.get("Venus", {}) if isinstance(planets, dict) else {}
+        if isinstance(ven_data, dict) and ven_data.get("house"):
+            verified_facts["Venus_Marriage_Karaka"] = f"Venus@{ven_data.get('house')}H"
+
+    if 11 in target_houses or any(k in q_low for k in ["gain", "income", "profit"]):
+        jup_data = planets.get("Jupiter", {}) if isinstance(planets, dict) else {}
+        if isinstance(jup_data, dict) and jup_data.get("house"):
+            verified_facts["Jupiter_Gains_Karaka"] = f"{jup_data.get('rashi', '')}@{jup_data.get('house')}H"
+
+    if 2 in target_houses or dom == "finance":
+        jup_data = planets.get("Jupiter", {}) if isinstance(planets, dict) else {}
+        if isinstance(jup_data, dict) and jup_data.get("house"):
+            verified_facts["Jupiter_Wealth_Karaka"] = f"Jupiter@{jup_data.get('house')}H"
+
+    if 5 in target_houses or dom == "education" or any(k in q_low for k in ["education", "intellect", "study"]):
+        merc_data = planets.get("Mercury", {}) if isinstance(planets, dict) else {}
+        if isinstance(merc_data, dict) and merc_data.get("house"):
+            verified_facts["Mercury_Intellect_Karaka"] = f"Mercury@{merc_data.get('house')}H"
+
+    # Domain aliases for loan/debt queries
+    if 6 in target_houses and (any(k in q_low for k in ["loan", "debt", "borrow", "emi"]) or "6H" in verified_facts):
+        if "6H" in verified_facts:
+            verified_facts["6H_Loan"] = verified_facts["6H"]
+        if "6L" in verified_facts:
+            verified_facts["6L_Loan"] = verified_facts["6L"]
+
     # 5. Extract active Dasha period from live runtime hierarchy
     d_src = dasha_hierarchy or (chart_data.get("dasha_hierarchy") if isinstance(chart_data, dict) else None) or (chart_data.get("dasha") if isinstance(chart_data, dict) else None)
     if isinstance(d_src, dict):
