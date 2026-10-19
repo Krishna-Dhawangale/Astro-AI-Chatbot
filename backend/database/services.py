@@ -378,18 +378,23 @@ async def log_chat_interaction(
 
         # 3. Normalize execution mode & error locking flags
         raw_mode = (execution_mode or "").upper().strip()
-        valid_modes = {"LOCAL", "HYBRID", "LLM", "UNRESOLVED", "CRASH_FALLBACK"}
+        valid_modes = {"LOCAL", "HYBRID", "LLM", "UNRESOLVED", "CRASH_FALLBACK", "UNRESOLVED_INTENT"}
 
         unresolved_flag = bool(is_unresolved)
 
-        if raw_mode == "CRASH_FALLBACK":
+        if raw_mode == "UNRESOLVED_INTENT":
+            norm_mode = "UNRESOLVED_INTENT"
+            unresolved_flag = True
+        elif raw_mode == "CRASH_FALLBACK":
             norm_mode = "CRASH_FALLBACK"
             unresolved_flag = True
-        elif raw_mode == "UNRESOLVED" or unresolved_flag:
+        elif raw_mode == "UNRESOLVED":
             norm_mode = "UNRESOLVED"
             unresolved_flag = True
         elif raw_mode in valid_modes:
             norm_mode = raw_mode
+        elif unresolved_flag:
+            norm_mode = "UNRESOLVED"
         else:
             if any(k in raw_mode for k in ["HYBRID", "SYNTHESIS"]):
                 norm_mode = "HYBRID"
@@ -397,6 +402,9 @@ async def log_chat_interaction(
                 norm_mode = "LLM"
             elif any(k in raw_mode for k in ["CRASH", "FAIL"]):
                 norm_mode = "CRASH_FALLBACK"
+                unresolved_flag = True
+            elif any(k in raw_mode for k in ["INTENT", "OUT_OF_SCOPE"]):
+                norm_mode = "UNRESOLVED_INTENT"
                 unresolved_flag = True
             else:
                 norm_mode = "LOCAL"
@@ -420,6 +428,7 @@ async def log_chat_interaction(
             input_tokens=max(0, int(input_tokens or 0)),
             output_tokens=max(0, int(output_tokens or 0)),
             calculation_footer=calculation_footer,
+            timestamp=datetime.datetime.now(datetime.timezone.utc),
         )
         session.add(message)
         await session.commit()
@@ -444,6 +453,56 @@ async def log_chat_interaction(
         err_trace = traceback.format_exc()
         print(f"[RENDER DATABASE ERROR] Failed to log interaction to Neon DB: {exc}\n{err_trace}", flush=True)
         logger.error("[RENDER DATABASE ERROR] Failed to log interaction to Neon DB: %s", exc, exc_info=True)
+        return None
+
+
+async def log_unresolved_intent(
+    session_id: Union[str, uuid.UUID],
+    user_query: str,
+    bot_response: str = "Please share an appropriate question so I can assist you better with your astrology query.",
+    db: Optional[AsyncSession] = None,
+) -> Optional[ChatMessage]:
+    """
+    High-visibility logging to stdout and Neon PostgreSQL persistence for unhandled,
+    low-confidence, or out-of-scope intents that trigger a fallback response.
+
+    Invariants:
+    1. High-visibility warning to Render stdout via Python logger.
+    2. Inserts into `chat_messages` table with execution_mode='UNRESOLVED_INTENT',
+       is_unresolved=True, and timestamp=UTC now.
+    3. Non-blocking error handling: guarantees the API response to the client is never broken.
+    """
+    logger.warning(
+        "\n%s\n[UNRESOLVED INTENT WARNING]\n"
+        "Session ID   : %s\n"
+        "User Query   : %s\n"
+        "Bot Response : %s\n"
+        "Execution Mode: UNRESOLVED_INTENT\n%s",
+        "=" * 65,
+        session_id,
+        user_query,
+        bot_response,
+        "=" * 65,
+    )
+    print(
+        f"[UNRESOLVED INTENT WARNING] Session={session_id} | Query='{user_query}' | ExecutionMode=UNRESOLVED_INTENT",
+        flush=True,
+    )
+
+    try:
+        return await log_chat_interaction(
+            session_id=session_id,
+            user_query=user_query,
+            bot_response=bot_response,
+            execution_mode="UNRESOLVED_INTENT",
+            is_unresolved=True,
+            detected_intents=["unresolved_intent"],
+            db=db,
+        )
+    except Exception as exc:
+        err_trace = traceback.format_exc()
+        logger.error("[DATABASE] Failed to log unresolved intent to Neon: %s\n%s", exc, err_trace)
+        print(f"[RENDER DATABASE ERROR] Failed to log unresolved intent: {exc}", flush=True)
         return None
 
 

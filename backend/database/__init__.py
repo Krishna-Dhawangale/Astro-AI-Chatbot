@@ -10,6 +10,7 @@ try:
     )
     from backend.database.services import (
         log_chat_interaction,
+        log_unresolved_intent,
         get_unresolved_queries,
         mark_query_resolved,
         get_or_create_user,
@@ -29,6 +30,7 @@ except ImportError:
     )
     from database.services import (
         log_chat_interaction,
+        log_unresolved_intent,
         get_unresolved_queries,
         mark_query_resolved,
         get_or_create_user,
@@ -49,6 +51,7 @@ __all__ = [
     "init_db",
     "close_db",
     "log_chat_interaction",
+    "log_unresolved_intent",
     "get_unresolved_queries",
     "mark_query_resolved",
     "get_or_create_user",

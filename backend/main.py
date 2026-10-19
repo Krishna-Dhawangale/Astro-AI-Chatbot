@@ -34,6 +34,7 @@ try:
         close_db,
         get_db,
         log_chat_interaction,
+        log_unresolved_intent,
         get_unresolved_queries,
         mark_query_resolved,
         get_user_birth_details_from_db,
@@ -44,6 +45,7 @@ except ImportError:
         close_db,
         get_db,
         log_chat_interaction,
+        log_unresolved_intent,
         get_unresolved_queries,
         mark_query_resolved,
         get_user_birth_details_from_db,
@@ -2965,7 +2967,7 @@ async def _handle_chat_response(request: ChatRequest, session_id: Optional[str] 
         )
         return JSONResponse(content={
             "answer": label_answer_source(rejection_text, "OUT_OF_SCOPE"),
-            "answer_mode": "UNSUPPORTED",
+            "answer_mode": "UNRESOLVED_INTENT",
             "answer_source": "OUT_OF_SCOPE_PREFILTER",
             "intent": "out_of_scope",
             "detected_intents": ["out_of_scope"],
@@ -2973,6 +2975,7 @@ async def _handle_chat_response(request: ChatRequest, session_id: Optional[str] 
             "gemini_calls": 0,
             "evidence_ids": [],
             "related_questions": fallback_related_questions(["general"], request.query),
+            "is_unresolved": True,
             "source": "unsupported",
         })
 
@@ -3131,16 +3134,43 @@ async def _handle_chat_response(request: ChatRequest, session_id: Optional[str] 
     complexity = route_info.get("complexity", "needs_chart")
     intent = resolved_intent
 
-    # Log raw vs resolved intent metadata clearly
-    logger.info(
-        "\n[INTENT LOG]\n"
-        "QUESTION: %s\n"
-        "RAW INTENT: %s\n"
-        "RAW CONFIDENCE: %.4f\n"
-        "RESOLVED INTENT: %s\n"
-        "RESOLUTION REASON: %s",
-        request.query, raw_intent, raw_confidence, resolved_intent, resolution_reason
-    )
+    # Fallback and unhandled intent tracking: if intent classification fails or is unknown
+    if resolved_intent in ("unknown", "unresolved") or raw_intent == "unknown":
+        fallback_msg = "Please share an appropriate question so I can assist you better with your astrology query."
+        logger.warning(
+            "\n%s\n[UNRESOLVED INTENT WARNING]\n"
+            "Session ID   : %s\n"
+            "User Query   : %s\n"
+            "Bot Response : %s\n"
+            "Execution Mode: UNRESOLVED_INTENT\n"
+            "Raw Intent   : %s (Confidence: %.4f)\n%s",
+            "=" * 65,
+            session_id,
+            request.query,
+            fallback_msg,
+            raw_intent,
+            raw_confidence,
+            "=" * 65,
+        )
+        USER_SESSIONS[request.user_id]["history"].append({"role": "user", "content": request.query})
+        USER_SESSIONS[request.user_id]["history"].append({"role": "assistant", "content": fallback_msg})
+        return JSONResponse(content={
+            "answer": fallback_msg,
+            "answer_mode": "UNRESOLVED_INTENT",
+            "answer_source": "INTENT_FALLBACK",
+            "intent": "unresolved_intent",
+            "detected_intents": ["unresolved_intent"],
+            "evidence_complete": False,
+            "gemini_calls": 0,
+            "evidence_ids": [],
+            "related_questions": [
+                "What is my Moon sign?",
+                "What does my 7th house signify?",
+                "When will I get a job promotion?"
+            ],
+            "is_unresolved": True,
+            "source": "fallback",
+        })
 
     try:
         dasha_data = await run_in_threadpool(fetch_dasha_details_external, birth_details)
@@ -4280,10 +4310,10 @@ async def _handle_chat(
     if is_garbage:
         refusal_content = {
             "answer": GARBAGE_REFUSAL_MESSAGE,
-            "answer_mode": "REFUSAL",
+            "answer_mode": "UNRESOLVED_INTENT",
             "answer_source": "INPUT_SANITIZER",
-            "intent": "garbage_input",
-            "detected_intents": ["garbage_input"],
+            "intent": "unresolved_intent",
+            "detected_intents": ["unresolved_intent"],
             "evidence_complete": False,
             "gemini_calls": 0,
             "evidence_ids": [],
@@ -4292,25 +4322,20 @@ async def _handle_chat(
                 "What does the 7th house signify?",
                 "When will I get a job promotion?"
             ],
+            "is_unresolved": True,
             "source": "sanitization_guardrail",
         }
         resp = JSONResponse(status_code=200, content=refusal_content)
         if token_to_set:
             attach_session_cookie(resp, token_to_set)
         try:
-            await log_chat_interaction(
+            await log_unresolved_intent(
                 session_id=session_id,
                 user_query=request.query,
                 bot_response=GARBAGE_REFUSAL_MESSAGE,
-                execution_mode="UNRESOLVED",
-                detected_intents=["garbage_input"],
-                input_tokens=0,
-                output_tokens=0,
-                is_unresolved=True,
-                user_id=session_id,
             )
         except Exception as log_err:
-            logger.warning("[DATABASE] Failed to log garbage rejection: %s", log_err)
+            logger.warning("[DATABASE] Failed to log unresolved intent: %s", log_err)
         return resp
 
     # Intra-process concurrency safety: atomic history seeding
@@ -4378,14 +4403,29 @@ async def _handle_chat(
             is_unres = (
                 status_code >= 400
                 or "error" in resp_dict
-                or resp_dict.get("answer_mode") in ("UNSUPPORTED", "CRASH_FALLBACK")
+                or resp_dict.get("answer_mode") in ("UNSUPPORTED", "CRASH_FALLBACK", "UNRESOLVED_INTENT")
                 or resp_dict.get("is_unresolved") is True
                 or "Sorry, I couldn't generate a response" in str(bot_text)
+                or "Please share an appropriate question" in str(bot_text)
             )
 
             if is_unres:
                 if resp_dict.get("answer_mode") == "CRASH_FALLBACK":
                     exec_mode = "CRASH_FALLBACK"
+                elif resp_dict.get("answer_mode") == "UNRESOLVED_INTENT" or "Please share an appropriate question" in str(bot_text):
+                    exec_mode = "UNRESOLVED_INTENT"
+                    logger.warning(
+                        "\n%s\n[UNRESOLVED INTENT WARNING]\n"
+                        "Session ID    : %s\n"
+                        "User Query    : %s\n"
+                        "Bot Response  : %s\n"
+                        "Execution Mode: UNRESOLVED_INTENT\n%s",
+                        "=" * 65,
+                        session_id,
+                        request.query,
+                        bot_text,
+                        "=" * 65,
+                    )
                 else:
                     exec_mode = "UNRESOLVED"
             else:
