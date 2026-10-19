@@ -348,7 +348,8 @@ def extract_house_number(query: str) -> Optional[int]:
 def is_complex_astrological_query(query: str) -> bool:
     """
     Returns True if the query involves Dasha timing, career decisions,
-    business comparisons, relocation, financial trade-offs, or feasibility advisory.
+    business comparisons, work-life balance, relocation, financial trade-offs,
+    or feasibility advisory.
     These must be routed through the full reasoning pipeline / LLM rather than
     intercepted by the local factual house engine.
     """
@@ -372,7 +373,8 @@ def is_complex_astrological_query(query: str) -> bool:
         "trade-off", "tradeoff", "job vs", "business vs", "startup vs",
         "job or", "business or", "startup or", "stay in my job",
         "stay or leave", "switch job", "change job", "switch or stay",
-        "start a business", "do a startup", "entrepreneurship"
+        "start a business", "do a startup", "entrepreneurship",
+        "career", "startup", "job", "work-life", "balance", "manage", "affect"
     ]
     if any(sig in q for sig in comparison_signals):
         return True
@@ -380,8 +382,8 @@ def is_complex_astrological_query(query: str) -> bool:
     # 3. Relocation, foreign study/travel, cash-flow, financial trade-offs
     tradeoff_signals = [
         "foreign study", "study abroad", "foreign travel", "settle abroad",
-        "relocation", "relocate", "videsh", "overseas",
-        "cash flow", "cashflow", "finance vs", "wealth vs",
+        "relocation", "relocate", "videsh", "overseas", "foreign", "shift",
+        "cash flow", "cashflow", "finance vs", "wealth vs", "finance",
         "invest vs", "investment vs", "debt vs"
     ]
     if any(sig in q for sig in tradeoff_signals):
@@ -390,8 +392,8 @@ def is_complex_astrological_query(query: str) -> bool:
     # 4. Feasibility / advisory signals (Should I, Can I, Is it safe...)
     advisory_signals = [
         "should i", "can i", "is it safe", "is it good", "is it advisable",
-        "kya mujhe", "karna chahiye", "kya karna chahiye", "favorable for me",
-        "will i get", "will i be", "what will happen", "kya hoga", "decide"
+        "kya mujhe", "karna chahiye", "kya karna chahiye", "kaise", "kaise karun",
+        "favorable for me", "will i get", "will i be", "what will happen", "kya hoga", "decide"
     ]
     if any(sig in q for sig in advisory_signals):
         return True
@@ -403,20 +405,43 @@ def is_pure_factual_house_query(query: str) -> bool:
     """
     Identifies pure factual house queries permitted for local Vedic House Engine interception:
     e.g., house occupants, sign on cusp, ruling lord, or basic structural significance.
-    Excludes all complex queries involving Dasha timing, comparisons, career choices,
-    relocation, or financial trade-offs.
+
+    Excludes all complex queries involving Dasha timing, career/business decisions,
+    work-life balance, relocations, financial trade-offs, or queries exceeding 12 words.
+    These complex questions must route into the Stage 8 / LLM reasoning pipeline.
     """
     if not query:
         return False
+
+    tokens = query.strip().split()
+    # Enforce strict word count bound: Pure factual lookups are short (under 12 words)
+    if len(tokens) >= 12:
+        return False
+
     q = query.lower()
 
-    # If it contains complex decisioning, comparison, or timing signals, do NOT intercept locally
+    # Comprehensive check for complex query triggers: If any are present, return False immediately
+    complex_triggers = [
+        "dasha", "mahadasha", "antardasha", "timing", "timeline", "when will",
+        "career", "balance", "manage", "startup", "job", "work-life",
+        "foreign", "shift", "relocation", "overseas", "videsh", "study abroad",
+        "finance", "cash flow", "cashflow", "invest", "investment", "debt", "loan",
+        "kya mujhe", "kaise", "affect", "versus", " vs ", "trade-off", "tradeoff",
+        "should i", "can i", "is it safe", "is it advisable", "karna chahiye"
+    ]
+    if any(trig in q for trig in complex_triggers):
+        return False
+
+    # Check for general complex astrological query patterns
     if is_complex_astrological_query(query):
         return False
 
     # Check for house reference
     h_num = extract_house_number(query)
-    has_house_kw = bool(re.search(r"\b(?:\d+(?:st|nd|rd|th)?|first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth|pehla|dusra|teesra|chautha|panchva|chhattha|satva|athva|navam|dasva|gyarahva|barahva)\s*(?:house|bhava?|ghar)\b", q)) or (h_num is not None and any(k in q for k in ["house", "bhava", "ghar", "lagna", "cusp"]))
+    has_house_kw = bool(re.search(
+        r"\b(?:\d+(?:st|nd|rd|th)?|first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth|pehla|dusra|teesra|chautha|panchva|chhattha|satva|athva|navam|dasva|gyarahva|barahva)\s*(?:house|bhava?|ghar)\b",
+        q
+    )) or (h_num is not None and any(k in q for k in ["house", "bhava", "ghar", "lagna", "cusp"]))
 
     if not has_house_kw:
         return False
@@ -431,15 +456,15 @@ def is_pure_factual_house_query(query: str) -> bool:
         return True
 
     # C. Basic structural meaning / karaka: "what does 1st house mean", "meaning of 7th house", "what does 10th house represent", "karakas of"
-    if any(k in q for k in ["what does", "meaning", "represent", "signify", "karaka", "kya darshata hai", "kya hota hai", "tell me about"]):
+    if any(k in q for k in ["what does", "meaning", "represent", "signify", "karaka", "kya darshata hai", "kya hota hai", "tell me about", "kaisa hai", "what is"]):
         return True
 
     # Standalone simple house mention e.g. "my 7th house", "1st house details"
-    tokens = q.split()
     if len(tokens) <= 5:
         return True
 
     return False
+
 
 
 def is_house_query(query: str) -> bool:
