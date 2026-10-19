@@ -8,6 +8,7 @@ import os
 import re
 import sys
 import time
+import traceback
 import uuid
 import warnings
 warnings.filterwarnings("ignore")
@@ -35,6 +36,7 @@ try:
         log_chat_interaction,
         get_unresolved_queries,
         mark_query_resolved,
+        get_user_birth_details_from_db,
     )
 except ImportError:
     from database import (
@@ -44,6 +46,7 @@ except ImportError:
         log_chat_interaction,
         get_unresolved_queries,
         mark_query_resolved,
+        get_user_birth_details_from_db,
     )
 
 from fastapi.middleware.cors import CORSMiddleware
@@ -271,6 +274,9 @@ app.state.limiter = limiter
 
 @app.exception_handler(RateLimitExceeded)
 async def rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded) -> JSONResponse:
+    client_ip = get_remote_address(request)
+    print(f"[RENDER WARNING] Rate limit exceeded (429) for client IP: {client_ip}", flush=True)
+    logger.warning("[RENDER WARNING] Rate limit exceeded (429) for client IP: %s", client_ip)
     return JSONResponse(
         status_code=429,
         content={"error": "Too many requests. Please wait a minute before asking another question."},
@@ -1524,13 +1530,20 @@ def build_gemini_prompt(
                 planet_details.append(f"{planet_name}: {placement}")
     planet_summary = "; ".join(planet_details) or "No additional planet details returned."
     dasha_summary = json.dumps(dasha_data, ensure_ascii=False)[:2500] if dasha_data else "Not requested for this query."
-    birth_seconds = round((request.birth_hour % 24) * 60 * 60)
-    birth_hour, remaining_seconds = divmod(birth_seconds, 60 * 60)
+    b_hour_val = float(getattr(request, "birth_hour", 12.0) or 12.0)
+    birth_seconds = round((b_hour_val % 24) * 60 * 60)
+    birth_hour_int, remaining_seconds = divmod(birth_seconds, 60 * 60)
     birth_minute, birth_second = divmod(remaining_seconds, 60)
+    b_year = int(getattr(request, "birth_year", 2000) or 2000)
+    b_month = int(getattr(request, "birth_month", 1) or 1)
+    b_day = int(getattr(request, "birth_day", 1) or 1)
+    b_lat = float(getattr(request, "latitude", 28.6139) or 28.6139)
+    b_lon = float(getattr(request, "longitude", 77.2090) or 77.2090)
+    b_tz = float(getattr(request, "timezone", 5.5) or 5.5)
     birth_context = (
-        f"{request.birth_year:04d}-{request.birth_month:02d}-{request.birth_day:02d} "
-        f"{birth_hour:02d}:{birth_minute:02d}:{birth_second:02d}; "
-        f"latitude {request.latitude}, longitude {request.longitude}, timezone UTC{request.timezone:+g}"
+        f"{b_year:04d}-{b_month:02d}-{b_day:02d} "
+        f"{birth_hour_int:02d}:{birth_minute:02d}:{birth_second:02d}; "
+        f"latitude {b_lat}, longitude {b_lon}, timezone UTC{b_tz:+g}"
     )
     recent_history = json.dumps((chat_history or [])[-8:], ensure_ascii=False)[:3000]
 
@@ -2746,6 +2759,42 @@ async def _handle_chat_response(request: ChatRequest, session_id: Optional[str] 
     if not request.user_id:
         request.user_id = session_id
 
+    # 1. Hydrate user birth profile from Neon database if request contains default or missing values
+    is_default_birth = (
+        getattr(request, "birth_year", 2000) == 2000
+        and getattr(request, "birth_month", 1) == 1
+        and getattr(request, "birth_day", 1) == 1
+        and getattr(request, "birth_hour", 12.0) == 12.0
+    )
+    if is_default_birth:
+        try:
+            saved_db = await get_user_birth_details_from_db(
+                user_or_session_id=request.user_id or session_id,
+                fallback_name=getattr(request, "name", None),
+            )
+            if saved_db and saved_db.get("found"):
+                request.birth_year = saved_db["birth_year"]
+                request.birth_month = saved_db["birth_month"]
+                request.birth_day = saved_db["birth_day"]
+                request.birth_hour = saved_db["birth_hour"]
+                request.latitude = saved_db["latitude"]
+                request.longitude = saved_db["longitude"]
+                request.timezone = saved_db["timezone"]
+                if getattr(request, "name", None) in ("Guest", "Seeker", "", None) and saved_db.get("name"):
+                    request.name = saved_db["name"]
+                logger.info(
+                    "[USER PROFILE] Hydrated saved birth profile for '%s' in _handle_chat_response: %04d-%02d-%02d %.2fh (lat: %.4f, lon: %.4f)",
+                    request.name,
+                    request.birth_year,
+                    request.birth_month,
+                    request.birth_day,
+                    request.birth_hour,
+                    request.latitude,
+                    request.longitude,
+                )
+        except Exception as db_fetch_err:
+            logger.warning("[USER PROFILE] Could not fetch saved birth details from DB: %s", db_fetch_err)
+
     if request.user_id not in USER_SESSIONS:
         USER_SESSIONS[request.user_id] = {
             "turn_count": 1,
@@ -2780,25 +2829,34 @@ async def _handle_chat_response(request: ChatRequest, session_id: Optional[str] 
         # Track language preference based on the latest query
         profile["preferred_language"] = "hinglish" if is_hinglish_query(request.query) else "english"
 
-    birth_seconds = round((request.birth_hour % 24) * 60 * 60)
-    birth_hour, remaining_seconds = divmod(birth_seconds, 60 * 60)
+    # Bulletproof numeric extraction with zero NoneType or KeyError risks
+    safe_year = int(getattr(request, "birth_year", 2000) or 2000)
+    safe_month = int(getattr(request, "birth_month", 1) or 1)
+    safe_day = int(getattr(request, "birth_day", 1) or 1)
+    safe_hour = float(getattr(request, "birth_hour", 12.0) or 12.0)
+    safe_lat = float(getattr(request, "latitude", 28.6139) or 28.6139)
+    safe_lon = float(getattr(request, "longitude", 77.2090) or 77.2090)
+    safe_tz = float(getattr(request, "timezone", 5.5) or 5.5)
+
+    birth_seconds = round((safe_hour % 24) * 60 * 60)
+    birth_hour_int, remaining_seconds = divmod(birth_seconds, 60 * 60)
     birth_minute, birth_second = divmod(remaining_seconds, 60)
     birth_details = BirthDetailsRequest(
-        year=request.birth_year,
-        month=request.birth_month,
-        day=request.birth_day,
-        hour=birth_hour,
+        year=safe_year,
+        month=safe_month,
+        day=safe_day,
+        hour=birth_hour_int,
         minute=birth_minute,
         second=birth_second,
-        latitude=request.latitude,
-        longitude=request.longitude,
-        timezone=request.timezone,
+        latitude=safe_lat,
+        longitude=safe_lon,
+        timezone=safe_tz,
     )
 
     current_birth_key = (
-        request.birth_year, request.birth_month, request.birth_day,
-        birth_hour, birth_minute, birth_second,
-        round(request.latitude, 4), round(request.longitude, 4), request.timezone
+        safe_year, safe_month, safe_day,
+        birth_hour_int, birth_minute, birth_second,
+        round(safe_lat, 4), round(safe_lon, 4), safe_tz
     )
     previous_birth_key = USER_SESSIONS[request.user_id].get("birth_key")
     if previous_birth_key and previous_birth_key != current_birth_key:
@@ -2808,6 +2866,13 @@ async def _handle_chat_response(request: ChatRequest, session_id: Optional[str] 
         )
         USER_SESSIONS[request.user_id]["history"] = []
     USER_SESSIONS[request.user_id]["birth_key"] = current_birth_key
+    USER_SESSIONS[request.user_id]["profile"]["birth_year"] = safe_year
+    USER_SESSIONS[request.user_id]["profile"]["birth_month"] = safe_month
+    USER_SESSIONS[request.user_id]["profile"]["birth_day"] = safe_day
+    USER_SESSIONS[request.user_id]["profile"]["birth_hour"] = safe_hour
+    USER_SESSIONS[request.user_id]["profile"]["latitude"] = safe_lat
+    USER_SESSIONS[request.user_id]["profile"]["longitude"] = safe_lon
+    USER_SESSIONS[request.user_id]["profile"]["timezone"] = safe_tz
 
     # ---------------------------------------------------------------------------
     # Layer 3 Safety Boundary: Clinical medical diagnosis & death prediction refusals
@@ -4023,9 +4088,10 @@ def resolve_request_session(raw_request: Optional[Request], fallback_user_id: Op
                     return sid, new_token
                 return sid, None
         # Cookie missing or invalid: issue a new cryptographically signed session
-        new_token = issue_secure_session_token()
+        preferred_sid = fallback_user_id if fallback_user_id else uuid.uuid4().hex
+        new_token = issue_secure_session_token(session_uuid=preferred_sid)
         _, new_sid, _ = validate_secure_session_token(new_token)
-        return new_sid or (fallback_user_id if fallback_user_id else uuid.uuid4().hex), new_token
+        return new_sid or preferred_sid, new_token
 
     # Internal test call or non-HTTP request: use fallback_user_id without setting cookie
     return (fallback_user_id if fallback_user_id else uuid.uuid4().hex), None
@@ -4079,11 +4145,40 @@ async def _handle_chat(
             logger.warning("[DATABASE] Failed to log empty query rejection: %s", empty_err)
         return resp
 
+    original_user_id = request.user_id
+
     if pre_resolved_session_id:
         session_id = pre_resolved_session_id
         token_to_set = pre_resolved_token
     else:
-        session_id, token_to_set = resolve_request_session(raw_request, request.user_id)
+        session_id, token_to_set = resolve_request_session(raw_request, original_user_id)
+
+    # Hydrate user birth profile from Neon database if request contains default or missing values
+    is_default_birth = (
+        getattr(request, "birth_year", 2000) == 2000
+        and getattr(request, "birth_month", 1) == 1
+        and getattr(request, "birth_day", 1) == 1
+        and getattr(request, "birth_hour", 12.0) == 12.0
+    )
+    if is_default_birth:
+        try:
+            saved_db = await get_user_birth_details_from_db(
+                user_or_session_id=original_user_id,
+                session_id=session_id,
+                fallback_name=getattr(request, "name", None),
+            )
+            if saved_db and saved_db.get("found"):
+                request.birth_year = saved_db["birth_year"]
+                request.birth_month = saved_db["birth_month"]
+                request.birth_day = saved_db["birth_day"]
+                request.birth_hour = saved_db["birth_hour"]
+                request.latitude = saved_db["latitude"]
+                request.longitude = saved_db["longitude"]
+                request.timezone = saved_db["timezone"]
+                if getattr(request, "name", None) in ("Guest", "Seeker", "", None) and saved_db.get("name"):
+                    request.name = saved_db["name"]
+        except Exception as db_fetch_err:
+            logger.warning("[USER PROFILE] Could not fetch saved birth details from DB in _handle_chat: %s", db_fetch_err)
 
     # Guarantee canonical identity is bound to authenticated session_id
     request.user_id = session_id
@@ -4210,11 +4305,39 @@ async def _handle_chat(
     try:
         response = await _handle_chat_response(request, session_id=session_id)
     except asyncio.CancelledError:
-        logger.info("Chat request cancelled during startup")
+        logger.info("Chat request cancelled during execution")
         raise
     except Exception as e:
-        logger.error("Chat request error: %s", str(e), exc_info=True)
-        response = JSONResponse(content=backend_error_payload(request.query))
+        err_trace = traceback.format_exc()
+        print(f"[RENDER CRITICAL ERROR] Exception during chat execution for session {session_id}: {e}\n{err_trace}", flush=True)
+        logger.error(f"[RENDER CRITICAL ERROR] Exception during chat execution for session {session_id}: {e}", exc_info=True)
+        
+        is_hing = is_hinglish_query(request.query)
+        polite_answer = (
+            "Aapki kundali ka vishleshan karte samay ek takneeki samasya aayi hai. "
+            "Kripya kuch kshan baad punah prayas karein, hamari team ispar karya kar rahi hai."
+            if is_hing
+            else "An unexpected technical issue occurred while analyzing your birth chart. "
+                 "Please try again in a few moments while our system restores optimal alignment."
+        )
+        fallback_content = {
+            "answer": polite_answer,
+            "answer_mode": "CRASH_FALLBACK",
+            "answer_source": "CRASH_FALLBACK",
+            "intent": "system_fallback",
+            "detected_intents": ["system_fallback"],
+            "evidence_complete": False,
+            "gemini_calls": 0,
+            "evidence_ids": [],
+            "related_questions": [
+                "What is my Moon sign?",
+                "What does my 7th house signify?",
+                "When will I get a job promotion?"
+            ],
+            "is_unresolved": True,
+            "status": "error",
+        }
+        response = JSONResponse(status_code=200, content=fallback_content)
 
     # Automatically persist JSON chat interaction to PostgreSQL
     if isinstance(response, JSONResponse):
@@ -4227,12 +4350,16 @@ async def _handle_chat(
             is_unres = (
                 status_code >= 400
                 or "error" in resp_dict
-                or resp_dict.get("answer_mode") == "UNSUPPORTED"
+                or resp_dict.get("answer_mode") in ("UNSUPPORTED", "CRASH_FALLBACK")
+                or resp_dict.get("is_unresolved") is True
                 or "Sorry, I couldn't generate a response" in str(bot_text)
             )
 
             if is_unres:
-                exec_mode = "UNRESOLVED"
+                if resp_dict.get("answer_mode") == "CRASH_FALLBACK":
+                    exec_mode = "CRASH_FALLBACK"
+                else:
+                    exec_mode = "UNRESOLVED"
             else:
                 raw_mode = resp_dict.get("answer_source") or resp_dict.get("answer_mode") or "LOCAL"
                 raw_mode_str = str(raw_mode).upper()
@@ -4277,6 +4404,8 @@ async def _handle_chat(
                 user_profile=u_profile,
             )
         except Exception as log_err:
+            err_trace = traceback.format_exc()
+            print(f"[RENDER DATABASE ERROR] Failed to log JSON chat interaction: {log_err}\n{err_trace}", flush=True)
             logger.warning("[DATABASE] Failed to log JSON chat interaction: %s", log_err)
 
     if token_to_set:
@@ -4288,7 +4417,58 @@ async def _handle_chat(
 @app.post("/chat")
 @limiter.limit("60/minute")
 async def chat_endpoint(request: Request, chat_request: ChatRequest):
-    return await _handle_chat(chat_request, raw_request=request)
+    try:
+        return await _handle_chat(chat_request, raw_request=request)
+    except Exception as exc:
+        err_trace = traceback.format_exc()
+        print(f"[RENDER CRITICAL ERROR] Unhandled exception in /chat endpoint: {exc}\n{err_trace}", flush=True)
+        logger.error(f"[RENDER CRITICAL ERROR] Unhandled exception in /chat endpoint: {exc}", exc_info=True)
+        
+        # Neon DB Error Locking
+        q_text = getattr(chat_request, "query", "") or ""
+        sid = getattr(chat_request, "user_id", None) or uuid.uuid4().hex
+        is_hing = is_hinglish_query(q_text)
+        polite_msg = (
+            "Aapki kundali ka vishleshan karte samay ek takneeki samasya aayi hai. "
+            "Kripya kuch kshan baad punah prayas karein, hamari team ispar karya kar rahi hai."
+            if is_hing
+            else "An unexpected technical issue occurred while analyzing your birth chart. "
+                 "Please try again in a few moments while our system restores optimal alignment."
+        )
+        try:
+            await log_chat_interaction(
+                session_id=sid,
+                user_query=q_text,
+                bot_response=polite_msg,
+                execution_mode="CRASH_FALLBACK",
+                is_unresolved=True,
+                calculation_footer=f"Endpoint Crash: {str(exc)}",
+                user_id=sid,
+            )
+        except Exception as db_err:
+            print(f"[RENDER DATABASE ERROR] Failed to lock error in Neon DB: {db_err}", flush=True)
+            logger.error("[RENDER DATABASE ERROR] Failed to lock error in Neon DB: %s", db_err, exc_info=True)
+
+        return JSONResponse(
+            status_code=200,
+            content={
+                "answer": polite_msg,
+                "answer_mode": "CRASH_FALLBACK",
+                "answer_source": "CRASH_FALLBACK",
+                "intent": "system_fallback",
+                "detected_intents": ["system_fallback"],
+                "evidence_complete": False,
+                "gemini_calls": 0,
+                "evidence_ids": [],
+                "related_questions": [
+                    "What is my Moon sign?",
+                    "What does my 7th house signify?",
+                    "When will I get a job promotion?"
+                ],
+                "is_unresolved": True,
+                "status": "error",
+            }
+        )
 
 
 def _safe_int(val: Any, default: Any, min_val: int, max_val: int) -> Any:
@@ -4344,82 +4524,162 @@ async def api_chat_endpoint(request: Request, api_req: ApiChatRequest):
     - Prevents client history injection into existing sessions via concurrency-safe lock.
     - Server-verified chart computation (ephemeris/FreeAstrologyAPI authority).
     - Attaches HMAC session cookie to all response paths (JSON and Streaming).
+    - Robust exception catching with Render console logging and Neon DB error locking.
     """
-    clean_prompt = (api_req.prompt or "").strip()
-    if not clean_prompt:
-        return _empty_query_response()
+    try:
+        clean_prompt = (api_req.prompt or "").strip()
+        if not clean_prompt:
+            return _empty_query_response()
 
-    # Step 1: Single authoritative session resolution
-    session_id, token_to_set = resolve_request_session(request)
+        profile = api_req.user_profile or {}
+        profile_user_id = profile.get("user_id") or profile.get("id") or profile.get("email")
 
-    # Step 2: Concurrency-safe profile & birth authority lookup
-    profile = api_req.user_profile or {}
-    async with SESSION_LOCK:
-        existing_session = USER_SESSIONS.setdefault(session_id, {
-            "turn_count": 0,
-            "history": [],
-            "profile": {"topics_asked": []}
-        })
-        existing_birth = existing_session.get("birth_key")
+        # Step 1: Authoritative session resolution preserving client profile identifier
+        session_id, token_to_set = resolve_request_session(request, fallback_user_id=profile_user_id)
 
-        # Explicitly track already_greeted in session profile
-        existing_session.setdefault("profile", {})["already_greeted"] = bool(
-            api_req.already_greeted or existing_session.get("turn_count", 0) > 0
+        # Step 2: Concurrency-safe profile & birth authority lookup
+        async with SESSION_LOCK:
+            existing_session = USER_SESSIONS.setdefault(session_id, {
+                "turn_count": 0,
+                "history": [],
+                "profile": {"topics_asked": []}
+            })
+            existing_birth = existing_session.get("birth_key")
+
+            # Explicitly track already_greeted in session profile
+            existing_session.setdefault("profile", {})["already_greeted"] = bool(
+                api_req.already_greeted or existing_session.get("turn_count", 0) > 0
+            )
+
+        # Sanitize demographic fields
+        name_clean = str(profile.get("name") or "Guest")[:50].strip() or "Guest"
+
+        # Step 3: Birth profile authority rule
+        # Stored birth profile is authoritative unless client explicitly supplies birth parameters for an update
+        has_explicit_birth = any(
+            k in profile for k in ("birth_year", "birth_month", "birth_day", "birth_hour", "latitude", "longitude")
+        )
+        if existing_birth and not has_explicit_birth:
+            # Preserves existing verified session birth details across follow-up turns
+            by, bm, bd, bh, bmin, bsec, lat, lon, tz = existing_birth
+            b_hour_float = bh + (bmin / 60.0) + (bsec / 3600.0)
+        else:
+            # Validated updates: strict calendar date and finite float validation
+            by, bm, bd = _safe_calendar_date(
+                profile.get("birth_year", 2000),
+                profile.get("birth_month", 1),
+                profile.get("birth_day", 1),
+                default=(2000, 1, 1),
+            )
+            b_hour_float = _safe_finite_float(profile.get("birth_hour"), 12.0, 0.0, 23.9999)
+            lat = _safe_finite_float(profile.get("latitude"), 20.5937, -90.0, 90.0)
+            lon = _safe_finite_float(profile.get("longitude"), 78.9629, -180.0, 180.0)
+            tz = _safe_finite_float(profile.get("timezone"), 5.5, -12.0, 14.0)
+
+            # If client omitted explicit birth fields, fetch saved birth details from Neon DB
+            if not has_explicit_birth:
+                try:
+                    saved_db = await get_user_birth_details_from_db(
+                        user_or_session_id=profile_user_id,
+                        session_id=session_id,
+                        fallback_name=profile.get("name"),
+                    )
+                    if saved_db and saved_db.get("found"):
+                        by = saved_db["birth_year"]
+                        bm = saved_db["birth_month"]
+                        bd = saved_db["birth_day"]
+                        b_hour_float = saved_db["birth_hour"]
+                        lat = saved_db["latitude"]
+                        lon = saved_db["longitude"]
+                        tz = saved_db["timezone"]
+                        if name_clean in ("Guest", "Seeker", "", None) and saved_db.get("name"):
+                            name_clean = saved_db["name"]
+                except Exception as db_err:
+                    logger.warning("[USER PROFILE] api_chat_endpoint DB fetch error: %s", db_err)
+        age_clean = _safe_int(profile.get("age"), None, 1, 120) if profile.get("age") is not None else None
+        gender_clean = str(profile.get("gender") or "")[:20].strip() or None
+        life_stage_clean = str(profile.get("life_stage") or "")[:30].strip() or None
+        rel_status_clean = str(profile.get("relationship_status") or "")[:30].strip() or None
+
+        canonical_request = ChatRequest(
+            user_id=session_id,  # Explicitly bound to authoritative session
+            query=clean_prompt,
+            name=name_clean,
+            age=age_clean,
+            gender=gender_clean,
+            life_stage=life_stage_clean,
+            relationship_status=rel_status_clean,
+            birth_year=by,
+            birth_month=bm,
+            birth_day=bd,
+            birth_hour=b_hour_float,
+            latitude=lat,
+            longitude=lon,
+            timezone=tz,
         )
 
-    # Step 3: Birth profile authority rule
-    # Stored birth profile is authoritative unless client explicitly supplies birth parameters for an update
-    has_explicit_birth = any(
-        k in profile for k in ("birth_year", "birth_month", "birth_day", "birth_hour", "latitude", "longitude")
-    )
-    if existing_birth and not has_explicit_birth:
-        # Preserves existing verified session birth details across follow-up turns
-        by, bm, bd, bh, bmin, bsec, lat, lon, tz = existing_birth
-        b_hour_float = bh + (bmin / 60.0) + (bsec / 3600.0)
-    else:
-        # Validated updates: strict calendar date and finite float validation
-        by, bm, bd = _safe_calendar_date(
-            profile.get("birth_year", 2000),
-            profile.get("birth_month", 1),
-            profile.get("birth_day", 1),
-            default=(2000, 1, 1),
+        return await _handle_chat(
+            canonical_request,
+            raw_request=request,
+            initial_chat_history=api_req.chat_history,
+            pre_resolved_session_id=session_id,
+            pre_resolved_token=token_to_set,
         )
-        b_hour_float = _safe_finite_float(profile.get("birth_hour"), 12.0, 0.0, 23.9999)
-        lat = _safe_finite_float(profile.get("latitude"), 20.5937, -90.0, 90.0)
-        lon = _safe_finite_float(profile.get("longitude"), 78.9629, -180.0, 180.0)
-        tz = _safe_finite_float(profile.get("timezone"), 5.5, -12.0, 14.0)
+    except Exception as exc:
+        err_trace = traceback.format_exc()
+        print(f"[RENDER CRITICAL ERROR] Unhandled exception in /api/chat endpoint: {exc}\n{err_trace}", flush=True)
+        logger.error(f"[RENDER CRITICAL ERROR] Unhandled exception in /api/chat endpoint: {exc}", exc_info=True)
+        
+        q_text = getattr(api_req, "prompt", "") or ""
+        sid = uuid.uuid4().hex
+        try:
+            resolved_sid, _ = resolve_request_session(request)
+            if resolved_sid:
+                sid = resolved_sid
+        except Exception:
+            pass
 
-    # Sanitize demographic fields (never trust client user_id or client chart claims)
-    name_clean = str(profile.get("name") or "Guest")[:50].strip() or "Guest"
-    age_clean = _safe_int(profile.get("age"), None, 1, 120) if profile.get("age") is not None else None
-    gender_clean = str(profile.get("gender") or "")[:20].strip() or None
-    life_stage_clean = str(profile.get("life_stage") or "")[:30].strip() or None
-    rel_status_clean = str(profile.get("relationship_status") or "")[:30].strip() or None
+        is_hing = is_hinglish_query(q_text)
+        polite_msg = (
+            "Aapki kundali ka vishleshan karte samay ek takneeki samasya aayi hai. "
+            "Kripya kuch kshan baad punah prayas karein, hamari team ispar karya kar rahi hai."
+            if is_hing
+            else "An unexpected technical issue occurred while analyzing your birth chart. "
+                 "Please try again in a few moments while our system restores optimal alignment."
+        )
+        try:
+            await log_chat_interaction(
+                session_id=sid,
+                user_query=q_text,
+                bot_response=polite_msg,
+                execution_mode="CRASH_FALLBACK",
+                is_unresolved=True,
+                calculation_footer=f"ApiChat Crash: {str(exc)}",
+                user_id=sid,
+            )
+        except Exception as db_err:
+            print(f"[RENDER DATABASE ERROR] Failed to lock error in Neon DB: {db_err}", flush=True)
 
-    canonical_request = ChatRequest(
-        user_id=session_id,  # Explicitly bound to authoritative session
-        query=clean_prompt,
-        name=name_clean,
-        age=age_clean,
-        gender=gender_clean,
-        life_stage=life_stage_clean,
-        relationship_status=rel_status_clean,
-        birth_year=by,
-        birth_month=bm,
-        birth_day=bd,
-        birth_hour=b_hour_float,
-        latitude=lat,
-        longitude=lon,
-        timezone=tz,
-    )
-
-    return await _handle_chat(
-        canonical_request,
-        raw_request=request,
-        initial_chat_history=api_req.chat_history,
-        pre_resolved_session_id=session_id,
-        pre_resolved_token=token_to_set,
-    )
+        return JSONResponse(
+            status_code=200,
+            content={
+                "answer": polite_msg,
+                "answer_mode": "CRASH_FALLBACK",
+                "answer_source": "CRASH_FALLBACK",
+                "intent": "system_fallback",
+                "detected_intents": ["system_fallback"],
+                "evidence_complete": False,
+                "gemini_calls": 0,
+                "evidence_ids": [],
+                "related_questions": [
+                    "What is my Moon sign?",
+                    "What does my 7th house signify?",
+                    "When will I get a job promotion?"
+                ],
+                "is_unresolved": True,
+                "status": "error",
+            }
+        )
 
 
 @app.get("/api/tokens")

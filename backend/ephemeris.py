@@ -57,6 +57,31 @@ def get_astronomical_features(year: int, month: int, day: int, hour: float, lat:
     Calculates Sidereal planetary sign positions (0-11) for:
     [Ascendant, Sun, Moon, Mars, Mercury, Jupiter, Venus, Saturn, Rahu, Ketu]
     """
+    try:
+        year = int(year or 2000)
+    except (TypeError, ValueError):
+        year = 2000
+    try:
+        month = int(month or 1)
+    except (TypeError, ValueError):
+        month = 1
+    try:
+        day = int(day or 1)
+    except (TypeError, ValueError):
+        day = 1
+    try:
+        hour = float(hour if hour is not None else 12.0)
+    except (TypeError, ValueError):
+        hour = 12.0
+    try:
+        lat = float(lat if lat is not None else 28.6139)
+    except (TypeError, ValueError):
+        lat = 28.6139
+    try:
+        lon = float(lon if lon is not None else 77.2090)
+    except (TypeError, ValueError):
+        lon = 77.2090
+
     if HAS_SWISSEPH and swe is not None:
         try:
             swe.set_sid_mode(swe.SIDM_LAHIRI)
@@ -96,6 +121,31 @@ def calculate_vimshottari_dasha_offline(year: int, month: int, day: int, hour: f
     Offline Vimshottari Dasha calculation derived from Moon longitude via Swiss Ephemeris.
     Returns standardized dasha payload compatible with normalize_dasha_response.
     """
+    try:
+        year = int(year or 2000)
+    except (TypeError, ValueError):
+        year = 2000
+    try:
+        month = int(month or 1)
+    except (TypeError, ValueError):
+        month = 1
+    try:
+        day = int(day or 1)
+    except (TypeError, ValueError):
+        day = 1
+    try:
+        hour = float(hour if hour is not None else 12.0)
+    except (TypeError, ValueError):
+        hour = 12.0
+    try:
+        lat = float(lat if lat is not None else 28.6139)
+    except (TypeError, ValueError):
+        lat = 28.6139
+    try:
+        lon = float(lon if lon is not None else 77.2090)
+    except (TypeError, ValueError):
+        lon = 77.2090
+
     moon_deg = 60.0
     if HAS_SWISSEPH and swe is not None:
         try:
