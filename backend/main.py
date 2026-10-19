@@ -260,12 +260,14 @@ except ImportError:
 try:
     from backend.astrology.house_engine import (
         is_house_query,
+        is_pure_factual_house_query,
         extract_house_number,
         synthesize_house_analysis,
     )
 except ImportError:
     from astrology.house_engine import (
         is_house_query,
+        is_pure_factual_house_query,
         extract_house_number,
         synthesize_house_analysis,
     )
@@ -3011,8 +3013,11 @@ async def _handle_chat_response(request: ChatRequest, session_id: Optional[str] 
 
     # ---------------------------------------------------------------------------
     # Requirement 4: Astrological House-Related Query Handling (Bhava Karakas)
+    # Permitted ONLY for pure factual queries (occupants, sign, lord, basic meaning).
+    # Complex queries (Dasha timing, comparisons, career/finance trade-offs) must route
+    # through the capability gate and reasoning pipeline.
     # ---------------------------------------------------------------------------
-    if is_house_query(request.query):
+    if is_pure_factual_house_query(request.query):
         is_hinglish_user = is_hinglish_query(request.query)
         house_res = synthesize_house_analysis(
             query=request.query,
@@ -4400,43 +4405,37 @@ async def _handle_chat(
             bot_text = resp_dict.get("answer") or resp_dict.get("error") or "No response text."
             status_code = getattr(response, "status_code", 200)
 
-            is_unres = (
-                status_code >= 400
-                or "error" in resp_dict
-                or resp_dict.get("answer_mode") in ("UNSUPPORTED", "CRASH_FALLBACK", "UNRESOLVED_INTENT")
-                or resp_dict.get("is_unresolved") is True
-                or "Sorry, I couldn't generate a response" in str(bot_text)
-                or "Please share an appropriate question" in str(bot_text)
-            )
+            fallback_phrase = "Please share an appropriate question so I can assist you better with your astrology query."
+            is_fallback = fallback_phrase.lower() in str(bot_text).lower()
 
-            if is_unres:
-                if resp_dict.get("answer_mode") == "CRASH_FALLBACK":
-                    exec_mode = "CRASH_FALLBACK"
-                elif resp_dict.get("answer_mode") == "UNRESOLVED_INTENT" or "Please share an appropriate question" in str(bot_text):
-                    exec_mode = "UNRESOLVED_INTENT"
-                    logger.warning(
-                        "\n%s\n[UNRESOLVED INTENT WARNING]\n"
-                        "Session ID    : %s\n"
-                        "User Query    : %s\n"
-                        "Bot Response  : %s\n"
-                        "Execution Mode: UNRESOLVED_INTENT\n%s",
-                        "=" * 65,
-                        session_id,
-                        request.query,
-                        bot_text,
-                        "=" * 65,
-                    )
-                else:
-                    exec_mode = "UNRESOLVED"
+            if is_fallback:
+                exec_mode = "UNRESOLVED_ASTRO_QUERY"
+                is_unres = True
+                logger.warning(
+                    "\n%s\n[UNRESOLVED ASTRO QUERY WARNING]\n"
+                    "Session ID    : %s\n"
+                    "User Query    : %s\n"
+                    "Bot Response  : %s\n"
+                    "Execution Mode: UNRESOLVED_ASTRO_QUERY\n%s",
+                    "=" * 65,
+                    session_id,
+                    request.query,
+                    bot_text,
+                    "=" * 65,
+                )
+                print(
+                    f"[UNRESOLVED ASTRO QUERY WARNING] Session={session_id} | Query='{request.query}' | Mode=UNRESOLVED_ASTRO_QUERY",
+                    flush=True,
+                )
+            elif status_code >= 400 or "error" in resp_dict or resp_dict.get("answer_mode") == "CRASH_FALLBACK":
+                exec_mode = "CRASH_FALLBACK"
+                is_unres = True
+            elif resp_dict.get("is_unresolved") is True or "Sorry, I couldn't generate a response" in str(bot_text):
+                exec_mode = "UNRESOLVED"
+                is_unres = True
             else:
-                raw_mode = resp_dict.get("answer_source") or resp_dict.get("answer_mode") or "LOCAL"
-                raw_mode_str = str(raw_mode).upper()
-                if any(k in raw_mode_str for k in ["HYBRID", "SYNTHESIS"]):
-                    exec_mode = "HYBRID"
-                elif any(k in raw_mode_str for k in ["LLM", "GEMINI", "GROQ"]):
-                    exec_mode = "LLM"
-                else:
-                    exec_mode = "LOCAL"
+                exec_mode = "SUCCESS"
+                is_unres = False
             raw_intents = resp_dict.get("detected_intents") or resp_dict.get("intent") or []
             if isinstance(raw_intents, str):
                 intents = [raw_intents]

@@ -162,20 +162,34 @@ def is_garbage_or_special_char_input(text: str) -> Tuple[bool, str]:
     if len(alnum_chars) <= 1:
         return True, "insufficient_alphanumeric_content"
 
-    clean_alpha = re.sub(r"[^a-zA-Z]", "", stripped.lower())
+    VALID_CONSONANT_EXEMPTIONS = {
+        "strengths", "strength", "lengths", "length", "twelfths", "eighths",
+        "sixth", "eighth", "twelfth", "rhythm", "rhythms", "symphysy", "psych",
+        "sh", "shh", "psst", "hmm", "hmmm", "bhava", "bhav", "rashi",
+        "d1", "d9", "d10", "mc", "ic", "dr", "mr", "mrs", "ms", "vs", "st", "nd", "rd", "th"
+    }
 
-    # Case 7: Keyboard row mashing (e.g. 'asdfghjk', 'qwerty', 'lkjhgfdsa')
-    if len(clean_alpha) >= 4 and any(clean_alpha in row for row in KEYBOARD_MASH_ROWS):
-        return True, "keyboard_row_mash"
+    # Evaluate keyboard mashing, consonant clusters, and vowel presence on individual tokens
+    # to avoid false refusals when legitimate words cross boundaries (e.g. "birth chart" -> "rthch")
+    for raw_token in stripped.split():
+        clean_word = re.sub(r"[^a-zA-Z]", "", raw_token.lower())
+        if not clean_word:
+            continue
 
-    # Case 8: Long consonant cluster of 5+ letters (e.g. 'sdfghjk')
-    if re.search(r"[bcdfghjklmnpqrstvwxz]{5,}", clean_alpha):
-        return True, "consonant_cluster_gibberish"
+        # Explicit exemption for legitimate English and astrological vocabulary
+        if clean_word in VALID_CONSONANT_EXEMPTIONS:
+            continue
 
-    # Case 9: Consonant-only gibberish of 3+ letters without vowels (e.g. 'asdf', 'ghjk', 'qwrt', 'xyz')
-    if len(clean_alpha) >= 3 and not any(v in clean_alpha for v in ["a", "e", "i", "o", "u", "y"]):
-        # Exempt standard astrology abbreviations if any
-        if clean_alpha not in ["mc", "ic", "d9", "d10", "d1"]:
+        # Case 7: Keyboard row mashing (e.g. 'asdfghjk', 'qwerty', 'lkjhgfdsa')
+        if len(clean_word) >= 4 and any(clean_word in row for row in KEYBOARD_MASH_ROWS):
+            return True, "keyboard_row_mash"
+
+        # Case 8: Long consonant cluster of 5+ letters within a single token (e.g. 'sdfghjk')
+        if re.search(r"[bcdfghjklmnpqrstvwxz]{5,}", clean_word):
+            return True, "consonant_cluster_gibberish"
+
+        # Case 9: Consonant-only gibberish of 3+ letters without vowels within a single token (e.g. 'ghjk', 'qwrt', 'xyz')
+        if len(clean_word) >= 3 and not any(v in clean_word for v in ["a", "e", "i", "o", "u", "y"]):
             return True, "consonant_gibberish"
 
     return False, ""
@@ -418,10 +432,10 @@ def classify_query_intent(
 
     q_lower = query.lower().strip()
 
-    # Step 5: Astrological House-Related Query Handling
+    # Step 5: Astrological House-Related Query Handling (Pure Factual Lookup Only)
     try:
-        from backend.astrology.house_engine import is_house_query, extract_house_number
-        if is_house_query(query):
+        from backend.astrology.house_engine import is_pure_factual_house_query, extract_house_number
+        if is_pure_factual_house_query(query):
             target_house = extract_house_number(query) or 7
             return IntentClassificationResult(
                 primary_intent="house_analysis",

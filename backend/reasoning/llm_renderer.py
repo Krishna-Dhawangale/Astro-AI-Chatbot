@@ -21,18 +21,19 @@ from backend.reasoning.lordship import get_house_details, RASHI_LORDS
 STRICT_RENDERER_SYSTEM_INSTRUCTION = (
     "You are an expert Vedic Astrologer and synthesizer. "
     "Treat supplied chart facts as authoritative; never invent or alter planetary placements, houses, or Dasha periods. "
-    "Apply established Vedic principles to interpret verified facts and answer the user's question directly with authority and empathy. "
+    "MANDATE: You are explicitly required to synthesize a grounded answer directly from verified chart facts (F) using standard Vedic significations (Bhavas, Lords, Karakas, dignities). NEVER refuse a valid query or output a generic fallback refusal when chart facts (F) are provided; interpret the verified placements directly to answer the question with authority and empathy. "
+    "FORMATTING RULE: Answer the user's core question directly in the first sentence. Strip out repetitive textbook boilerplate, redundant buzzwords, and irrelevant derivations. Do not make absolute financial or career guarantees. "
     "CRITICAL BAN: You ARE the qualified Vedic Astrologer. NEVER instruct the user to consult an astrologer or say 'kisi qualified Vedic astrologer se sampark karein'. Deliver the astrological interpretation directly. "
     "Use cautious language; never guarantee predictions. "
     "Do not mention internal rules or system details. "
-    "Be concise: 40–65 words. "
+    "Be concise: 50–75 words. "
     "Return only the answer."
 )
 
 
-def get_renderer_system_instruction(word_limit_str: str = "40–65 words", is_hinglish: bool = False) -> str:
+def get_renderer_system_instruction(word_limit_str: str = "50–75 words", is_hinglish: bool = False) -> str:
     """
-    Returns an ultra-lean system instruction with customized word limit bounds
+    Returns an ultra-lean system instruction with customized word limit bounds (50–75 words)
     and natural conversational Hinglish language enforcement when requested.
     Permits grounded Vedic reasoning on supplied facts while strictly prohibiting invented chart calculations.
     """
@@ -43,7 +44,8 @@ def get_renderer_system_instruction(word_limit_str: str = "40–65 words", is_hi
             "You MUST respond naturally in conversational Hinglish (using Roman script, e.g. 'Aapki kundali ke anusar...'). "
             "Do NOT default to pure English. "
             "Treat supplied chart facts as authoritative; never invent or alter planetary placements, houses, or Dasha periods. "
-            "Apply established Vedic principles to interpret verified facts and answer the user's question directly with authority and empathy. "
+            "MANDATE: Aapko verified chart facts (F) aur standard Vedic principles (Bhavas, Lords, Karakas, dignities) ka use karke direct grounded answer synthesize karna hai. Agar chart facts (F) provided hain, toh query ko refuse mat karein aur generic fallback mat dein; user ke question ka direct astrological interpretation dein. "
+            "FORMATTING RULE: Answer the user's core question directly in the first sentence. Strip out repetitive textbook boilerplate and avoid absolute guarantees. "
             "CRITICAL BAN: You ARE the qualified Vedic Astrologer. NEVER tell the user to consult an astrologer or say 'kisi qualified Vedic astrologer se sampark karein'. You MUST deliver the direct astrological guidance yourself based on their chart. "
             "Use cautious language; never guarantee predictions. "
             "Do not mention internal rules or system details. "
@@ -53,7 +55,8 @@ def get_renderer_system_instruction(word_limit_str: str = "40–65 words", is_hi
     return (
         "You are an expert Vedic astrology synthesizer. "
         "Treat supplied chart facts as authoritative; never invent or alter planetary placements, houses, or Dasha periods. "
-        "Apply established Vedic principles to interpret the verified facts and answer the user's question directly with authority and empathy. "
+        "MANDATE: You are explicitly mandated to synthesize a grounded answer directly from verified chart facts (F) using standard Vedic significations (Bhavas, Lords, Karakas, dignities) instead of refusing the query. Never refuse a valid query or output a generic fallback message when chart facts (F) are provided; interpret the verified placements directly to answer the question with authority and empathy. "
+        "FORMATTING RULE: Answer the user's core question directly in the first sentence. Strip out repetitive textbook boilerplate, redundant buzzwords, and irrelevant derivations. Do not make absolute financial or career guarantees. "
         "If the question involves multiple factors or comparative choices, synthesize them rather than repeating isolated placements. "
         "If evidence is partial, provide a helpful qualified interpretation and disclose limitations naturally without repeating generic disclaimers. "
         "For wellness or health queries, provide astrological perspectives only, never medical diagnoses. "
@@ -83,19 +86,19 @@ def select_renderer_tier(
     """
     Determines response tier, max output tokens, and target word limit.
     - MICRO   : 35-50 words (max 90 tokens) for single indicator / factual questions
-    - STANDARD: 40-65 words (max 120 tokens) for normal interpretation queries
-    - COMPLEX : 60-85 words (max 150 tokens) for multi-domain / career transition queries
+    - STANDARD: 50-75 words (max 125 tokens) for normal interpretation queries
+    - COMPLEX : 50-75 words (max 145 tokens) for multi-domain / career transition queries
     """
     q_low = question.lower()
-    
+
     # Simple indicator / targeted lookup
-    if any(kw in q_low for kw in ["strongest", "which planet", "what planet", "nakshatra", "sign", "house lord", "rashi"]):
+    if any(kw in q_low for kw in ["strongest", "which planet", "what planet", "nakshatra", "house lord"]):
         return "MICRO", 90, "35–50 words"
-    
-    if complexity == "complex" or any(kw in q_low for kw in ["overall", "transition", "move from", "shift", "entire chart", "poem"]):
-        return "COMPLEX", 150, "60–85 words"
-        
-    return "STANDARD", 120, "40–65 words"
+
+    if complexity == "complex" or any(kw in q_low for kw in ["overall", "transition", "move from", "shift", "entire chart", "vs", "versus", "trade-off", "tradeoff", "or"]):
+        return "COMPLEX", 145, "50–75 words"
+
+    return "STANDARD", 125, "50–75 words"
 
 
 def select_relevant_rules(
@@ -150,14 +153,15 @@ def compress_rule_conclusion(rule: Dict[str, Any]) -> str:
                         conclusion += f" ({lord_sign})"
                 return conclusion
 
-    # Known rule mappings to hyper-compact notation
-    known_compact = {
-        "MARRIAGE_7TH_LORD_PLACEMENT": "7L Venus@8H→transformative relationship dynamics",
-        "FINANCE_2ND_LORD_PLACEMENT": "2L Jupiter@11H→wealth expansion & gains",
-    }
-    
-    if r_id in known_compact:
-        return known_compact[r_id]
+    if "LORD_PLACEMENT" in r_id:
+        evidence = rule.get("evidence", {})
+        if isinstance(evidence, dict):
+            lord = evidence.get("lord")
+            lord_house = evidence.get("lord_natal_house")
+            if lord and lord_house:
+                h_match = re.search(r"(\d+)(?:ST|ND|RD|TH)?", r_id)
+                h_num = h_match.group(1) if h_match else ""
+                return f"{h_num}L {lord}@{lord_house}H"
         
     if not r_desc:
         return r_id.lower().replace("_", " ")
@@ -187,7 +191,8 @@ def build_compact_evidence_package(
 ) -> Dict[str, Any]:
     """
     Micro Evidence Builder:
-    Full Chart -> Intent -> Matched Rules -> Extract ONLY facts required by rules/question -> Compress.
+    Extracts dynamic chart facts from live schema (houses 1..12, planets, lords, Dasha)
+    without hardcoded fallbacks or fabricated values.
     """
     planets = chart_data.get("planets", {}) if isinstance(chart_data, dict) else {}
     ascendant = chart_data.get("ascendant", {}) if isinstance(chart_data, dict) else {}
@@ -195,34 +200,57 @@ def build_compact_evidence_package(
     dom = (domain or "general").lower()
     q_low = question.lower()
     selected_rules = select_relevant_rules(matched_rules, intent=intent, max_rules=2)
-    
     rule_descs_str = " ".join(r.get("description", "") for r in selected_rules).lower()
-    
-    needs_ascendant = ("ascendant" in q_low or "lagna" in q_low or "personality" in q_low or "overview" in q_low or "ascendant" in rule_descs_str or "leo" in rule_descs_str)
-    needs_moon = ("moon" in q_low or "nakshatra" in q_low or "rashi" in q_low or "mind" in q_low or "emotion" in q_low or "mental" in q_low or "moon" in rule_descs_str or "scorpio" in rule_descs_str)
-    needs_sun = ("sun" in q_low or "soul" in q_low or "aries" in rule_descs_str)
-    
-    verified_facts = {}
 
-    if needs_ascendant and ascendant and (ascendant.get("rashi") or ascendant.get("sign")):
-        verified_facts["Lagna"] = ascendant.get("rashi") or ascendant.get("sign")
+    verified_facts: Dict[str, str] = {}
 
-    if needs_moon:
-        moon_data = planets.get("Moon", {}) if isinstance(planets, dict) else {}
-        if moon_data.get("rashi") or moon_data.get("sign"):
-            verified_facts["Moon"] = moon_data.get("rashi") or moon_data.get("sign")
+    # 1. Ascendant / Lagna
+    if ascendant and isinstance(ascendant, dict):
+        asc_sign = ascendant.get("rashi") or ascendant.get("sign")
+        if asc_sign:
+            verified_facts["Lagna"] = asc_sign
 
-    if needs_sun:
-        sun_data = planets.get("Sun", {}) if isinstance(planets, dict) else {}
-        if sun_data.get("rashi") or sun_data.get("sign"):
-            verified_facts["Sun"] = sun_data.get("rashi") or sun_data.get("sign")
+    # 2. Dynamic Planetary Placement Extraction for all 9 core planets
+    core_planets = ["Sun", "Moon", "Mars", "Mercury", "Jupiter", "Venus", "Saturn", "Rahu", "Ketu"]
+    for p_name in core_planets:
+        p_low = p_name.lower()
+        should_extract = (
+            p_low in q_low
+            or p_low in rule_descs_str
+            or (p_name == "Moon" and any(k in q_low for k in ["mind", "emotion", "mental", "rashi", "nakshatra"]))
+            or (p_name == "Sun" and any(k in q_low for k in ["soul", "vitality", "confidence"]))
+        )
+        if should_extract and isinstance(planets, dict):
+            p_data = planets.get(p_name, {})
+            if isinstance(p_data, dict):
+                p_rashi = p_data.get("rashi") or p_data.get("sign")
+                p_house = p_data.get("house")
+                if p_rashi and p_house:
+                    verified_facts[p_name] = f"{p_rashi}@{p_house}H"
+                elif p_rashi:
+                    verified_facts[p_name] = p_rashi
 
-    # Domain and query-specific dynamic house evidence extraction for all 12 houses (1..12)
+    # 3. Dynamic House Identification (1..12) from explicit mentions & domain keywords
     try:
         from backend.router.semantic_parser import extract_all_houses
         target_houses = extract_all_houses(q_low)
     except Exception:
         target_houses = []
+
+    domain_keyword_houses = [
+        (["foreign study", "study abroad", "foreign travel", "settle abroad", "overseas", "relocation", "videsh"], [9, 12]),
+        (["cash flow", "cashflow", "savings", "wealth", "income", "gain", "profit"], [2, 11]),
+        (["job", "career", "startup", "business", "profession", "enterprise"], [10, 7]),
+        (["marriage", "spouse", "partner", "relationship"], [7]),
+        (["education", "study", "learning", "college", "degree"], [5, 9]),
+        (["debt", "loan", "health", "illness", "recovery"], [6, 12]),
+        (["property", "real estate", "home", "land"], [4]),
+    ]
+    for keywords, houses in domain_keyword_houses:
+        if any(kw in q_low for kw in keywords):
+            for h in houses:
+                if h not in target_houses:
+                    target_houses.append(h)
 
     # Domain default primary houses
     domain_default_map = {
@@ -231,17 +259,18 @@ def build_compact_evidence_package(
         "finance": [2, 11],
         "property": [4],
         "education": [5, 9],
+        "health": [6, 12],
     }
     for dh in domain_default_map.get(dom, []):
         if dh not in target_houses:
             target_houses.append(dh)
 
-    # Inject verified facts for EVERY target house (1..12)
+    # 4. Inject verified facts for EVERY target house (1..12) from live chart schema
     for h in target_houses:
         if isinstance(h, int) and 1 <= h <= 12:
             h_det = get_house_details(chart_data, h)
             if h_det.get("data_available"):
-                if f"{h}H" not in verified_facts:
+                if f"{h}H" not in verified_facts and h_det.get("sign"):
                     verified_facts[f"{h}H"] = h_det["sign"]
                 if h_det.get("lord_placement_available") and f"{h}L" not in verified_facts:
                     verified_facts[f"{h}L"] = f"{h_det['lord']}@{h_det['lord_house']}H"
@@ -251,59 +280,27 @@ def build_compact_evidence_package(
                     else:
                         verified_facts[f"{h}H_occupants"] = "None (empty)"
 
-    # Special domain aliases and Karakas
-    if 6 in target_houses and (any(k in q_low for k in ["loan", "debt", "borrow", "emi"]) or "6H" in verified_facts):
-        if "6H" in verified_facts:
-            verified_facts["6H_Loan"] = verified_facts["6H"]
-        if "6L" in verified_facts:
-            verified_facts["6L_Loan"] = verified_facts["6L"]
-
-    # Natural Karakas when relevant domain or houses are present
-    if 4 in target_houses or dom == "property":
-        mars_data = planets.get("Mars", {}) if isinstance(planets, dict) else {}
-        if isinstance(mars_data, dict) and mars_data.get("house"):
-            verified_facts["Mars_Property_Karaka"] = f"{mars_data.get('rashi', '')}@{mars_data.get('house')}H"
-
-    if 7 in target_houses or dom == "marriage":
-        ven_data = planets.get("Venus", {}) if isinstance(planets, dict) else {}
-        if isinstance(ven_data, dict) and ven_data.get("house"):
-            verified_facts["Venus_Marriage_Karaka"] = f"Venus@{ven_data.get('house')}H"
-
-    if 11 in target_houses or any(k in q_low for k in ["gain", "income", "profit"]):
-        jup_data = planets.get("Jupiter", {}) if isinstance(planets, dict) else {}
-        if isinstance(jup_data, dict) and jup_data.get("house"):
-            verified_facts["Jupiter_Gains_Karaka"] = f"{jup_data.get('rashi', '')}@{jup_data.get('house')}H"
-
-    if 2 in target_houses or dom == "finance":
-        jup_data = planets.get("Jupiter", {}) if isinstance(planets, dict) else {}
-        if isinstance(jup_data, dict) and jup_data.get("house"):
-            verified_facts["Jupiter_Wealth_Karaka"] = f"Jupiter@{jup_data.get('house')}H"
-
-    if 5 in target_houses or dom == "education":
-        merc_data = planets.get("Mercury", {}) if isinstance(planets, dict) else {}
-        if isinstance(merc_data, dict) and merc_data.get("house"):
-            verified_facts["Mercury_Intellect_Karaka"] = f"Mercury@{merc_data.get('house')}H"
-
-    # 11. All Planetary Placements Fallback
-    if any(k in q_low for k in ["which planet", "planetary placements", "planet positions", "where are my planets", "which house"]):
-        for p_name in ["Sun", "Moon", "Mars", "Mercury", "Jupiter", "Venus", "Saturn", "Rahu", "Ketu"]:
-            p_data = planets.get(p_name, {})
-            if isinstance(p_data, dict) and p_data.get("house"):
-                verified_facts[p_name] = f"{p_data.get('rashi', '')}@{p_data.get('house')}H"
-
-    if dasha_hierarchy:
-        m = dasha_hierarchy.get("current_mahadasha") or dasha_hierarchy.get("mahadasha", {}).get("planet", "")
-        a = dasha_hierarchy.get("current_antardasha") or dasha_hierarchy.get("antardasha", {}).get("planet", "")
+    # 5. Extract active Dasha period from live runtime hierarchy
+    d_src = dasha_hierarchy or (chart_data.get("dasha_hierarchy") if isinstance(chart_data, dict) else None) or (chart_data.get("dasha") if isinstance(chart_data, dict) else None)
+    if isinstance(d_src, dict):
+        m = d_src.get("current_mahadasha") or d_src.get("mahadasha", {}).get("planet") or d_src.get("active_mahadasha")
+        a = d_src.get("current_antardasha") or d_src.get("antardasha", {}).get("planet") or d_src.get("active_antardasha")
         if m:
-            verified_facts["Dasha"] = f"{m}-{a}" if a else m
+            verified_facts["Dasha"] = f"{m}-{a}" if a else str(m)
 
-    # Safety fallback if no domain specific facts extracted
+    # 6. Fallback only to existing live chart placements, never fabricated values
     if not verified_facts:
-        verified_facts["Lagna"] = ascendant.get("rashi") or ascendant.get("sign", "Leo")
-        if dasha_hierarchy:
-            m = dasha_hierarchy.get("current_mahadasha", "Mars")
-            a = dasha_hierarchy.get("current_antardasha", "Rahu")
-            verified_facts["Dasha"] = f"{m}-{a}"
+        if ascendant and isinstance(ascendant, dict):
+            asc_s = ascendant.get("rashi") or ascendant.get("sign")
+            if asc_s:
+                verified_facts["Lagna"] = asc_s
+        elif isinstance(planets, dict):
+            for fallback_p in ["Sun", "Moon", "Jupiter"]:
+                if fallback_p in planets and isinstance(planets[fallback_p], dict):
+                    f_rashi = planets[fallback_p].get("rashi")
+                    if f_rashi:
+                        verified_facts[fallback_p] = f_rashi
+                        break
 
     return {
         "domain": domain,
@@ -329,7 +326,11 @@ def format_llm_assisted_prompt(question: str, evidence_package: Dict[str, Any]) 
     facts_str = "; ".join(facts_parts) if facts_parts else "No verified chart facts available"
 
     rule_parts = [compress_rule_conclusion(r) for r in rules]
-    rules_str = "; ".join(rule_parts) if rule_parts else "No matched rules available"
+    rules_str = (
+        "; ".join(rule_parts)
+        if rule_parts
+        else "Apply classical Vedic principles (Bhavas, Lords, Karakas) to interpret facts (F) for this question."
+    )
 
     prompt = (
         f"Q: {question}\n\n"

@@ -378,11 +378,20 @@ async def log_chat_interaction(
 
         # 3. Normalize execution mode & error locking flags
         raw_mode = (execution_mode or "").upper().strip()
-        valid_modes = {"LOCAL", "HYBRID", "LLM", "UNRESOLVED", "CRASH_FALLBACK", "UNRESOLVED_INTENT"}
+        valid_modes = {
+            "LOCAL", "HYBRID", "LLM", "UNRESOLVED", "CRASH_FALLBACK",
+            "UNRESOLVED_INTENT", "UNRESOLVED_ASTRO_QUERY", "SUCCESS"
+        }
 
         unresolved_flag = bool(is_unresolved)
 
-        if raw_mode == "UNRESOLVED_INTENT":
+        if raw_mode == "UNRESOLVED_ASTRO_QUERY":
+            norm_mode = "UNRESOLVED_ASTRO_QUERY"
+            unresolved_flag = True
+        elif raw_mode == "SUCCESS":
+            norm_mode = "SUCCESS"
+            unresolved_flag = False
+        elif raw_mode == "UNRESOLVED_INTENT":
             norm_mode = "UNRESOLVED_INTENT"
             unresolved_flag = True
         elif raw_mode == "CRASH_FALLBACK":
@@ -403,11 +412,14 @@ async def log_chat_interaction(
             elif any(k in raw_mode for k in ["CRASH", "FAIL"]):
                 norm_mode = "CRASH_FALLBACK"
                 unresolved_flag = True
+            elif any(k in raw_mode for k in ["ASTRO", "FALLBACK"]):
+                norm_mode = "UNRESOLVED_ASTRO_QUERY"
+                unresolved_flag = True
             elif any(k in raw_mode for k in ["INTENT", "OUT_OF_SCOPE"]):
                 norm_mode = "UNRESOLVED_INTENT"
                 unresolved_flag = True
             else:
-                norm_mode = "LOCAL"
+                norm_mode = "SUCCESS" if not unresolved_flag else "LOCAL"
 
         # 4. Normalize detected_intents to valid JSON structure
         intents_payload = detected_intents
@@ -503,6 +515,57 @@ async def log_unresolved_intent(
         err_trace = traceback.format_exc()
         logger.error("[DATABASE] Failed to log unresolved intent to Neon: %s\n%s", exc, err_trace)
         print(f"[RENDER DATABASE ERROR] Failed to log unresolved intent: {exc}", flush=True)
+        return None
+
+
+async def log_unresolved_astro_query(
+    session_id: Union[str, uuid.UUID],
+    user_query: str,
+    bot_response: str = "Please share an appropriate question so I can assist you better with your astrology query.",
+    db: Optional[AsyncSession] = None,
+) -> Optional[ChatMessage]:
+    """
+    High-visibility logging to stdout and Neon PostgreSQL persistence for queries
+    that return the fallback phrase:
+    'Please share an appropriate question so I can assist you better with your astrology query.'
+
+    Invariants:
+    1. High-visibility warning to Render stdout via Python logger.
+    2. Inserts into `chat_messages` table with execution_mode='UNRESOLVED_ASTRO_QUERY',
+       is_unresolved=True, and timestamp=UTC now.
+    3. Non-blocking error handling: guarantees the API response to the client is never broken.
+    """
+    logger.warning(
+        "\n%s\n[UNRESOLVED ASTRO QUERY WARNING]\n"
+        "Session ID   : %s\n"
+        "User Query   : %s\n"
+        "Bot Response : %s\n"
+        "Execution Mode: UNRESOLVED_ASTRO_QUERY\n%s",
+        "=" * 65,
+        session_id,
+        user_query,
+        bot_response,
+        "=" * 65,
+    )
+    print(
+        f"[UNRESOLVED ASTRO QUERY WARNING] Session={session_id} | Query='{user_query}' | ExecutionMode=UNRESOLVED_ASTRO_QUERY",
+        flush=True,
+    )
+
+    try:
+        return await log_chat_interaction(
+            session_id=session_id,
+            user_query=user_query,
+            bot_response=bot_response,
+            execution_mode="UNRESOLVED_ASTRO_QUERY",
+            is_unresolved=True,
+            detected_intents=["unresolved_astro_query"],
+            db=db,
+        )
+    except Exception as exc:
+        err_trace = traceback.format_exc()
+        logger.error("[DATABASE] Failed to log unresolved astro query to Neon: %s\n%s", exc, err_trace)
+        print(f"[RENDER DATABASE ERROR] Failed to log unresolved astro query: {exc}", flush=True)
         return None
 
 

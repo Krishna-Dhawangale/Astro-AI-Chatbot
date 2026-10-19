@@ -325,6 +325,61 @@ def _synthesize_feasibility_answer(
         return f"{opening}\n\n**Astrological Analysis ({asc} Ascendant, {moon} Moon sign)**:\n{body}\n\n**Key Recommendation**: {conclusion}"
 
 
+BHAVA_INFO: Dict[int, Dict[str, str]] = {
+    1: {"name": "Lagna Bhava", "domain": "vitality and personal leadership", "hi_domain": "vitality aur vyaktitva"},
+    2: {"name": "Dhana Bhava", "domain": "accumulated wealth and family assets", "hi_domain": "dhan sanchay aur parivar"},
+    3: {"name": "Sahaja Bhava", "domain": "initiative, courage, and communication", "hi_domain": "parakram aur communication"},
+    4: {"name": "Sukha Bhava", "domain": "inner peace, domestic life, and assets", "hi_domain": "griha sukh aur emotional peace"},
+    5: {"name": "Putra Bhava", "domain": "intellect, creativity, and strategic insight", "hi_domain": "buddhi aur creative intelligence"},
+    6: {"name": "Ari Bhava", "domain": "problem resolution, daily work, and resilience", "hi_domain": "work routine aur problem solving"},
+    7: {"name": "Kalatra Bhava", "domain": "partnerships, marriage, and public relations", "hi_domain": "partnerships, vivah, aur public ties"},
+    8: {"name": "Randhra Bhava", "domain": "deep transformation, research, and longevity", "hi_domain": "transformation aur research depth"},
+    9: {"name": "Bhagya Bhava", "domain": "higher wisdom, fortune, and ethical purpose", "hi_domain": "bhagya aur higher learning"},
+    10: {"name": "Karma Bhava", "domain": "career authority, professional action, and status", "hi_domain": "career authority aur professional action"},
+    11: {"name": "Labha Bhava", "domain": "income gains, professional networks, and aspirations", "hi_domain": "aarthik labh aur networks"},
+    12: {"name": "Vyaya Bhava", "domain": "solitude, spiritual growth, and restful recovery", "hi_domain": "spiritual growth aur rest recovery"},
+}
+
+ORDINALS: Dict[int, str] = {
+    1: "1st", 2: "2nd", 3: "3rd", 4: "4th", 5: "5th", 6: "6th",
+    7: "7th", 8: "8th", 9: "9th", 10: "10th", 11: "11th", 12: "12th"
+}
+
+def _extract_target_house(question: str = "", domain: str = "") -> int:
+    import re
+    q_low = (question or "").lower()
+    house_words = {
+        "first": 1, "1st": 1, "second": 2, "2nd": 2, "third": 3, "3rd": 3,
+        "fourth": 4, "4th": 4, "fifth": 5, "5th": 5, "sixth": 6, "6th": 6,
+        "seventh": 7, "7th": 7, "eighth": 8, "8th": 8, "ninth": 9, "9th": 9,
+        "tenth": 10, "10th": 10, "eleventh": 11, "11th": 11, "twelfth": 12, "12th": 12
+    }
+    for word, h_num in house_words.items():
+        if re.search(rf"\b{word}\s+(?:house|lord|ghar|bhav|bhava)\b", q_low) or re.search(rf"\b(?:house|lord|ghar|bhav|bhava)\s+{word}\b", q_low):
+            return h_num
+        if word in ["1st", "2nd", "3rd", "4th", "5th", "6th", "7th", "8th", "9th", "10th", "11th", "12th"] and re.search(rf"\b{word}\b", q_low):
+            return h_num
+
+    match = re.search(r"\b(?:house|bhav|ghar)\s*(\d{1,2})\b", q_low) or re.search(r"\b(\d{1,2})(?:st|nd|rd|th)?\s*(?:house|lord|bhav|ghar)\b", q_low)
+    if match:
+        val = int(match.group(1))
+        if 1 <= val <= 12:
+            return val
+
+    domain_defaults = {
+        "career": 10,
+        "marriage": 7,
+        "relationship": 7,
+        "finance": 2,
+        "wealth": 2,
+        "education": 5,
+        "health": 6,
+        "property": 4,
+        "spirituality": 9,
+    }
+    return domain_defaults.get((domain or "").lower(), 10)
+
+
 def _synthesize_comparison_answer(
     domain: str,
     asc: str,
@@ -344,17 +399,19 @@ def _synthesize_comparison_answer(
         h7_sign, h7_lord = _resolve_house_and_lord(asc, 7)
 
     if is_hinglish:
-        opening = "Job aur business ke comparison mein, aapka chart shuruat mein structured employment (Job) ko favor karta hai, jabki aage chalkar independent enterprise (Business) ke liye bhi strong capacity hold karta hai."
-        comp_job = f"- **Job / Structured Employment**: 10th house ({h10_sign}, lord {h10_lord}) analytical execution, reliable financial income, aur stable progression ko support karta hai."
-        comp_biz = f"- **Business / Independent Venture**: 7th house ({h7_sign}, lord {h7_lord}) aur 11th house commercial partnerships ko favor karte hain jab Dasha periods commercially active hon."
-        conclusion = "Pehle Job se solid domain expertise aur capital reserve build karein; yeh foundation future business launch ko secure aur profitable banayegi."
-        return f"{opening}\n\n**Comparative Breakdown ({asc} Lagna, {moon} Moon)**:\n{comp_job}\n{comp_biz}\n\n**Strategic Conclusion**: {conclusion}"
+        return (
+            f"Job aur business ke comparison mein, aapka chart shuruat mein structured employment (Job) ko favor karta hai "
+            f"taaki domain expertise aur capital reserve build ho sakein. 10th house ({h10_sign}, lord {h10_lord}) methodical "
+            f"progression ko support karta hai, jabki 7th house ({h7_sign}, lord {h7_lord}) commercial indicators supportive "
+            f"Dashas mein enterprise capacity activate karte hain. Phased transition sabse secure aur profitable strategy hai."
+        )
     else:
-        opening = "Between structured employment and an independent business, your chart initially favors organizational roles for stability and capital building, while holding strong entrepreneurial capability for later phases."
-        comp_job = f"- **Structured Employment**: Your 10th house in {h10_sign} ruled by {h10_lord} emphasizes methodical organizational execution, predictable financial security, and cumulative authority."
-        comp_biz = f"- **Independent Business**: Meanwhile, commercial indicators in your 7th house ({h7_sign}, lord {h7_lord}) and 11th house demonstrate robust enterprise potential as supportive Dashas activate."
-        conclusion = "Building domain mastery and financial capital in a structured role first will establish the ideal launchpad for an independent venture later."
-        return f"{opening}\n\n**Comparative Analysis ({asc} Ascendant, {moon} Moon sign)**:\n{comp_job}\n{comp_biz}\n\n**Strategic Recommendation**: {conclusion}"
+        return (
+            f"Between structured employment and an independent business, your chart initially favors organizational roles "
+            f"to establish domain authority and capital reserves before expanding independently. Your 10th house in {h10_sign} "
+            f"ruled by {h10_lord} anchors job stability, while 7th house ({h7_sign}, lord {h7_lord}) commercial enterprise capacity "
+            f"matures during later supportive Dashas. A phased transition provides the most sustainable, low-risk trajectory."
+        )
 
 
 def _synthesize_growth_outlook_answer(
@@ -386,28 +443,42 @@ def _synthesize_direct_placement_answer(
     domain: str,
     asc: str,
     moon: str,
-    h10_sign: Optional[str],
-    h10_lord: Optional[str],
-    c_maha: str,
-    positives: List[str],
-    challenges: List[str],
-    is_hinglish: bool = False
+    h10_sign: Optional[str] = None,
+    h10_lord: Optional[str] = None,
+    c_maha: str = "",
+    positives: Optional[List[str]] = None,
+    challenges: Optional[List[str]] = None,
+    is_hinglish: bool = False,
+    house_num: int = 10,
+    house_sign: Optional[str] = None,
+    house_lord: Optional[str] = None,
 ) -> str:
-    if not h10_sign or not h10_lord:
-        h10_sign, h10_lord = _resolve_house_and_lord(asc, 10)
+    h_idx = max(1, min(12, int(house_num or 10)))
+    h_sign = house_sign or (h10_sign if h_idx == 10 else None)
+    h_lord = house_lord or (h10_lord if h_idx == 10 else None)
+
+    if not h_sign or not h_lord:
+        resolved_s, resolved_l = _resolve_house_and_lord(asc, h_idx)
+        h_sign = h_sign or resolved_s
+        h_lord = h_lord or resolved_l
+
+    info = BHAVA_INFO.get(h_idx, BHAVA_INFO[10])
+    ord_str = ORDINALS.get(h_idx, f"{h_idx}th")
 
     if is_hinglish:
-        opening = f"Aapka 10th lord {h10_lord} ({h10_sign}) aapke career ko methodical discipline, organizational integrity, aur long-term authority ke saath anchor karta hai."
-        mechanics = "Vedic astrology mein 10th house Karma Bhava (professional action) ko govern karta hai. Is placement ke saath professional growth patience aur structured execution se reward hoti hai."
-        body = _connect_evidence_phrases(positives, challenges, is_hinglish=True)
-        conclusion = "Is placement ko analytical planning aur structured execution wale roles mein utilize karna aapki potential ko maximize karega."
-        return f"{opening}\n\n**Placement Dynamics ({asc} Lagna, {moon} Moon)**:\n{mechanics}\n\n{body}\n\n**Core Takeaway**: {conclusion}"
+        return (
+            f"Aapka {ord_str} house ({info['name']}) {h_sign} rashi mein sthit hai jiske lord {h_lord} hain, "
+            f"jo aapke {info['hi_domain']} ko directly anchor karte hain. Is placement ke saath steady discipline "
+            f"aur patient execution aapke outcomes ko mazboot banate hain. Structured focus maintain karna "
+            f"aapki potential ko long-term maximize karega."
+        )
     else:
-        opening = f"Your 10th lord {h10_lord} placed in {h10_sign} directly anchors your career in methodical discipline, organizational integrity, and long-term authority."
-        mechanics = f"In Vedic astrology, the 10th house governs Karma Bhava (professional action and public standing). With {h10_lord} overseeing this domain, career elevation rewards patient persistence and structured responsibility."
-        body = _connect_evidence_phrases(positives, challenges, is_hinglish=False)
-        conclusion = "Channeling this placement into roles that demand technical precision and structured leadership maximizes your professional fulfillment."
-        return f"{opening}\n\n**Astrological Mechanics ({asc} Ascendant, {moon} Moon sign)**:\n{mechanics}\n\n{body}\n\n**Core Takeaway**: {conclusion}"
+        return (
+            f"Your {ord_str} house ({info['name']}) in {h_sign} is ruled by {h_lord}, directly anchoring your "
+            f"{info['domain']}. With {h_lord} overseeing this area, steady discipline and methodical responsibility "
+            f"yield cumulative progress across your active phases. Channeling efforts into structured execution "
+            f"rather than speculative haste maximizes this placement's enduring fulfillment."
+        )
 
 
 def synthesize_local_answer(
@@ -591,12 +662,27 @@ def synthesize_local_answer(
             is_hinglish=is_hinglish
         )
     elif q_type == "direct_placement":
+        target_h = _extract_target_house(question, domain=domain)
+        t_sign = facts.get(f"house_{target_h}_sign") or facts.get(f"{target_h}H")
+        t_lord = facts.get(f"house_{target_h}_lord") or facts.get(f"{target_h}L")
+        if target_h == 10:
+            t_sign = t_sign or h10_sign
+            t_lord = t_lord or h10_lord
+        elif target_h == 7:
+            t_sign = t_sign or h7_sign
+            t_lord = t_lord or h7_lord
+        if not t_sign or not t_lord:
+            res_s, res_l = _resolve_house_and_lord(asc, target_h)
+            t_sign = t_sign or res_s
+            t_lord = t_lord or res_l
+
         res = _synthesize_direct_placement_answer(
             domain=domain,
             asc=asc,
             moon=moon,
-            h10_sign=h10_sign,
-            h10_lord=h10_lord,
+            house_num=target_h,
+            house_sign=t_sign,
+            house_lord=t_lord,
             c_maha=c_maha,
             positives=positives,
             challenges=challenges,
