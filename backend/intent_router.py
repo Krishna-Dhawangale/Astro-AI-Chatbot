@@ -434,16 +434,28 @@ def classify_query_intent(
 
     # Step 5: Astrological House-Related Query Handling (Pure Factual Lookup Only)
     try:
-        from backend.astrology.house_engine import is_pure_factual_house_query, extract_house_number
-        if is_pure_factual_house_query(query):
-            target_house = extract_house_number(query) or 7
-            return IntentClassificationResult(
-                primary_intent="house_analysis",
-                detected_intents=["house_analysis"],
-                is_hinglish=is_hinglish,
-                is_refusal=False,
-                metadata={"house_number": target_house}
-            )
+        # Strict guardrail: Complex, analytical, or multi-clause keywords must bypass local house fallback
+        analytical_keywords = [
+            "dasha", "mahadasha", "antardasha", "timing", "timeline", "when will",
+            "career", "balance", "manage", "startup", "job", "work-life",
+            "foreign", "shift", "relocation", "overseas", "videsh", "study abroad",
+            "finance", "cash flow", "cashflow", "invest", "investment", "debt", "loan",
+            "kya mujhe", "kaise", "affect", "versus", " vs ", "trade-off", "tradeoff",
+            "should i", "can i", "is it safe", "is it advisable", "karna chahiye"
+        ]
+        is_analytical = any(kw in q_lower for kw in analytical_keywords) or len(query.strip().split()) >= 12
+
+        if not is_analytical:
+            from backend.astrology.house_engine import is_pure_factual_house_query, extract_house_number
+            if is_pure_factual_house_query(query):
+                target_house = extract_house_number(query) or 7
+                return IntentClassificationResult(
+                    primary_intent="house_analysis",
+                    detected_intents=["house_analysis"],
+                    is_hinglish=is_hinglish,
+                    is_refusal=False,
+                    metadata={"house_number": target_house}
+                )
     except Exception:
         pass
 
