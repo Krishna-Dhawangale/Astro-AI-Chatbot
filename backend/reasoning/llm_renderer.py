@@ -44,6 +44,8 @@ def get_renderer_system_instruction(word_limit_str: str = "40–65 words", is_hi
             "Do NOT default to pure English. "
             "Treat supplied chart facts as authoritative; never invent or alter planetary placements, houses, or Dasha periods. "
             "Apply established Vedic principles to interpret verified facts and answer the user's question directly with authority and empathy. "
+            "When rules (R) are provided, use them as guidance; if no specific rule is matched, synthesize your answer directly from the supplied chart facts (F) using core Vedic principles (Bhavas, Karakas, and lordships). "
+            "Never refuse an astrological inquiry simply because a pre-computed rule was not matched in R. "
             "CRITICAL BAN: You ARE the qualified Vedic Astrologer. NEVER tell the user to consult an astrologer or say 'kisi qualified Vedic astrologer se sampark karein'. You MUST deliver the direct astrological guidance yourself based on their chart. "
             "Use cautious language; never guarantee predictions. "
             "Do not mention internal rules or system details. "
@@ -52,10 +54,13 @@ def get_renderer_system_instruction(word_limit_str: str = "40–65 words", is_hi
         )
     return (
         "You are an expert Vedic astrology synthesizer. "
-        "Treat supplied chart facts as authoritative; never invent or alter planetary placements, houses, or Dasha periods. "
+        "Treat supplied chart facts (F) as authoritative; never invent or alter planetary placements, houses, or Dasha periods. "
+        "Answer the exact question directly in the very first sentence without filler preambles. "
         "Apply established Vedic principles to interpret the verified facts and answer the user's question directly with authority and empathy. "
+        "When rules (R) are provided, use them as guidance; if no specific rule is matched, synthesize your answer directly from the supplied chart facts (F) using core Vedic principles (Bhavas, Karakas, and lordships). "
+        "Never refuse a valid astrological inquiry simply because a pre-computed rule was not matched in R. "
         "If the question involves multiple factors or comparative choices, synthesize them rather than repeating isolated placements. "
-        "If evidence is partial, provide a helpful qualified interpretation and disclose limitations naturally without repeating generic disclaimers. "
+        "If evidence is partial or the question is ambiguous, provide a helpful qualified interpretation and disclose limitations naturally without repeating generic disclaimers. "
         "For wellness or health queries, provide astrological perspectives only, never medical diagnoses. "
         "CRITICAL BAN: You ARE the qualified Vedic Astrologer. NEVER tell the user to consult a professional astrologer, seek an astrologer, or get a personalized chart analysis. You MUST deliver the direct astrological guidance yourself based on their chart. "
         "Use cautious language; never guarantee outcomes. "
@@ -198,8 +203,9 @@ def build_compact_evidence_package(
     
     rule_descs_str = " ".join(r.get("description", "") for r in selected_rules).lower()
     
+    is_mental_peace = any(k in q_low for k in ["mental peace", "mentral peace", "peace of mind", "inner peace", "peace", "calm", "burnout", "overthink"])
     needs_ascendant = ("ascendant" in q_low or "lagna" in q_low or "personality" in q_low or "overview" in q_low or "ascendant" in rule_descs_str or "leo" in rule_descs_str)
-    needs_moon = ("moon" in q_low or "nakshatra" in q_low or "rashi" in q_low or "mind" in q_low or "emotion" in q_low or "mental" in q_low or "moon" in rule_descs_str or "scorpio" in rule_descs_str)
+    needs_moon = (is_mental_peace or "moon" in q_low or "nakshatra" in q_low or "rashi" in q_low or "mind" in q_low or "emotion" in q_low or "mental" in q_low or "mentral" in q_low or "moon" in rule_descs_str or "scorpio" in rule_descs_str)
     needs_sun = ("sun" in q_low or "soul" in q_low or "aries" in rule_descs_str)
     
     verified_facts = {}
@@ -224,9 +230,15 @@ def build_compact_evidence_package(
     except Exception:
         target_houses = []
 
+    # Mental peace and emotional wellbeing -> Sukha Bhava (4H)
+    is_career_word = any(k in q_low for k in ["career", "job", "profession", "work", "working", "10th house", "10th", "naukri", "promotion", "salary"])
+    if is_mental_peace or any(k in q_low for k in ["peace of mind", "inner peace", "peace", "calm", "sukha"]):
+        if 4 not in target_houses:
+            target_houses.append(4)
+
     # Domain default primary houses
     domain_default_map = {
-        "career": [10],
+        "career": [10] if (not is_mental_peace or is_career_word) else [],
         "marriage": [7],
         "finance": [2, 11],
         "property": [4],
@@ -251,6 +263,25 @@ def build_compact_evidence_package(
                     else:
                         verified_facts[f"{h}H_occupants"] = "None (empty)"
 
+    # Career 10th lord detailed rule evidence if 10H is queried
+    if 10 in target_houses:
+        tenth_lord_rule = next(
+            (
+                rule for rule in matched_rules
+                if rule.get("rule_id") == "CAREER_10TH_LORD_PLACEMENT"
+                and rule.get("matched", True)
+            ),
+            None,
+        )
+        rule_evidence = tenth_lord_rule.get("evidence", {}) if tenth_lord_rule else {}
+        if isinstance(rule_evidence, dict):
+            lord_house = rule_evidence.get("lord_natal_house")
+            if lord_house is not None:
+                verified_facts["10L_placement"] = f"{lord_house}H"
+                lord_sign = rule_evidence.get("lord_natal_rashi")
+                if isinstance(lord_sign, str) and lord_sign:
+                    verified_facts["10L_placement"] += f" ({lord_sign})"
+
     # Special domain aliases and Karakas
     if 6 in target_houses and (any(k in q_low for k in ["loan", "debt", "borrow", "emi"]) or "6H" in verified_facts):
         if "6H" in verified_facts:
@@ -259,7 +290,8 @@ def build_compact_evidence_package(
             verified_facts["6L_Loan"] = verified_facts["6L"]
 
     # Natural Karakas when relevant domain or houses are present
-    if 4 in target_houses or dom == "property":
+    is_prop_query = dom == "property" or any(k in q_low for k in ["property", "real estate", "house purchase", "buying a house", "purchasing a house", "buy a house", "purchase a house", "land", "flat", "plot", "conveyance", "vehicle"])
+    if is_prop_query:
         mars_data = planets.get("Mars", {}) if isinstance(planets, dict) else {}
         if isinstance(mars_data, dict) and mars_data.get("house"):
             verified_facts["Mars_Property_Karaka"] = f"{mars_data.get('rashi', '')}@{mars_data.get('house')}H"
@@ -328,8 +360,11 @@ def format_llm_assisted_prompt(question: str, evidence_package: Dict[str, Any]) 
     facts_parts = [f"{k}={v}" for k, v in facts.items()]
     facts_str = "; ".join(facts_parts) if facts_parts else "No verified chart facts available"
 
-    rule_parts = [compress_rule_conclusion(r) for r in rules]
-    rules_str = "; ".join(rule_parts) if rule_parts else "No matched rules available"
+    if rules:
+        rule_parts = [compress_rule_conclusion(r) for r in rules]
+        rules_str = "; ".join(rule_parts)
+    else:
+        rules_str = "Apply classical Vedic principles (Bhavas, Lords, Karakas) to interpret facts (F) for this question."
 
     prompt = (
         f"Q: {question}\n\n"

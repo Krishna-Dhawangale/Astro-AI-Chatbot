@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 import re
 import joblib
@@ -171,7 +172,12 @@ def extract_context_features(question: str) -> Dict[str, Any]:
 
     health_signal = False
     if "health" not in negated_domains:
-        health_keywords = ["health", "disease", "stress", "sehat", "energy", "sleep", "neend", "tired", "fatigue", "weakness", "exhausted", "bimar", "illness", "insomnia"]
+        health_keywords = [
+            "health", "disease", "stress", "sehat", "energy", "sleep", "neend", "tired",
+            "fatigue", "weakness", "exhausted", "bimar", "illness", "insomnia",
+            "mental peace", "mentral peace", "peace of mind", "inner peace", "mental calm",
+            "mental balance", "overthinking", "burnout", "focus instability"
+        ]
         if any(re.search(rf"\b{re.escape(k)}\b", q_low) for k in health_keywords):
             health_signal = True
 

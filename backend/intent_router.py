@@ -164,19 +164,31 @@ def is_garbage_or_special_char_input(text: str) -> Tuple[bool, str]:
 
     clean_alpha = re.sub(r"[^a-zA-Z]", "", stripped.lower())
 
-    # Case 7: Keyboard row mashing (e.g. 'asdfghjk', 'qwerty', 'lkjhgfdsa')
+    # Case 7: Keyboard row mashing across entire input if single token
     if len(clean_alpha) >= 4 and any(clean_alpha in row for row in KEYBOARD_MASH_ROWS):
         return True, "keyboard_row_mash"
 
-    # Case 8: Long consonant cluster of 5+ letters (e.g. 'sdfghjk')
-    if re.search(r"[bcdfghjklmnpqrstvwxz]{5,}", clean_alpha):
-        return True, "consonant_cluster_gibberish"
+    # Legitimate English/astrological words with 5+ consonants
+    CONSONANT_EXEMPTIONS = {"strengths", "strength", "catchphrase", "births", "lengths"}
 
-    # Case 9: Consonant-only gibberish of 3+ letters without vowels (e.g. 'asdf', 'ghjk', 'qwrt', 'xyz')
-    if len(clean_alpha) >= 3 and not any(v in clean_alpha for v in ["a", "e", "i", "o", "u", "y"]):
-        # Exempt standard astrology abbreviations if any
-        if clean_alpha not in ["mc", "ic", "d9", "d10", "d1"]:
-            return True, "consonant_gibberish"
+    # Evaluate consonant clusters and vowel presence per individual word
+    for word in stripped.split():
+        clean_word = re.sub(r"[^a-zA-Z]", "", word.lower())
+        if not clean_word:
+            continue
+
+        # Case 7b: Keyboard row mashing per token
+        if len(clean_word) >= 4 and any(clean_word in row for row in KEYBOARD_MASH_ROWS):
+            return True, "keyboard_row_mash"
+
+        # Case 8: Long consonant cluster of 5+ letters within a single word (e.g. 'sdfghjk')
+        if clean_word not in CONSONANT_EXEMPTIONS and re.search(r"[bcdfghjklmnpqrstvwxz]{5,}", clean_word):
+            return True, "consonant_cluster_gibberish"
+
+        # Case 9: Consonant-only gibberish of 3+ letters without vowels within a single word
+        if len(clean_word) >= 3 and not any(v in clean_word for v in ["a", "e", "i", "o", "u", "y"]):
+            if clean_word not in ["mc", "ic", "d9", "d10", "d1", "pm", "am", "dr", "mr", "mrs"]:
+                return True, "consonant_gibberish"
 
     return False, ""
 
