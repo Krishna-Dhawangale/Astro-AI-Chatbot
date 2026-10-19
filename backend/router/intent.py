@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 import joblib
 from typing import Dict, Any, Tuple
 
@@ -281,8 +282,8 @@ def resolve_intent_overlay(question: str, raw_intent: str, raw_confidence: float
     if any(k in q_lower for k in ["crush", "like them", "confess", "propose", "good couple"]) and raw_intent not in ["relationship", "love_marriage"]:
         return "relationship", "explicit_relationship_crush_keyword_match"
 
-    if "what is a nakshatra" in q_lower or "what is a birth chart" in q_lower:
-        return "definition", "explicit_definition_keyword_match"
+    if re.search(r"\b(?:\d+(?:st|nd|rd|th)?|first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth)\s*(?:house|bhava|ghar)\b|\bplanets?\s+in\s+.*house\b", q_lower):
+        return "house_analysis", "explicit_house_query_match"
 
     # 3. Default: keep raw ML intent
     return raw_intent, "ml_model_prediction"

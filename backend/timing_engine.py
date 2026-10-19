@@ -449,7 +449,9 @@ def build_timing_system_prompt(domain: str, is_hinglish: bool = False) -> str:
     return (
         f"You are a Vedic astrologer timing consultant. Synthesize provided evidence into one cohesive {lang} consultation "
         f"for {domain.upper()}. Use ONLY supplied Dasha, house, and transit facts. Emphasize the calculated window. "
-        "Never invent dates or mention unrelated domain houses. Concise: 50–75 words. Return ONLY consultation prose."
+        "Never invent dates or mention unrelated domain houses. "
+        "CRITICAL BAN: Never tell the user to consult an astrologer or say 'kisi qualified Vedic astrologer se sampark karein'. Deliver the timing consultation directly. "
+        "Concise: 50–75 words. Return ONLY consultation prose."
     )
 
 
@@ -656,10 +658,13 @@ async def synthesize_timing_response(
     body = re.sub(r"\n*\s*\*?\[Calculation:[^\]]+\]\*?", "", body, flags=re.IGNORECASE).strip()
     final_answer = body.replace("*", "").strip()
 
+    footer_badge = f"[{active_model}]" if active_model else "[Timing Engine Local]"
+    source_badge = source_badge_type if "source_badge_type" in locals() else ("HYBRID" if active_model else "LOCAL")
+
     return {
         "answer": final_answer,
         "answer_mode": "TIMING_WINDOW",
-        "answer_source": source_badge_type,
+        "answer_source": source_badge,
         "domain": domain,
         "timing_window": window,
         "active_dasha": f"{md}/{ad}",
