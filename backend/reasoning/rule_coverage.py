@@ -201,6 +201,8 @@ def evaluate_rule_coverage(
 
     supported_domains = {"career", "marriage", "finance", "education", "property", "health", "multi_domain"}
     domain_match = dom in supported_domains or dom == "other"
+    task = analyze_question_task(question)
+    is_synthesis_gap = task.get("is_synthesis_gap", False)
 
     # 1. Boundary Check (Tier 1)
     if is_unsupported_boundary_query(question):
@@ -282,9 +284,9 @@ def evaluate_rule_coverage(
     is_compound_uncovered = len(distinct_topics) >= 2 or any(k in q_low for k in ["should i buy or rent", "better to buy or rent", "will it cause stress"])
 
     exact_rule_match = False
-    if evidence_complete and intent_match and not is_complex_uncovered and not is_compound_uncovered:
+    if evidence_complete and intent_match and not is_complex_uncovered and not is_compound_uncovered and not is_synthesis_gap:
         exact_rule_match = True
-    elif evidence_complete and not is_complex_uncovered and not is_compound_uncovered and ("which career" in q_low or "what is my lagna" in q_low or q_low.strip("?.!") == "my current dasha"):
+    elif evidence_complete and not is_complex_uncovered and not is_compound_uncovered and not is_synthesis_gap and ("which career" in q_low or "what is my lagna" in q_low or q_low.strip("?.!") == "my current dasha"):
         exact_rule_match = True
 
     if exact_rule_match:

@@ -477,6 +477,10 @@ def synthesize_local_answer(
             "The system avoids generating ungrounded claims when evidence is incomplete."
         )
 
+    task_req = analyze_question_task(question)
+    if task_req.get("is_synthesis_gap", False):
+        return None
+
     facts = evidence.facts
     evals = evidence.evaluations
     interp = evidence.interpretation

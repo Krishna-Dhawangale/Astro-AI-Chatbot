@@ -262,12 +262,14 @@ try:
         is_house_query,
         extract_house_number,
         synthesize_house_analysis,
+        qualifies_for_direct_house_fact,
     )
 except ImportError:
     from astrology.house_engine import (
         is_house_query,
         extract_house_number,
         synthesize_house_analysis,
+        qualifies_for_direct_house_fact,
     )
 
 FRONTEND_PATH = os.path.join(BASE_DIR, "..", "frontend", "index.html")
@@ -3012,8 +3014,10 @@ async def _handle_chat_response(request: ChatRequest, session_id: Optional[str] 
 
     # ---------------------------------------------------------------------------
     # Requirement 4: Astrological House-Related Query Handling (Bhava Karakas)
+    # Only pure factual house queries (sign, lord, occupancy, basic meaning) execute here.
+    # Complex multi-factor or decision queries pass through to the full router & LLM.
     # ---------------------------------------------------------------------------
-    if is_house_query(request.query):
+    if is_house_query(request.query) and qualifies_for_direct_house_fact(request.query):
         is_hinglish_user = is_hinglish_query(request.query)
         house_res = synthesize_house_analysis(
             query=request.query,

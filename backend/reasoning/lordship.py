@@ -83,7 +83,7 @@ def get_house_details(norm_chart: Dict[str, Any], house_num: int) -> Dict[str, A
         return empty_result
 
     ascendant = norm_chart.get("ascendant") or {}
-    asc_rashi = ascendant.get("rashi") if isinstance(ascendant, dict) else None
+    asc_rashi = (ascendant.get("rashi") or ascendant.get("sign")) if isinstance(ascendant, dict) else None
 
     if not isinstance(asc_rashi, str) or asc_rashi not in RASHI_LORDS:
         return empty_result

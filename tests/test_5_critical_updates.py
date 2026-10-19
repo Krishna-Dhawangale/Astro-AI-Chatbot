@@ -18,7 +18,10 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(PROJECT_ROOT / "backend"))
 
-import pytest
+try:
+    import pytest
+except ImportError:
+    pytest = None
 from backend.intent_router import (
     classify_query_intent,
     is_garbage_or_special_char_input,
@@ -296,4 +299,12 @@ def test_disclaimer_removal_and_astrologer_fallback():
 
 
 if __name__ == "__main__":
-    pytest.main(["-v", __file__])
+    if pytest:
+        pytest.main(["-v", __file__])
+    else:
+        test_hinglish_language_detection()
+        test_garbage_and_special_character_filtering()
+        test_house_query_identification_and_synthesis()
+        test_intent_first_execution_pipeline()
+        test_disclaimer_removal_and_astrologer_fallback()
+        print("ALL 5 CRITICAL TESTS PASSED!")

@@ -372,6 +372,58 @@ def is_house_query(query: str) -> bool:
     return False
 
 
+def ordinal_house(n: int) -> str:
+    """Returns the proper English ordinal representation of a house number (e.g. 1st, 2nd, 3rd, 10th)."""
+    if 11 <= (n % 100) <= 13:
+        suffix = "th"
+    else:
+        suffix = {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+    return f"{n}{suffix}"
+
+
+def qualifies_for_direct_house_fact(query: str) -> bool:
+    """
+    Evaluates whether the incoming query is a standalone, factual house inquiry
+    (such as occupancy, ruling lord, cusp sign, or basic signification) suitable for
+    the local deterministic house engine (0 LLM tokens).
+    
+    Disqualifies queries requiring multi-factor synthesis, trade-off evaluation,
+    or Dasha/timing integration so they reach the full capability gate and LLM.
+    """
+    if not query:
+        return False
+    q = query.lower()
+
+    # Disqualification 1: Decision dilemmas, trade-offs, and career/finance action choices
+    dilemma_indicators = [
+        "chhod kar", "chhodkar", "should i", "kya mujhe", "karna chahiye", "karni chahiye",
+        "better rahega", "better option", "vs", "versus", "startup", "invest", "switch",
+        "shift hona", "shift hone", "relocat", "profitable", "loss", "faayda", "nuksan",
+        "capital save", "save capital", "cash flow", "issues aa sakte"
+    ]
+    if any(k in q for k in dilemma_indicators):
+        return False
+
+    # Disqualification 2: Temporal timing predictions
+    timing_indicators = [
+        "kab", "when", "timing", "right time", "which year", "which month", "future", "aage chal kar"
+    ]
+    if any(k in q for k in timing_indicators):
+        return False
+
+    # Disqualification 3: Dasha period combined with outcome evaluation
+    if any(k in q for k in ["dasha", "mahadasha", "antardasha"]):
+        if any(k in q for k in ["period", "mein", "in this", "effect", "prabhav", "result", "future"]):
+            return False
+
+    # Disqualification 4: Multiple life domains explicitly queried
+    domain_count = sum(1 for d in ["marriage", "shaadi", "career", "job", "naukri", "finance", "paisa", "health", "sehat"] if d in q)
+    if domain_count > 1:
+        return False
+
+    return True
+
+
 def get_house_sign_and_lord(asc_sign: str, house_num: int) -> Tuple[str, str]:
     """
     Computes the zodiac sign on a given house cusp and its planetary ruler.
@@ -407,16 +459,16 @@ def synthesize_house_analysis(
     asc_sign: Optional[str] = None
 ) -> Dict[str, Any]:
     """
-    Produces a complete, authentic Vedic astrology interpretation for house queries.
-    Covers Sanskrit Bhava Karakas, Sign on Cusp, Ruling Lord, and Occupants.
+    Produces a concise, authentic Vedic astrology interpretation for house queries (35–50 words).
+    Directly answers occupancy, ruling lord, cusp sign, or basic signification without bloat.
     """
     h_num = extract_house_number(query) or 7  # default to 7 if general query
     house_meta = BHAVA_KNOWLEDGE_BASE.get(h_num, BHAVA_KNOWLEDGE_BASE[7])
 
     sanskrit_name = house_meta["sanskrit_name"]
-    english_title = house_meta["english_title"]
-    kalapurusha_sign = house_meta["kalapurusha_sign"]
     karakas = ", ".join(house_meta["karakas"])
+    first_karaka = karakas.split(",")[0].strip()
+    ord_str = ordinal_house(h_num)
 
     # Determine personalized chart details
     has_chart = bool(chart_data and isinstance(chart_data, dict) and chart_data.get("planets"))
@@ -432,92 +484,56 @@ def synthesize_house_analysis(
     h_sign, h_lord = get_house_sign_and_lord(ascendant_sign, h_num)
     occupants = get_planets_in_house(chart_data or {}, h_num) if has_chart else []
 
-    # Check if asking specifically about occupants
+    # Detect specific query facet
     q_low = query.lower()
-    is_occupants_query = any(k in q_low for k in ["planets in", "graha", "occupant", "kaunse graha", "kaun se graha", "sitting in"])
+    is_occupants_query = any(k in q_low for k in ["planets in", "graha", "occupant", "kaunse graha", "kaun se graha", "sitting in", "occupies", "occupy", "which planet is in", "which planet occupies"])
+    is_lord_query = any(k in q_low for k in ["which planet rules", "rules my", "rules the", "ruler of", "lord of", "swami kaun", "malik kaun", "ruling lord", "house lord"])
 
-    # Build response
+    # Build concise, medium-length response (35–50 words)
     if is_hinglish:
-        # Conversational Hinglish response
-        intro = (
-            f"Vedic Astrology ke anusaar, **{h_num}th House** ko **{sanskrit_name}** kaha jata hai.\n\n"
-            f"**Core Significations (Karakas & Adhikar):**\n"
-            f"- **Natural Karakas**: {karakas}\n"
-            f"- **Kalapurusha Rashi**: {kalapurusha_sign}\n"
-            f"- **Mukhya Kshetra**: {house_meta['governs_hi']}\n\n"
-            f"{house_meta['vedic_summary_hi']}\n"
-        )
-
-        chart_section = (
-            f"\n**Aapki Kundali ({ascendant_sign} Lagna) ke Anusaar:**\n"
-            f"- **House Cusp Rashi**: Aapka {h_num}th house **{h_sign}** rashi mein sthit hai.\n"
-            f"- **Ruling Lord**: Is bhav ke swami **{h_lord}** hain.\n"
-        )
-
-        if occupants:
-            occ_list_str = ", ".join(occupants)
-            occ_details = []
-            for p in occupants:
-                p_text = house_meta["planet_meanings"].get(p, {}).get("hi", f"{p} is bhav mein vishesh prabhav dalte hain.")
-                occ_details.append(f"  • **{p}**: {p_text}")
-            occ_str = "\n".join(occ_details)
-            occupants_section = (
-                f"- **Sthit Graha (Planets in {h_num}th House)**: **{occ_list_str}**\n"
-                f"{occ_str}\n"
+        if is_occupants_query:
+            occ_hi = f"Aapke {ord_str} house mein {', '.join(occupants)} sthit hain." if occupants else f"Aapke {ord_str} house mein koi natal planet sthit nahi hai."
+            final_answer = (
+                f"Vedic Astrology ke anusaar, {ord_str} House ko {sanskrit_name} kaha jata hai. "
+                f"Aapki Kundali ({ascendant_sign} Lagna) ke Anusaar: {occ_hi} "
+                f"Yeh bhav {h_sign} rashi mein sthit hai jiske swami {h_lord} hain. "
+                f"Is bhav ke shubh fal {h_lord} ki sthiti par nirbhar karte hain."
+            )
+        elif is_lord_query:
+            final_answer = (
+                f"Vedic Astrology ke anusaar, aapka {ord_str} House ({sanskrit_name}) {h_sign} rashi mein sthit hai, "
+                f"jiske swami {h_lord} hain. Aapki Kundali ({ascendant_sign} Lagna) ke Anusaar: "
+                f"{h_lord} ki sthiti aur drishti is bhav ke parinam nirdharit karti hai."
             )
         else:
-            occupants_section = (
-                f"- **Sthit Graha**: Aapke {h_num}th house mein koi natal planet sthit nahi hai. "
-                f"Vedic astrology mein is sthiti mein bhav ke fal iske swami **{h_lord}** ki sthiti aur dasha ke anusaar nirdharit hote hain.\n"
+            occ_hi_clause = f" jismein {', '.join(occupants)} sthit hain" if occupants else ""
+            final_answer = (
+                f"Vedic Astrology ke anusaar, {ord_str} House ko {sanskrit_name} kaha jata hai. "
+                f"Aapki Kundali ({ascendant_sign} Lagna) ke Anusaar: Yeh {h_sign} rashi mein hai "
+                f"jiske swami {h_lord} hain{occ_hi_clause}. Yeh bhav mukhya roop se {house_meta['governs_hi'].split(',')[0]} ko darshata hai."
             )
-
-        conclusion = (
-            f"\n**Vedic Insight:** {h_num}th house ke shubh parinam ke liye apne {h_lord} ko anukool rakhna "
-            f"aur sambandhit natural karaka ({karakas.split()[0]}) ke dhyan se jeevan mein balance banaye rakhna labhkari hota hai."
-        )
-
-        final_answer = f"{intro}{chart_section}{occupants_section}{conclusion}"
-
     else:
-        # English Response
-        intro = (
-            f"In Vedic Astrology, the **{h_num}th House** is traditionally known as **{sanskrit_name}** ({english_title}).\n\n"
-            f"**Core Astrological Significations:**\n"
-            f"- **Natural Karakas (Significators)**: {karakas}\n"
-            f"- **Kalapurusha Zodiac Sign**: {kalapurusha_sign}\n"
-            f"- **Governs**: {house_meta['governs_en']}\n\n"
-            f"{house_meta['vedic_summary_en']}\n"
-        )
-
-        chart_section = (
-            f"\n**In Your Personal Horoscope ({ascendant_sign} Ascendant):**\n"
-            f"- **Zodiac Sign on Cusp**: Your {h_num}th House falls in **{h_sign}**.\n"
-            f"- **Ruling Lord**: Governed by **{h_lord}**.\n"
-        )
-
-        if occupants:
-            occ_list_str = ", ".join(occupants)
-            occ_details = []
-            for p in occupants:
-                p_text = house_meta["planet_meanings"].get(p, {}).get("en", f"Influences the {h_num}th house according to its natural qualities.")
-                occ_details.append(f"  • **{p}**: {p_text}")
-            occ_str = "\n".join(occ_details)
-            occupants_section = (
-                f"- **Planetary Occupants**: **{occ_list_str}**\n"
-                f"{occ_str}\n"
+        if is_occupants_query:
+            occ_str = f"The planets posited in your {ord_str} House are {', '.join(occupants)}." if occupants else f"No natal planets are posited in your {ord_str} house."
+            final_answer = (
+                f"In Your Personal Horoscope ({ascendant_sign} Ascendant): {occ_str} "
+                f"The {ord_str} House ({sanskrit_name}) falls in {h_sign}, governed by {h_lord}, "
+                f"with Natural Karakas {first_karaka}. "
+                f"Its results primarily operate through {h_lord}'s placement and dignity."
+            )
+        elif is_lord_query:
+            final_answer = (
+                f"In Your Personal Horoscope ({ascendant_sign} Ascendant): Your {ord_str} House ({sanskrit_name}) "
+                f"falls in {h_sign}, which is ruled by {h_lord}. Natural Karakas include {first_karaka}. "
+                f"The strength and house placement of {h_lord} primarily govern the results of this house."
             )
         else:
-            occupants_section = (
-                f"- **Planetary Occupants**: No natal planets are posited in your {h_num}th house. "
-                f"In Vedic astrology, an unoccupied house is interpreted primarily through its ruling lord (**{h_lord}**) and planetary aspects casting upon this cusp.\n"
+            occ_clause = f" with {', '.join(occupants)} posited here" if occupants else ""
+            final_answer = (
+                f"In Vedic Astrology, the {ord_str} House is known as {sanskrit_name} (Natural Karakas: {first_karaka}). "
+                f"In Your Personal Horoscope ({ascendant_sign} Ascendant): It falls in {h_sign} ruled by {h_lord}{occ_clause}. "
+                f"It primarily governs {house_meta['governs_en'].split(',')[0]} and related life themes."
             )
-
-        conclusion = (
-            f"\n**Vedic Synthesis:** To optimize results for the {h_num}th house, observe the placement of its ruler (**{h_lord}**) "
-            f"and strengthen the natural significator ({karakas.split()[0]}) in your daily routines."
-        )
-
-        final_answer = f"{intro}{chart_section}{occupants_section}{conclusion}"
 
     return {
         "answer": final_answer,

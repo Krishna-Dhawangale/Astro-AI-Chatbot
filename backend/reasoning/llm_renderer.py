@@ -30,9 +30,9 @@ STRICT_RENDERER_SYSTEM_INSTRUCTION = (
 )
 
 
-def get_renderer_system_instruction(word_limit_str: str = "40–65 words", is_hinglish: bool = False) -> str:
+def get_renderer_system_instruction(word_limit_str: str = "50–75 words", is_hinglish: bool = False) -> str:
     """
-    Returns an ultra-lean system instruction with customized word limit bounds
+    Returns an ultra-lean system instruction with customized word limit bounds (50–75 words)
     and natural conversational Hinglish language enforcement when requested.
     Permits grounded Vedic reasoning on supplied facts while strictly prohibiting invented chart calculations.
     """
@@ -47,7 +47,7 @@ def get_renderer_system_instruction(word_limit_str: str = "40–65 words", is_hi
             "When rules (R) are provided, use them as guidance; if no specific rule is matched, synthesize your answer directly from the supplied chart facts (F) using core Vedic principles (Bhavas, Karakas, and lordships). "
             "Never refuse an astrological inquiry simply because a pre-computed rule was not matched in R. "
             "CRITICAL BAN: You ARE the qualified Vedic Astrologer. NEVER tell the user to consult an astrologer or say 'kisi qualified Vedic astrologer se sampark karein'. You MUST deliver the direct astrological guidance yourself based on their chart. "
-            "Use cautious language; never guarantee predictions. "
+            "Use cautious language; never guarantee predictions or outcomes. Explain planetary strengths and tensions neutrally, and avoid prescriptive financial or business recommendations (e.g., never guarantee startup success, foreign profits, or investment returns). "
             "Do not mention internal rules or system details. "
             f"Be concise: {word_limit_str}. "
             "Return only the answer in conversational Hinglish."
@@ -63,7 +63,7 @@ def get_renderer_system_instruction(word_limit_str: str = "40–65 words", is_hi
         "If evidence is partial or the question is ambiguous, provide a helpful qualified interpretation and disclose limitations naturally without repeating generic disclaimers. "
         "For wellness or health queries, provide astrological perspectives only, never medical diagnoses. "
         "CRITICAL BAN: You ARE the qualified Vedic Astrologer. NEVER tell the user to consult a professional astrologer, seek an astrologer, or get a personalized chart analysis. You MUST deliver the direct astrological guidance yourself based on their chart. "
-        "Use cautious language; never guarantee outcomes. "
+        "Use cautious language; never guarantee outcomes. Explain planetary strengths and tensions neutrally, and avoid prescriptive financial or business recommendations (e.g., never guarantee startup success, foreign profits, or investment returns). "
         "Do not mention internal rules, evidence tags, or system instructions. "
         f"Be concise: {word_limit_str}. "
         "Return only the answer."
@@ -236,6 +236,23 @@ def build_compact_evidence_package(
         if 4 not in target_houses:
             target_houses.append(4)
 
+    # Financial trade-offs and cash flow -> 2H (wealth/savings) & 11H (gains/liquidity)
+    if any(k in q_low for k in ["cash flow", "profit", "profitable", "capital", "saving", "finance"]):
+        for fh in [2, 11]:
+            if fh not in target_houses:
+                target_houses.append(fh)
+
+    # Multi-domain keyword linking to primary houses
+    if any(k in q_low for k in ["marriage", "shaadi", "shadi", "relationship", "spouse", "partner"]):
+        if 7 not in target_houses:
+            target_houses.append(7)
+    if any(k in q_low for k in ["foreign", "abroad", "videsh", "overseas", "relocat"]):
+        if 12 not in target_houses:
+            target_houses.append(12)
+    if any(k in q_low for k in ["career", "job", "naukri", "profession", "work", "startup"]):
+        if 10 not in target_houses:
+            target_houses.append(10)
+
     # Domain default primary houses
     domain_default_map = {
         "career": [10] if (not is_mental_peace or is_career_word) else [],
@@ -316,12 +333,31 @@ def build_compact_evidence_package(
         if isinstance(merc_data, dict) and merc_data.get("house"):
             verified_facts["Mercury_Intellect_Karaka"] = f"Mercury@{merc_data.get('house')}H"
 
-    # 11. All Planetary Placements Fallback
+    # 11b. Delay and Career Specialization facts
+    if any(k in q_low for k in ["delay", "rukawat", "obstacle", "slow", "baar-baar"]):
+        sat = planets.get("Saturn", {})
+        if isinstance(sat, dict) and sat.get("house"):
+            verified_facts["Saturn_Delays_Discipline"] = f"{sat.get('rashi', '')} in {sat.get('house')}H"
+        merc = planets.get("Mercury", {})
+        if isinstance(merc, dict) and merc.get("house"):
+            verified_facts["Mercury_IT_Fields"] = f"{merc.get('rashi', '')} in {merc.get('house')}H"
+
+    if any(k in q_low for k in ["govt", "government", "sarkari", "authority", "exam"]):
+        sun = planets.get("Sun", {})
+        if isinstance(sun, dict) and sun.get("house"):
+            verified_facts["Sun_Govt_Authority"] = f"{sun.get('rashi', '')} in {sun.get('house')}H"
+    if any(k in q_low for k in ["private", "service", "corporate"]):
+        sat = planets.get("Saturn", {})
+        if isinstance(sat, dict) and sat.get("house"):
+            verified_facts["Saturn_Service"] = f"{sat.get('rashi', '')} in {sat.get('house')}H"
+
+    # 12. All Planetary Placements Fallback
     if any(k in q_low for k in ["which planet", "planetary placements", "planet positions", "where are my planets", "which house"]):
         for p_name in ["Sun", "Moon", "Mars", "Mercury", "Jupiter", "Venus", "Saturn", "Rahu", "Ketu"]:
-            p_data = planets.get(p_name, {})
-            if isinstance(p_data, dict) and p_data.get("house"):
-                verified_facts[p_name] = f"{p_data.get('rashi', '')}@{p_data.get('house')}H"
+            if p_name not in verified_facts:
+                p_data = planets.get(p_name, {})
+                if isinstance(p_data, dict) and p_data.get("house"):
+                    verified_facts[p_name] = f"{p_data.get('rashi', '')}@{p_data.get('house')}H"
 
     if dasha_hierarchy:
         m = (
