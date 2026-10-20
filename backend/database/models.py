@@ -26,11 +26,11 @@ class User(Base):
     name = Column(String(255), nullable=True)
     email = Column(String(255), nullable=True, index=True)
     birth_date = Column(DateTime, nullable=True)
-    birth_hour = Column(Float, nullable=True)
+    birth_hour = Column(Integer, nullable=True)
     birth_place = Column(String(255), nullable=True)
     latitude = Column(Float, nullable=True, default=28.6139)
     longitude = Column(Float, nullable=True, default=77.2090)
-    timezone = Column(Float, nullable=True, default=5.5)
+    timezone = Column(String(50), nullable=True, default="5.5")
     lagna = Column(String(100), nullable=True)
     moon_sign = Column(String(100), nullable=True)
     created_at = Column(
